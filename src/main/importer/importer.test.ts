@@ -183,4 +183,47 @@ describe('buildCatalog', () => {
     // — later tasks key `waveforms`/`sample_tags` off this id and must survive a re-import.
     expect(kickSampleId()).toBe(firstKickId);
   });
+
+  // Fix round 1 (review): the identical-data rerun above can't distinguish a real
+  // delete-then-reinsert junction rebuild from a no-op `INSERT OR IGNORE`-only implementation
+  // — re-inserting the same (sample_id, tag_id) pairs is a no-op either way. This test changes
+  // the data between runs so only a real rebuild passes.
+  it('rebuilds sample_tags on a shrinking tag list — a dropped tag link is actually gone', () => {
+    const { libraryRoot, data, catalog } = setUp();
+
+    const linkExists = (fileHash: string, tagName: string): boolean =>
+      (
+        catalog.db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM sample_tags
+             JOIN samples ON samples.id = sample_tags.sample_id
+             JOIN tags ON tags.id = sample_tags.tag_id
+             WHERE samples.file_hash = ? AND tags.name = ?`,
+          )
+          .get(fileHash, tagName) as { n: number }
+      ).n === 1;
+
+    buildCatalog(catalog, data, libraryRoot);
+    // hash-kick starts with tags 'kick,drums' (see buildFixtureRows above).
+    expect(linkExists('hash-kick', 'drums')).toBe(true);
+
+    // Rebuild the input with hash-kick's tag string shrunk: 'kick,drums' -> 'kick'.
+    const shrunk = {
+      ...data,
+      samples: data.samples.map((s) => (s.file_hash === 'hash-kick' ? { ...s, tags: 'kick' } : s)),
+    };
+    buildCatalog(catalog, shrunk, libraryRoot);
+
+    // The dropped 'drums' link is gone for hash-kick specifically...
+    expect(linkExists('hash-kick', 'drums')).toBe(false);
+    // ...hash-kick keeps the tag it still carries...
+    expect(linkExists('hash-kick', 'kick')).toBe(true);
+    // ...and hash-loop (untouched, also tagged 'drums') keeps its own link — this is a
+    // per-sample junction rebuild, not a global purge of the 'drums' tag.
+    expect(linkExists('hash-loop', 'drums')).toBe(true);
+    // Per the review: "the tag row itself may remain in tags — assert only the junction." It
+    // does (hash-loop still references it); asserted for completeness, not the point of the test.
+    const tagRow = catalog.db.prepare('SELECT id FROM tags WHERE name = ?').get('drums');
+    expect(tagRow).toBeDefined();
+  });
 });
