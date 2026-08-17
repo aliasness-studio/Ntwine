@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS waveforms (
 -- Search: FTS5 table holding denormalized text, rebuilt TRANSACTIONALLY during
 -- import. No live sync triggers in v1 — the catalog only changes at import time,
 -- and import-time rebuild is where trigger-desync bugs can't exist.
+--
+-- Declared column order (THIS DDL is authoritative — not spec §6's prose, which
+-- lists sample_id first): 0 filename, 1 pack_name, 2 tag_text, 3 sample_id
+-- (UNINDEXED). FTS5's highlight()/snippet() auxiliary functions address columns
+-- by absolute 0-based index across ALL declared columns, UNINDEXED included —
+-- e.g. highlight(sample_search, 0, ...) targets filename, not pack_name, and
+-- index 3 is sample_id even though it's excluded from MATCH. Any future
+-- search-highlighting code must read the column index from here, not re-derive
+-- it from the spec doc's listing order.
 CREATE VIRTUAL TABLE IF NOT EXISTS sample_search USING fts5(
   filename,
   pack_name,
