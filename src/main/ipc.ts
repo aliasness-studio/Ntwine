@@ -121,20 +121,57 @@ export interface RegisterIpcDeps {
   sendProgress: (p: ImportProgress) => void;
 }
 
-// Shared by the runImport handler (with the ids `runImportPipeline` just produced) and the
-// startup-resume path (with whatever `pendingPeakIds` still finds outstanding) — both mean "run
-// the background decode queue for these ids, forwarding progress as 'waveforms' events, and
-// announce 'done' once the queue drains." One definition, two callers.
-function runWaveformsInBackground(deps: RegisterIpcDeps, sampleIds: number[]): void {
-  runPeaksQueue({
-    catalog: deps.catalog,
-    libraryRoot: currentLibraryRoot(deps.catalog),
-    sampleIds,
-    forkWorker: () => utilityProcess.fork(WORKER_PATH),
-    onProgress: (done, total) => deps.sendProgress({ phase: 'waveforms', done, total }),
-  }).then(() => {
-    deps.sendProgress({ phase: 'done', done: sampleIds.length, total: sampleIds.length });
-  });
+export interface RunWaveformsInBackgroundDeps {
+  catalog: Catalog;
+  libraryRoot: string;
+  sendProgress: (p: ImportProgress) => void;
+  forkWorker: () => WorkerLike;
+}
+
+/**
+ * Shared by the runImport handler (with the ids `runImportPipeline` just produced) and the
+ * startup-resume path (with whatever `pendingPeakIds` still finds outstanding) — both mean "run
+ * the background decode queue for these ids, forwarding progress as 'waveforms' events, and
+ * announce 'done' once the queue drains." One definition, two callers.
+ *
+ * Both call sites are fire-and-forget with no try/catch of their own — the startup-resume one
+ * runs unconditionally on every cold launch once `imported = 1` — so this function must never
+ * let ANY failure escape as an unhandled rejection or a synchronous throw. `runPeaksQueue`'s own
+ * doc comment names a real rejection path ("only rejects if forkWorker itself throws
+ * synchronously while priming the pool" — a broken install missing peaksWorker.js beside
+ * main.js, or resource exhaustion, not a hypothetical), which the `.catch()` below handles; the
+ * outer try/catch additionally covers a synchronous throw from anything evaluated before
+ * `runPeaksQueue` returns a promise at all (a bare `.catch()` on the chain would not catch
+ * that). Either failure degrades to "placeholders stay pending" — logged, swallowed — never a
+ * crashed app.
+ */
+export function runWaveformsInBackground(
+  deps: RunWaveformsInBackgroundDeps,
+  sampleIds: number[],
+): void {
+  try {
+    runPeaksQueue({
+      catalog: deps.catalog,
+      libraryRoot: deps.libraryRoot,
+      sampleIds,
+      forkWorker: deps.forkWorker,
+      onProgress: (done, total) => deps.sendProgress({ phase: 'waveforms', done, total }),
+    })
+      .then(() => {
+        deps.sendProgress({ phase: 'done', done: sampleIds.length, total: sampleIds.length });
+      })
+      .catch((err: unknown) => {
+        console.error(
+          'runWaveformsInBackground: background waveform pass failed — placeholders remain pending',
+          err,
+        );
+      });
+  } catch (err) {
+    console.error(
+      'runWaveformsInBackground: failed to start the background waveform pass — placeholders remain pending',
+      err,
+    );
+  }
 }
 
 /**
@@ -150,6 +187,16 @@ function runWaveformsInBackground(deps: RegisterIpcDeps, sampleIds: number[]): v
  */
 export function registerIpc(deps: RegisterIpcDeps): void {
   const { catalog } = deps;
+
+  // One definition of "the deps runWaveformsInBackground needs," built fresh at each call site
+  // (libraryRoot is re-read live, not cached — see currentLibraryRoot's own doc comment) rather
+  // than duplicated inline at both the runImport handler and the startup-resume block below.
+  const waveformDeps = (): RunWaveformsInBackgroundDeps => ({
+    catalog,
+    libraryRoot: currentLibraryRoot(catalog),
+    sendProgress: deps.sendProgress,
+    forkWorker: () => utilityProcess.fork(WORKER_PATH),
+  });
 
   ipcMain.handle('ntwine:getState', async () => ({
     // Reads the exact meta keys `runImport` writes (importer.ts) — 'imported' and
@@ -172,7 +219,7 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     // continue in the background after this handler's promise (and so the renderer's await)
     // already returned.
     const peakIds = await runImportPipeline(importDeps, (p) => deps.sendProgress(p));
-    runWaveformsInBackground(deps, peakIds);
+    runWaveformsInBackground(waveformDeps(), peakIds);
   });
 
   ipcMain.handle('ntwine:pickLibraryRoot', async () => {
@@ -213,7 +260,7 @@ export function registerIpc(deps: RegisterIpcDeps): void {
   if (catalog.getMeta('imported') === '1') {
     const pending = pendingPeakIds(catalog);
     if (pending.length > 0) {
-      runWaveformsInBackground(deps, pending);
+      runWaveformsInBackground(waveformDeps(), pending);
     }
   }
 }

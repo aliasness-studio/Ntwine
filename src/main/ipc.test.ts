@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openCatalog } from './catalog/db';
 import {
   decodePreviewPcm,
   PREVIEW_MAX_BYTES,
   PREVIEW_MAX_SECONDS,
+  runWaveformsInBackground,
   type DecodePreviewPcmDeps,
+  type RunWaveformsInBackgroundDeps,
 } from './ipc';
 import type { WorkerLike } from './waveforms/queue';
+
+const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-ipc-'));
 
 // A one-shot WorkerLike fake: `on('message', cb)` registers the callback, then `postMessage`
 // replies asynchronously (a microtask, not synchronously — matching queue.test.ts's own fake
@@ -137,6 +145,84 @@ describe('decodePreviewPcm', () => {
     const result = await decodePreviewPcm(deps, 42);
 
     expect(result).toBeNull();
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('runWaveformsInBackground', () => {
+  it('a synchronously-throwing forkWorker never escapes as an unhandled rejection (or a synchronous throw) — logs and leaves the pass a no-op', async () => {
+    // Reproduces queue.ts's own documented rejection path (runPeaksQueue's promise "only
+    // rejects if forkWorker itself throws synchronously while priming the pool") — a real,
+    // acknowledged path (a broken install missing peaksWorker.js beside main.js, or resource
+    // exhaustion), not a hypothetical one. Both real call sites (the runImport handler, the
+    // startup-resume block in registerIpc) invoke this fire-and-forget with no try/catch of
+    // their own — the startup-resume one runs unconditionally on every cold launch once
+    // imported=1 — so a rejection here must degrade to "placeholders stay pending", never reach
+    // process-level as an unhandled rejection.
+    const catalog = openCatalog(join(tmp(), 'catalog.db'));
+    const sendProgress = vi.fn();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const deps: RunWaveformsInBackgroundDeps = {
+      catalog,
+      libraryRoot: tmp(),
+      sendProgress,
+      forkWorker: () => {
+        throw new Error('simulated: peaksWorker.js missing beside main.js');
+      },
+    };
+
+    // The call itself — synchronous, fire-and-forget — must never throw.
+    expect(() => runWaveformsInBackground(deps, [1])).not.toThrow();
+
+    // forkWorker throws inside runPeaksQueue's own `new Promise(...)` executor, so the
+    // constructor converts it into a rejection rather than a synchronous throw escaping
+    // runPeaksQueue itself — flush pending microtasks so the .catch() handler has actually run
+    // before asserting on it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    // No 'done' event: the queue rejected, it never resolved — a no-op resume, not a false
+    // "finished" signal to the renderer.
+    expect(sendProgress).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'done' }));
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('the happy path still forwards waveforms progress and announces done (the error handling wrap does not change normal behavior)', async () => {
+    const catalog = openCatalog(join(tmp(), 'catalog.db'));
+    const sendProgress = vi.fn();
+
+    let onMessage: ((m: unknown) => void) | null = null;
+    const kill = vi.fn();
+    const worker: WorkerLike = {
+      postMessage: (m: unknown) => {
+        const { sampleId } = m as { sampleId: number };
+        queueMicrotask(() => onMessage?.({ sampleId, ok: true, peaks: new ArrayBuffer(400) }));
+      },
+      on: (_ev: 'message', cb: (m: unknown) => void) => {
+        onMessage = cb;
+      },
+      kill,
+    };
+
+    const deps: RunWaveformsInBackgroundDeps = {
+      catalog,
+      libraryRoot: tmp(),
+      sendProgress,
+      forkWorker: () => worker,
+    };
+
+    // sampleId 1 has no real `samples` row (empty catalog) — writePeaks would throw on the FK
+    // constraint, which queue.ts's own settle() already catches and treats like a decode
+    // failure (queue.test.ts pins this precedent directly); either way the queue still drains
+    // and calls onProgress/resolves, which is all this test needs.
+    runWaveformsInBackground(deps, [1]);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sendProgress).toHaveBeenCalledWith({ phase: 'waveforms', done: 1, total: 1 });
+    expect(sendProgress).toHaveBeenCalledWith({ phase: 'done', done: 1, total: 1 });
     expect(kill).toHaveBeenCalledTimes(1);
   });
 });
