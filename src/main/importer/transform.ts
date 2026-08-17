@@ -44,8 +44,17 @@ function toSampleType(raw: string): 'oneshot' | 'loop' {
 // (`CHECK (chord_type IN ('major','minor'))`, src/main/catalog/db.ts) that sample_type does,
 // so it gets the same "throw, never coerce" treatment — failing here beats surfacing as an
 // opaque SQLite CHECK-constraint error deep inside buildCatalog's transaction.
-function toChordType(raw: string): 'major' | 'minor' | null {
-  if (raw === '') return null;
+//
+// `raw === null` is treated exactly like `raw === ''` (both mean "unknown"), not as a third,
+// unrecognized value — the real sounds.db stores a genuine SQL NULL here for the large majority
+// of "no chord type" rows (Task 13 hand-QA, 2026-08-17: 3,737 of 4,197), not the empty string
+// spec §2.2's own characterization implied. Confirmed firsthand via `sqlite3 sounds.db "SELECT
+// chord_type, typeof(chord_type), COUNT(*) FROM samples GROUP BY 1,2"`. This was the exact crash
+// on the very first real import (`buildCatalog`'s transaction aborted whole): `unknown chord_type
+// "null"` — the quoted "null" there is `${raw}` template-stringifying the JS value `null`, not a
+// stored 4-character string.
+function toChordType(raw: string | null): 'major' | 'minor' | null {
+  if (raw === '' || raw === null) return null;
   if (raw === 'major' || raw === 'minor') return raw;
   throw new Error(
     `normalizeSample: unknown chord_type "${raw}" — expected '', 'major', or 'minor'; refusing to guess`,
@@ -109,7 +118,13 @@ export function normalizeSample(s: SpliceSample, libraryRoot: string): Normalize
     packUuid: s.pack_uuid,
     sampleType: toSampleType(s.sample_type),
     bpm: s.bpm === 0 ? null : s.bpm,
-    audioKey: s.audio_key === '' ? null : s.audio_key,
+    // Explicit `null` check alongside `''`, not left to `null === '' ? null : s.audio_key`'s
+    // accidental correctness (that expression's false-branch happens to already be `null` when
+    // `s.audio_key` itself is `null` — true today, but a trap for a future edit that doesn't
+    // realize it's depended on). Same real-world NULL shape as chord_type (see `toChordType`'s
+    // comment) — audio_key just has no dedicated validator to have thrown on it, so this one
+    // stayed silently "correct by luck" rather than crashing on the same real data.
+    audioKey: s.audio_key === '' || s.audio_key === null ? null : s.audio_key,
     chordType: toChordType(s.chord_type),
     durationMs: s.duration,
     tags: parseTags(s.tags),

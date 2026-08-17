@@ -147,6 +147,40 @@ describe('buildCatalog', () => {
     expect(row?.filename).not.toBe('café_kick.wav'.normalize('NFC'));
   });
 
+  // Task 13 hand-QA against the REAL Splice sounds.db (2026-08-17): the very first real import
+  // aborted this exact transaction — `buildCatalog` -> `normalizeSample` -> `toChordType` threw
+  // `unknown chord_type "null"` on the first row whose chord_type was a genuine SQL NULL (3,737
+  // of 4,197 real rows; audio_key NULL on 2,977). Every fixture row elsewhere in this file uses
+  // `''`, which is what the whole test suite had assumed until that crash. This pins the exact
+  // failing shape through the REAL production call path (a `db.transaction` that must commit,
+  // not just that `normalizeSample` tolerates a `null` argument in isolation).
+  it('commits a row with genuine SQL NULL chord_type/audio_key instead of aborting the transaction', () => {
+    const libraryRoot = tmp();
+    const dbPath = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(dbPath, [
+      {
+        table: 'samples',
+        file_hash: 'hash-real-null-shape',
+        local_path: join(libraryRoot, 'sounds/packs/Fixture Pack/unknown_key.wav'),
+        filename: 'unknown_key.wav',
+        sample_type: 'oneshot',
+        audio_key: null,
+        chord_type: null,
+        tags: '',
+      },
+    ]);
+    const data = readSplice(dbPath);
+    const catalog = freshCatalog();
+
+    expect(() => buildCatalog(catalog, data, libraryRoot)).not.toThrow();
+
+    const row = catalog.db
+      .prepare('SELECT audio_key, chord_type FROM samples WHERE file_hash = ?')
+      .get('hash-real-null-shape') as { audio_key: string | null; chord_type: string | null };
+    expect(row.audio_key).toBeNull();
+    expect(row.chord_type).toBeNull();
+  });
+
   it('is idempotent: same row counts and stable sample ids across two runs, no duplicate tags/sample_tags', () => {
     const { libraryRoot, data, catalog } = setUp();
 

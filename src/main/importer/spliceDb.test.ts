@@ -154,6 +154,31 @@ describe('readSplice', () => {
     expect(samples[2].filename.normalize('NFC')).toBe('café_kick.wav'.normalize('NFC'));
   });
 
+  // Task 13 hand-QA (2026-08-17): the real sounds.db stores genuine SQL NULL for chord_type
+  // (3,737 of 4,197 rows) and audio_key (2,977 rows) — confirmed firsthand via `sqlite3 sounds.db
+  // "SELECT typeof(chord_type), COUNT(*) FROM samples GROUP BY 1"`, NOT the empty string every
+  // other fixture row (including this file's own FIXTURE_ROWS above) had assumed. This pins that
+  // `readSplice` reads a real NULL cell back as JS `null`, not `''` or the string "null" —
+  // proving the READ path, not just that `normalizeSample` tolerates a `null` if handed one.
+  it('reads a genuine SQL NULL chord_type/audio_key back as null, not "" (real-world shape)', () => {
+    const dbPath = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(dbPath, [
+      {
+        table: 'samples',
+        file_hash: 'hash-real-null',
+        filename: 'unknown_key_and_chord.wav',
+        audio_key: null,
+        chord_type: null,
+      },
+    ]);
+
+    const { samples } = readSplice(dbPath);
+
+    expect(samples).toHaveLength(1);
+    expect(samples[0].audio_key).toBeNull();
+    expect(samples[0].chord_type).toBeNull();
+  });
+
   it('tolerates a sample whose pack_uuid matches no packs row, with defaults for unset columns', () => {
     const dbPath = join(tmp(), 'sounds.db');
     buildFixtureSpliceDb(dbPath, [

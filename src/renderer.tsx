@@ -1,48 +1,51 @@
 /**
- * This file will automatically be loaded by vite and run in the "renderer" context.
- * To learn more about the differences between the "main" and the "renderer" context in
- * Electron, visit:
+ * React root (Task 13 — replaces the Task 2 drag spike). Instantiates the three MobX stores
+ * (Task 12) once with the real `api`/`PlayPort`, and renders the app inside a store context
+ * provider + styled-components ThemeProvider.
  *
- * https://electronjs.org/docs/tutorial/process-model
- *
- * By default, Node.js integration in this file is disabled. When enabling Node.js integration
- * in a renderer process, please be aware of potential security implications. You can read
- * more about security risks here:
- *
- * https://electronjs.org/docs/tutorial/security
- *
- * To enable Node.js integration in this file, open up `main.ts` and enable the `nodeIntegration`
- * flag:
- *
- * ```
- *  // Create the browser window.
- *  mainWindow = new BrowserWindow({
- *    width: 800,
- *    height: 600,
- *    webPreferences: {
- *      nodeIntegration: true
- *    }
- *  });
- * ```
+ * To learn more about the differences between the "main" and the "renderer" context in Electron,
+ * visit: https://electronjs.org/docs/tutorial/process-model
  */
-
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ThemeProvider } from 'styled-components';
 import './index.css';
+import { App } from './renderer/components/App';
+import { StoreContext, type Stores } from './renderer/components/StoreContext';
+import { theme } from './renderer/components/theme';
+import { api } from './renderer/stores/api';
+import { ImportStore } from './renderer/stores/ImportStore';
+import { LibraryStore } from './renderer/stores/LibraryStore';
+import { PlayerStore, type PlayPort } from './renderer/stores/PlayerStore';
 
-console.log(
-  '👋 This message is being logged by "renderer.ts", included via Vite',
+// Task 14 replaces this with the WebAudio previewPlayer (`createPreviewPlayer(...)` in
+// src/renderer/audio/previewPlayer.ts). PlayerStore requires a PlayPort at construction, and the
+// real implementation doesn't exist yet — this no-op stub keeps every selection/keyboard/volume
+// action in this task's UI wired through PlayerStore exactly as it will be once playback is real;
+// Task 14 only has to swap this one object, not touch a single component.
+const playPort: PlayPort = {
+  play: () => {},
+  stop: () => {},
+  setVolume: () => {},
+};
+
+const stores: Stores = {
+  library: new LibraryStore(api),
+  player: new PlayerStore(playPort),
+  importStore: new ImportStore(api),
+};
+
+const container = document.getElementById('app');
+if (!container) {
+  throw new Error('renderer.tsx: #app root element not found in index.html');
+}
+
+createRoot(container).render(
+  <StrictMode>
+    <StoreContext.Provider value={stores}>
+      <ThemeProvider theme={theme}>
+        <App />
+      </ThemeProvider>
+    </StoreContext.Provider>
+  </StrictMode>,
 );
-
-// Task 2 spike — replaced in Task 13. No React root exists yet (that lands in
-// Task 13), so this is plain DOM rather than JSX. Proves ipcRenderer.send ->
-// ipcMain.on -> webContents.startDrag before the catalog/UI exist.
-const dragSpike = document.createElement('div');
-dragSpike.textContent = 'Drag me -> Finder / Reaper (Task 2 spike)';
-dragSpike.draggable = true;
-dragSpike.style.cssText =
-  'width: 240px; height: 48px; margin: 16px; display: flex; align-items: center; justify-content: center; background: #302c28; color: #fff; font-family: sans-serif; cursor: grab; user-select: none;';
-dragSpike.addEventListener('dragstart', (event) => {
-  event.preventDefault();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- spike only; Task 11 types the preload bridge (window.ntwine) properly.
-  (window as any).ntwine.startDrag(1);
-});
-document.body.appendChild(dragSpike);

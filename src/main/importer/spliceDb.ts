@@ -4,6 +4,12 @@ import { basename, join } from 'node:path';
 
 // Shape read off the real `samples` table (spec §2.2) — only the columns the importer needs,
 // not every column the table has (fixtureSpliceDb.ts's SCHEMA carries the rest for fidelity).
+// `audio_key`/`chord_type` are `string | null`, not bare `string` — confirmed against the REAL
+// sounds.db (Task 13 hand-QA, 2026-08-17): `SELECT typeof(chord_type), COUNT(*) FROM samples
+// GROUP BY 1` shows genuine SQL NULL (not '') for 3,737 of 4,197 rows on chord_type, and 2,977
+// on audio_key. Spec §2.2's "'' x3737" characterization described the same rows loosely; the
+// wire value that actually comes back from better-sqlite3 for a NULL cell is JS `null`, not `''`
+// — a `string`-typed field would silently lie about a shape the real driver really returns.
 export interface SpliceSample {
   local_path: string;
   file_hash: string;
@@ -11,8 +17,8 @@ export interface SpliceSample {
   pack_uuid: string | null;
   sample_type: string;
   bpm: number;
-  audio_key: string;
-  chord_type: string;
+  audio_key: string | null;
+  chord_type: string | null;
   duration: number;
   tags: string;
 }

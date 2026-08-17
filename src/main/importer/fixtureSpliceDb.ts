@@ -42,9 +42,14 @@ export interface FixtureSampleRow {
   local_path?: string | null;
   attr_hash?: string | null;
   dir?: string | null;
-  audio_key?: string;
+  // `string | null`, not bare `string`: the real sounds.db stores genuine SQL NULL here for the
+  // large majority of "unknown" rows (Task 13 hand-QA, 2026-08-17 — see transform.ts's
+  // `toChordType` comment), not the empty string every OTHER fixture row in this codebase had
+  // assumed until that bug surfaced. Omitting the field still defaults to `''` below (unchanged
+  // behavior for every existing fixture row); passing `null` explicitly inserts a real NULL cell.
+  audio_key?: string | null;
   bpm?: number;
-  chord_type?: string;
+  chord_type?: string | null;
   duration?: number;
   sas_id?: string | null;
   filename?: string | null;
@@ -121,9 +126,15 @@ export function buildFixtureSpliceDb(dbPath: string, rows: FixtureRow[]): void {
             local_path: row.local_path ?? null,
             attr_hash: row.attr_hash ?? null,
             dir: row.dir ?? null,
-            audio_key: row.audio_key ?? '',
+            // `=== undefined`, not `??`: `??` would fold an EXPLICIT `null` into the same '='
+            // default as an omitted field, making it impossible for a fixture row to ask for a
+            // real NULL cell at all (`null ?? ''` is `''`, same as `undefined ?? ''`). Only an
+            // omitted key means "use the '' sentinel default" — every other fixture row in this
+            // codebase omits these fields and is unaffected; a row that explicitly writes
+            // `audio_key: null` / `chord_type: null` gets the real-world NULL shape instead.
+            audio_key: row.audio_key === undefined ? '' : row.audio_key,
             bpm: row.bpm ?? 0,
-            chord_type: row.chord_type ?? '',
+            chord_type: row.chord_type === undefined ? '' : row.chord_type,
             duration: row.duration ?? 0,
             file_hash: row.file_hash,
             sas_id: row.sas_id ?? null,

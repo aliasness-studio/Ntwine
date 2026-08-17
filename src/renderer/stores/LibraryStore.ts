@@ -4,7 +4,7 @@
 // `filters` then re-queries; `filters` always mirrors the QueryFilters object the LAST
 // `querySamples` call was actually made with — there is no separate "pending" filter state to
 // reconcile against it.
-import { makeAutoObservable, runInAction } from 'mobx';
+import { makeAutoObservable, runInAction, toJS } from 'mobx';
 import './configure';
 import type { NtwineApi, PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
 
@@ -144,7 +144,17 @@ export class LibraryStore {
 
   private async runQuery(): Promise<void> {
     this.loading = true;
-    const rows = await this.api.querySamples(this.filters);
+    // `toJS(this.filters)`, not `this.filters` directly: `makeAutoObservable` deep-wraps
+    // object-typed fields as MobX observables (Proxies) by default, and `filters` isn't in the
+    // constructor's `{ api: false, searchDebounceHandle: false }` exclusion list — it's real app
+    // state, meant to be observed. That Proxy is exactly what a REAL `ipcRenderer.invoke` call
+    // cannot structured-clone (Task 13 hand-QA against the real library, 2026-08-17: every query
+    // rejected with "An object could not be cloned" the instant a genuine Electron IPC boundary
+    // was involved — a test-double `api` never surfaces this, since a plain mock function call
+    // never serializes its arguments at all). `toJS` recursively converts the observable graph
+    // back to a plain object — mobx's own documented tool for exactly this "hand this to
+    // something that doesn't understand observables" boundary.
+    const rows = await this.api.querySamples(toJS(this.filters));
     runInAction(() => {
       this.rows = rows;
       this.loading = false;

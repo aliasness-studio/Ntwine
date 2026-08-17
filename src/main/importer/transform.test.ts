@@ -36,6 +36,18 @@ describe('normalizeSample', () => {
     );
     expect(n).toMatchObject({ bpm: 140, audioKey: 'c#', chordType: 'minor' });
   });
+  // Task 13 hand-QA against the REAL Splice sounds.db (2026-08-17) found this is not
+  // hypothetical: `sqlite3 sounds.db "SELECT chord_type, typeof(chord_type), COUNT(*) FROM
+  // samples GROUP BY 1,2"` on the real 4,197-row library shows chord_type is genuine SQL NULL
+  // (typeof = 'null') for 3,737 rows and audio_key is genuine SQL NULL for 2,977 rows — NOT the
+  // empty string '' every existing fixture/test in this file (and spec §2.2's own "'' x3737"
+  // characterization) assumed. `toChordType` threw `unknown chord_type "null"` on the very first
+  // real import, aborting the whole buildCatalog transaction. A real NULL must be treated
+  // identically to '' (both mean "unknown"), not surfaced as a third, unrecognized value.
+  it('maps a genuine SQL NULL chord_type/audio_key to null, same as empty string (real-world shape)', () => {
+    const n = normalizeSample({ ...base, audio_key: null, chord_type: null } as any, '/root');
+    expect(n).toMatchObject({ audioKey: null, chordType: null });
+  });
   it('throws on an unknown sample_type instead of guessing', () => {
     expect(() => normalizeSample({ ...base, sample_type: 'granular' } as any, '/root')).toThrow(
       /sample_type/,

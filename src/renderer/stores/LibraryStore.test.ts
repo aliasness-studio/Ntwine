@@ -1,4 +1,4 @@
-import { autorun } from 'mobx';
+import { autorun, isObservable } from 'mobx';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
 import { LibraryStore } from './LibraryStore';
@@ -308,6 +308,43 @@ describe('LibraryStore', () => {
 
       expect(store.rows).toEqual([sampleRow, sampleRow]);
       expect(store.resultCount).toBe(2);
+    });
+  });
+
+  // Task 13 hand-QA against the REAL library (2026-08-17): every single query — the very first
+  // one, `init()`'s own unfiltered call — rejected with "An object could not be cloned" the
+  // moment a REAL Electron IPC boundary (not this file's `vi.fn()` fake) was involved. `filters`
+  // is a plain field but `makeAutoObservable` deep-wraps it as an observable object (a Proxy) by
+  // default — nothing here excludes it the way `api`/`searchDebounceHandle` are excluded — and a
+  // MobX Proxy fails structured-clone the instant it crosses a REAL `ipcRenderer.invoke` call.
+  // packs/tags loaded fine in that same hand-QA session because `listPacks()`/`listTags()` take
+  // no arguments at all — nothing to clone on the way IN — which is exactly why 20+ existing
+  // `toHaveBeenCalledWith({...})` assertions above never caught this: deep-equality matchers (and
+  // a bare mock function call) are both blind to "is this a real Proxy," the one property that
+  // actually breaks a real IPC round trip. `isObservable` (mobx's own utility) is what actually
+  // falsifies the claim, not a value-equality check that a Proxy wrapping equal values would
+  // still pass.
+  describe('querySamples receives a plain object, not a MobX observable (real IPC requirement)', () => {
+    it('the filters argument to querySamples is never a MobX-observable object', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setKey('c#');
+      store.toggleTag('kick');
+
+      for (const call of api.querySamples.mock.calls) {
+        expect(isObservable(call[0])).toBe(false);
+      }
+    });
+
+    it('the initial unfiltered query from init() is also a plain object', async () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      await store.init();
+
+      expect(api.querySamples).toHaveBeenCalledTimes(1);
+      expect(isObservable(api.querySamples.mock.calls[0][0])).toBe(false);
     });
   });
 
