@@ -61,15 +61,27 @@ export async function launchNtwine(opts: LaunchOptions): Promise<Launched> {
   // The RUNNER is Electron-as-Node (yarn e2e:only); the APP must not be.
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await _electron.launch({ args: [MAIN_JS], env, cwd: REPO_ROOT });
-  const page = await app.firstWindow();
-  await page.waitForFunction(() => typeof window.__ntwineE2E === 'function');
+  let page: Page;
+  try {
+    page = await app.firstWindow();
+    await page.waitForFunction(() => typeof window.__ntwineE2E === 'function');
+  } catch (err) {
+    // The Electron process is already spawned at this point — a failed boot (firstWindow timeout,
+    // a broken __ntwineE2E attach) must not leak it. Best-effort: a close() failure here must not
+    // mask the original boot error.
+    await app.close().catch(() => {});
+    throw err;
+  }
   // Idempotent: a spec may close the app itself (persistence relaunch) and the fixture's teardown
   // closes it again — the second call must be a no-op, not a "target closed" throw.
   let closed = false;
   const close = async (): Promise<void> => {
     if (closed) return;
-    closed = true;
-    await app.close();
+    try {
+      await app.close();
+    } finally {
+      closed = true;
+    }
   };
   return { app, page, seam: createSeam(app), close };
 }
