@@ -164,6 +164,104 @@ describe('ImportStore', () => {
     expect(channel.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  // Review round 1, Finding 3 (controller-elevated, binding): a fast double-click before the
+  // first onImportProgress event round-trips from main used to invoke runImport twice
+  // concurrently — `phase` is still null at that point, so a phase-derived "is running" check
+  // (the FirstRun/SettingsSheet predicate this replaces) hasn't engaged yet. `running` is a
+  // dedicated flag precisely so it doesn't have that gap: it flips true synchronously inside
+  // `run()`, before ANY await — including before `onImportProgress` is even called — so a SECOND
+  // synchronous call sees it true immediately, with no window where neither call has set it yet.
+  describe('run() re-entrancy (Review round 1, Finding 3)', () => {
+    it('two synchronous back-to-back calls: api.runImport invoked exactly once, exactly one subscription, running is true immediately', async () => {
+      const channel = makeProgressChannel();
+      const runImport = vi.fn(async () => {
+        channel.emit({ phase: 'catalog', done: 1, total: 1 });
+      });
+      const api = makeFakeApi({ runImport, onImportProgress: channel.onImportProgress });
+      const store = new ImportStore(api);
+
+      const p1 = store.run();
+      const p2 = store.run(); // fires before either promise has had a chance to settle
+
+      expect(store.running).toBe(true);
+      await Promise.all([p1, p2]);
+
+      expect(runImport).toHaveBeenCalledTimes(1);
+      expect(channel.onImportProgress).toHaveBeenCalledTimes(1);
+    });
+
+    it('the re-entrant call returns the SAME in-flight promise, not an early separate resolution', async () => {
+      // The failure mode a naive "no-op, resolve immediately" guard would reintroduce: a caller
+      // chaining `.then()` off the SECOND call (exactly FirstRun.tsx's `handleImport` shape)
+      // would fire its continuation before the real import has done anything, at a point where
+      // `phase` isn't 'error' yet — e.g. FirstRun would flip to the library screen prematurely.
+      // Resolving both calls together, at the SAME real completion point, is what this pins.
+      const channel = makeProgressChannel();
+      const runImport = vi.fn(async () => {
+        channel.emit({ phase: 'catalog', done: 1, total: 1 });
+      });
+      const api = makeFakeApi({ runImport, onImportProgress: channel.onImportProgress });
+      const store = new ImportStore(api);
+      const order: string[] = [];
+
+      const p1 = store.run().then(() => order.push('p1'));
+      const p2 = store.run().then(() => order.push('p2'));
+
+      await Promise.all([p1, p2]);
+      expect(order).toEqual(['p1', 'p2']); // settled in the same microtask batch, not p2 first
+    });
+
+    it("running flips back to false on 'done', and a run() call afterward starts a genuinely fresh run (not permanently wedged)", async () => {
+      const channel = makeProgressChannel();
+      const api = makeFakeApi({ onImportProgress: channel.onImportProgress });
+      const store = new ImportStore(api);
+
+      await store.run();
+      expect(store.running).toBe(true); // still true — covers/catalog done, waveforms continue
+
+      channel.emit({ phase: 'waveforms', done: 1, total: 2 });
+      expect(store.running).toBe(true);
+
+      channel.emit({ phase: 'done', done: 2, total: 2 });
+      expect(store.running).toBe(false);
+
+      await store.run();
+      expect(api.runImport).toHaveBeenCalledTimes(2);
+      expect(channel.onImportProgress).toHaveBeenCalledTimes(2);
+    });
+
+    it("running flips back to false on 'error' too", async () => {
+      const channel = makeProgressChannel();
+      const runImport = vi.fn(async () => {
+        channel.emit({ phase: 'error', done: 0, total: 0, message: 'boom' });
+        throw new Error('boom');
+      });
+      const api = makeFakeApi({ runImport, onImportProgress: channel.onImportProgress });
+      const store = new ImportStore(api);
+
+      await store.run();
+
+      expect(store.running).toBe(false);
+    });
+
+    it("a re-entrant call arriving after runImport settled but before 'done' (mid background waveform phase) still does not invoke runImport again", async () => {
+      const channel = makeProgressChannel();
+      const runImport = vi.fn(async () => {
+        channel.emit({ phase: 'catalog', done: 1, total: 1 });
+      });
+      const api = makeFakeApi({ runImport, onImportProgress: channel.onImportProgress });
+      const store = new ImportStore(api);
+
+      await store.run(); // runImport's own promise has now settled; running is still true
+      expect(store.running).toBe(true);
+
+      await store.run(); // no in-flight promise left to return — must still no-op, not re-run
+
+      expect(runImport).toHaveBeenCalledTimes(1);
+      expect(channel.onImportProgress).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // Same rationale as LibraryStore's equivalent test: an untracked `expect(store.phase)` read
   // never registers as a MobX observer, so `enforceActions: 'observed'` would stay silent
   // regardless of whether async continuations are correctly action-wrapped. A live `autorun`

@@ -98,14 +98,13 @@ export interface FirstRunProps {
 export const FirstRun = observer(function FirstRun({ state, onImported }: FirstRunProps) {
   const { importStore } = useStores();
 
-  // Brief: "the Import button must disable itself once clicked (while phase is non-null and not
-  // 'done'/'error')". In practice `run()`'s promise resolves before any 'waveforms' event can
-  // arrive (runImport resolves after covers, before the background peaks queue starts), so this
-  // component never actually observes phase 'waveforms'/'done' while still mounted — but the
-  // condition is written to the brief's literal rule, not to "only the phases this component
-  // happens to see today".
-  const importing =
-    importStore.phase !== null && importStore.phase !== 'done' && importStore.phase !== 'error';
+  // Review round 1, Finding 2 + 3 (controller-elevated): this used to hand-derive "is an import
+  // running" from `phase` (duplicated verbatim in SettingsSheet.tsx) — racy, since `phase` only
+  // updates once the first `onImportProgress` event round-trips from main, leaving a window
+  // where a fast double-click saw `phase === null` in both call sites and neither guard engaged.
+  // `ImportStore.running` is the single source of truth now: flipped synchronously inside
+  // `run()`, before any await, so there's no such window — see its own doc comment.
+  const importing = importStore.running;
 
   const handleImport = (): void => {
     void importStore.run().then(() => {

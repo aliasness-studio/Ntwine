@@ -110,8 +110,9 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
     };
   }, []);
 
-  const reimporting =
-    importStore.phase !== null && importStore.phase !== 'done' && importStore.phase !== 'error';
+  // Review round 1, Finding 2 + 3 (controller-elevated) — see FirstRun.tsx's `importing` for the
+  // full rationale; same predicate, same fix, hand-duplicated here until now.
+  const reimporting = importStore.running;
 
   const handleRepick = async (): Promise<void> => {
     setRepicking(true);
