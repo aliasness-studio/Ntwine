@@ -236,3 +236,104 @@ export function pendingPeakIds(catalog: Catalog): number[] {
     .all()
     .map((r) => r.id);
 }
+
+// `waveforms.format` markers (schema comment, db.ts: "bump to invalidate/recompute"). 1 is the
+// only real format so far; 0 is Task 10's own reserved "decode failed" marker — same row shape
+// (the column is NOT NULL either way), just semantically empty. Named here so
+// writePeaks/writePeaksFailed never repeat the bare literals without the explanation living next
+// to them.
+const PEAKS_FORMAT_CURRENT = 1;
+const PEAKS_FORMAT_FAILED = 0;
+
+// A failed decode still needs a NOT-NULL-satisfying `peaks` blob even though there's no real
+// bucket data — 400 zero bytes (200 zeroed [min, max] pairs) at bucket_count 200, matching the
+// exact fixture shape this file's own `pendingPeakIds`/`hasPeaks` tests already pinned for a
+// format=0 row before this function existed (Task 7 review round 1).
+const FAILED_PEAKS_PLACEHOLDER = Buffer.alloc(400);
+const FAILED_BUCKET_COUNT = 200;
+
+interface WaveformUpsertParams {
+  sample_id: number;
+  peaks: Buffer;
+  bucket_count: number;
+  format: number;
+}
+
+// Upsert, not a plain INSERT: `waveforms.sample_id` is the table's PRIMARY KEY, and a retried
+// decode — most notably a previously-`writePeaksFailed` sample processed again by a later queue
+// run, which `pendingPeakIds`'s own doc comment calls out as "a deliberate future action" — must
+// be able to overwrite its own row (format 0 -> 1) rather than fail on the PK conflict a bare
+// `INSERT` would raise.
+const UPSERT_WAVEFORM_SQL = `
+  INSERT INTO waveforms (sample_id, peaks, bucket_count, format)
+  VALUES (@sample_id, @peaks, @bucket_count, @format)
+  ON CONFLICT(sample_id) DO UPDATE SET
+    peaks = excluded.peaks,
+    bucket_count = excluded.bucket_count,
+    format = excluded.format
+`;
+
+/**
+ * Writes a successful decode's peak buckets (Task 10's `computePeaks` output) into the
+ * `waveforms` table, keyed by `sample_id`. `bucket_count` is read off `peaks.length / 2` (two
+ * bytes — one min, one max — per bucket) rather than hardcoded to 200, so a future non-default
+ * `buckets` argument to `computePeaks` is recorded accurately instead of silently mislabeled.
+ */
+export function writePeaks(catalog: Catalog, sampleId: number, peaks: Int8Array): void {
+  const buf = Buffer.from(peaks.buffer, peaks.byteOffset, peaks.byteLength);
+  catalog.db.prepare<WaveformUpsertParams>(UPSERT_WAVEFORM_SQL).run({
+    sample_id: sampleId,
+    peaks: buf,
+    bucket_count: peaks.length / 2,
+    format: PEAKS_FORMAT_CURRENT,
+  });
+}
+
+/**
+ * Records a failed decode as a `format = 0` waveforms row — the mechanism that makes "failed"
+ * distinguishable from "pending, no row yet" (spec §8's corrupt-file badge; `SampleRow.hasPeaks`/
+ * `peaksFailed`, Task 7 review round 1). The placeholder peaks/bucket_count values are never read
+ * as real data: `querySamples`/`pendingPeakIds` both key off `format`, not `peaks` content, for
+ * exactly this row.
+ */
+export function writePeaksFailed(catalog: Catalog, sampleId: number): void {
+  catalog.db.prepare<WaveformUpsertParams>(UPSERT_WAVEFORM_SQL).run({
+    sample_id: sampleId,
+    peaks: FAILED_PEAKS_PLACEHOLDER,
+    bucket_count: FAILED_BUCKET_COUNT,
+    format: PEAKS_FORMAT_FAILED,
+  });
+}
+
+interface PeaksRow {
+  sample_id: number;
+  peaks: Buffer;
+}
+
+/**
+ * Raw peak bytes for the given sample ids, keyed by id — whatever `waveforms.peaks` currently
+ * holds, `format` unfiltered (a failed decode's zeroed placeholder comes back too, same as a
+ * real one). Filtering by success is `hasPeaks`/`peaksFailed`'s job (`querySamples`), not this
+ * function's: a caller that already has those flags knows which ids are worth asking for, and a
+ * `Record` has no clean way to say "excluded" apart from "absent" — which would collide with
+ * "not decoded yet" if this function silently dropped failed rows too.
+ *
+ * `new Uint8Array(row.peaks).buffer` (not `row.peaks.buffer` directly): better-sqlite3 hands
+ * back a Node `Buffer`, whose own `.buffer` may be a slice of a larger pooled ArrayBuffer (Node's
+ * small-buffer allocator) — reading it directly could expose neighboring bytes. Constructing a
+ * fresh `Uint8Array` from it copies into a new, exactly-sized buffer first.
+ */
+export function getPeaks(catalog: Catalog, sampleIds: number[]): Record<number, ArrayBuffer> {
+  if (sampleIds.length === 0) return {};
+  const rows = catalog.db
+    .prepare<number[], PeaksRow>(
+      `SELECT sample_id, peaks FROM waveforms WHERE sample_id IN (${sampleIds.map(() => '?').join(', ')})`,
+    )
+    .all(...sampleIds);
+
+  const result: Record<number, ArrayBuffer> = {};
+  for (const row of rows) {
+    result[row.sample_id] = new Uint8Array(row.peaks).buffer;
+  }
+  return result;
+}

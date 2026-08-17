@@ -6,7 +6,15 @@ import { openCatalog, type Catalog } from './db';
 import { buildFixtureSpliceDb, type FixtureRow } from '../importer/fixtureSpliceDb';
 import { readSplice } from '../importer/spliceDb';
 import { buildCatalog } from '../importer/importer';
-import { listPacks, listTags, pendingPeakIds, querySamples } from './queries';
+import {
+  getPeaks,
+  listPacks,
+  listTags,
+  pendingPeakIds,
+  querySamples,
+  writePeaks,
+  writePeaksFailed,
+} from './queries';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-queries-'));
 const freshCatalog = () => openCatalog(join(tmp(), 'catalog.db'));
@@ -307,5 +315,86 @@ describe('pendingPeakIds', () => {
     }
 
     expect(pendingPeakIds(catalog)).toEqual([]);
+  });
+});
+
+function waveformRow(catalog: Catalog, sampleId: number) {
+  return catalog.db
+    .prepare('SELECT peaks, bucket_count, format FROM waveforms WHERE sample_id = ?')
+    .get(sampleId) as { peaks: Buffer; bucket_count: number; format: number } | undefined;
+}
+
+describe('writePeaks', () => {
+  it('stores a successful decode as format=1, with bucket_count derived from the peaks length', () => {
+    const { catalog } = setUp();
+    const id = idOf(catalog, 'h-kick');
+    const peaks = new Int8Array(400).fill(5); // 200 buckets' worth, arbitrary non-zero content
+
+    writePeaks(catalog, id, peaks);
+
+    const row = waveformRow(catalog, id);
+    expect(row?.format).toBe(1);
+    expect(row?.bucket_count).toBe(200);
+    expect(Array.from(row?.peaks ?? [])).toEqual(Array.from(peaks));
+  });
+
+  it('upserts: a retried decode overwrites a prior writePeaksFailed row (format 0 -> 1)', () => {
+    const { catalog } = setUp();
+    const id = idOf(catalog, 'h-kick');
+    writePeaksFailed(catalog, id);
+
+    writePeaks(catalog, id, new Int8Array(400).fill(1));
+
+    expect(waveformRow(catalog, id)).toMatchObject({ format: 1 });
+  });
+});
+
+describe('writePeaksFailed', () => {
+  it('writes a format=0 row with a NOT-NULL-satisfying zeroed 400-byte placeholder', () => {
+    const { catalog } = setUp();
+    const id = idOf(catalog, 'h-kick');
+
+    writePeaksFailed(catalog, id);
+
+    const row = waveformRow(catalog, id);
+    expect(row).toMatchObject({ bucket_count: 200, format: 0 });
+    expect(row?.peaks.length).toBe(400);
+    expect(Array.from(row?.peaks ?? []).every((b) => b === 0)).toBe(true);
+  });
+
+  it('upserts: a re-failed decode stays format=0 rather than erroring on the PK conflict', () => {
+    const { catalog } = setUp();
+    const id = idOf(catalog, 'h-kick');
+    writePeaksFailed(catalog, id);
+
+    expect(() => writePeaksFailed(catalog, id)).not.toThrow();
+    expect(waveformRow(catalog, id)).toMatchObject({ format: 0 });
+  });
+});
+
+describe('getPeaks', () => {
+  it('returns the stored bytes for the requested ids, keyed by sample id', () => {
+    const { catalog } = setUp();
+    const kickId = idOf(catalog, 'h-kick');
+    const loopId = idOf(catalog, 'h-loop');
+    const kickPeaks = new Int8Array(400).fill(7);
+    const loopPeaks = new Int8Array(400).fill(-7);
+    writePeaks(catalog, kickId, kickPeaks);
+    writePeaks(catalog, loopId, loopPeaks);
+
+    const result = getPeaks(catalog, [kickId, loopId]);
+
+    expect(Array.from(new Int8Array(result[kickId]))).toEqual(Array.from(kickPeaks));
+    expect(Array.from(new Int8Array(result[loopId]))).toEqual(Array.from(loopPeaks));
+  });
+
+  it('omits ids with no waveforms row; returns {} for an empty id list without querying', () => {
+    const { catalog } = setUp();
+    const kickId = idOf(catalog, 'h-kick');
+    writePeaks(catalog, kickId, new Int8Array(400));
+
+    expect(getPeaks(catalog, [])).toEqual({});
+    const result = getPeaks(catalog, [kickId, idOf(catalog, 'h-bass')]);
+    expect(Object.keys(result)).toEqual([String(kickId)]);
   });
 });
