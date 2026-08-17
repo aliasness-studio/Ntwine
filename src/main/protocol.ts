@@ -9,7 +9,23 @@ import { relPathToAbs } from './importer/transform';
 // over sample:// (there isn't one, but a future dev-tools fetch() from the renderer must work
 // too) is treated like https; `stream` so <audio> doesn't insist on buffering the whole response
 // before playback can start.
-const PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, stream: true };
+//
+// `corsEnabled: true` (Task 14 addition): `supportFetchAPI` alone makes fetch() usable BY a page
+// loaded FROM this scheme — it does not exempt a fetch() FROM a different origin (the renderer's
+// real origin, `http://localhost:5173` under `yarn start`'s Vite dev server, or `file://` in a
+// packaged build) INTO this scheme from ordinary CORS enforcement. previewPlayer.ts's
+// `fetch(sampleUrl(id))` is exactly that cross-origin case, and failed with "blocked by CORS
+// policy" against a real running app until this flag was added — confirmed by reproducing the
+// failure and re-testing after this one-line fix, not by documentation alone. No security
+// downside for this app's threat model: the renderer never loads remote/attacker-controlled
+// content, so there is no "other origin" this could leak sample bytes to.
+const PRIVILEGES = {
+  standard: true,
+  secure: true,
+  supportFetchAPI: true,
+  stream: true,
+  corsEnabled: true,
+};
 
 export const PROTOCOL_SCHEMES: CustomScheme[] = [
   { scheme: 'sample', privileges: PRIVILEGES },
