@@ -347,6 +347,16 @@ describe('writePeaks', () => {
 
     expect(waveformRow(catalog, id)).toMatchObject({ format: 1 });
   });
+
+  it('rejects a peaks array that is empty or an odd length, naming the length in the error', () => {
+    const { catalog } = setUp();
+    const id = idOf(catalog, 'h-kick');
+
+    expect(() => writePeaks(catalog, id, new Int8Array(0))).toThrow(/length.*0/);
+    expect(() => writePeaks(catalog, id, new Int8Array(3))).toThrow(/length.*3/);
+    // Neither rejected call left a row behind.
+    expect(waveformRow(catalog, id)).toBeUndefined();
+  });
 });
 
 describe('writePeaksFailed', () => {

@@ -54,8 +54,17 @@ export function computePeaks(
   channels: Float32Array[],
   buckets: number = DEFAULT_PEAKS_BUCKETS,
 ): Int8Array {
+  // Guarded BEFORE the allocation below, not after: `new Int8Array(buckets * 2)` with a
+  // negative `buckets` throws its own uncontrolled RangeError ("Invalid typed array length"),
+  // which would fire first if this check came after the allocation — a real bug caught in
+  // review round 1, since a caller-facing contract violation deserves a named, clear error, not
+  // whatever message TypedArray's own allocator happens to produce.
+  if (buckets <= 0) {
+    throw new Error(`computePeaks: buckets must be > 0, got ${buckets}`);
+  }
+
   const out = new Int8Array(buckets * 2);
-  if (channels.length === 0 || buckets <= 0) return out;
+  if (channels.length === 0) return out;
 
   const n = channels[0].length;
   const bucketSize = Math.max(1, Math.floor(n / buckets));

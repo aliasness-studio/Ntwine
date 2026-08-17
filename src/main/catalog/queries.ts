@@ -278,8 +278,18 @@ const UPSERT_WAVEFORM_SQL = `
  * `waveforms` table, keyed by `sample_id`. `bucket_count` is read off `peaks.length / 2` (two
  * bytes — one min, one max — per bucket) rather than hardcoded to 200, so a future non-default
  * `buckets` argument to `computePeaks` is recorded accurately instead of silently mislabeled.
+ *
+ * `peaks.length` must be even (whole [min, max] pairs) and > 0 — guarded here (review round 1)
+ * rather than trusted, since `computePeaks` is the only producer today but this function has no
+ * way to enforce that at the type level; an empty or odd-length array would otherwise silently
+ * write a nonsensical `bucket_count` (0, or a fractional pair count truncated by `/ 2`).
  */
 export function writePeaks(catalog: Catalog, sampleId: number, peaks: Int8Array): void {
+  if (peaks.length === 0 || peaks.length % 2 !== 0) {
+    throw new Error(
+      `writePeaks: peaks.length must be even and > 0 (one [min, max] byte pair per bucket), got length ${peaks.length}`,
+    );
+  }
   const buf = Buffer.from(peaks.buffer, peaks.byteOffset, peaks.byteLength);
   catalog.db.prepare<WaveformUpsertParams>(UPSERT_WAVEFORM_SQL).run({
     sample_id: sampleId,

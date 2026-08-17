@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { Catalog } from '../catalog/db';
 import { writePeaks, writePeaksFailed } from '../catalog/queries';
+import { relPathToAbs } from '../importer/transform';
 
 // Mirrors `utilityProcess.fork(...)`'s own return shape (Electron.UtilityProcess) narrowed down
 // to exactly what this queue uses. Production passes a real utilityProcess handle; tests pass a
@@ -51,13 +52,9 @@ interface SampleRelPathRow {
   rel_path: string;
 }
 
-// `rel_path` is always stored POSIX-relative regardless of host OS (transform.ts's `toRelPath`),
-// so it's rejoined by splitting on `/` and passing each segment through `path.join`
-// individually — same idiom importer.ts's `statPass` uses for the same reason (a plain
-// `join(libraryRoot, relPath)` would resolve wrong on a Windows host for a POSIX-separated
-// rel_path). Duplicated here rather than imported from `statPass` (which doesn't export this
-// piece standalone) — flagged in the Task 10 report as a considered, deferred extraction rather
-// than done silently.
+// Resolves each id's stored `rel_path` back to a native absolute path via `transform.ts`'s
+// `relPathToAbs` — shared with `importer.ts`'s `statPass` (Task 10 review round 1 hoisted this
+// out of two independently-maintained copies; see `relPathToAbs`'s own doc comment).
 function absPathsFor(catalog: Catalog, libraryRoot: string, ids: number[]): Map<number, string> {
   if (ids.length === 0) return new Map();
   const rows = catalog.db
@@ -67,7 +64,7 @@ function absPathsFor(catalog: Catalog, libraryRoot: string, ids: number[]): Map<
     .all(...ids);
   const map = new Map<number, string>();
   for (const row of rows) {
-    map.set(row.id, join(libraryRoot, ...row.rel_path.split('/')));
+    map.set(row.id, relPathToAbs(libraryRoot, row.rel_path));
   }
   return map;
 }
@@ -119,11 +116,36 @@ export function runPeaksQueue(opts: RunPeaksQueueOptions): Promise<void> {
     let cursor = 0;
     let done = 0;
 
+    // A persistence failure (most notably: a reply for a sampleId with no matching `samples`
+    // row — `waveforms.sample_id REFERENCES samples(id)`, and this catalog's `foreign_keys`
+    // pragma defaults ON, so that INSERT throws) counts exactly like a decode failure, not a
+    // queue failure: it must never escape uncaught (which — since this runs inside an
+    // asynchronous worker-message callback, not the synchronous Promise executor body — would
+    // NOT reject `runPeaksQueue`'s promise; it would surface as an unhandled exception while the
+    // promise hangs forever, since `done` never reaches `total`). The nested try around the
+    // `writePeaksFailed` fallback exists because IT can throw for the exact same FK reason (a
+    // reply for an unknown sampleId, ok or not) — that second failure is logged and swallowed,
+    // but `done`/`onProgress`/the next `pump`/the final kill-all must still happen regardless.
     const settle = (reply: WorkerReply): void => {
-      if (reply.ok) {
-        writePeaks(catalog, reply.sampleId, new Int8Array(reply.peaks));
-      } else {
-        writePeaksFailed(catalog, reply.sampleId);
+      try {
+        if (reply.ok) {
+          writePeaks(catalog, reply.sampleId, new Int8Array(reply.peaks));
+        } else {
+          writePeaksFailed(catalog, reply.sampleId);
+        }
+      } catch (err) {
+        console.error(
+          `runPeaksQueue: failed to persist a waveforms row for sampleId ${reply.sampleId}`,
+          err,
+        );
+        try {
+          writePeaksFailed(catalog, reply.sampleId);
+        } catch (fallbackErr) {
+          console.error(
+            `runPeaksQueue: writePeaksFailed fallback also failed for sampleId ${reply.sampleId} — giving up on this id, continuing the queue`,
+            fallbackErr,
+          );
+        }
       }
       done++;
       onProgress(done, total);

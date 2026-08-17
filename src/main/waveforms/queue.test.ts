@@ -177,6 +177,47 @@ describe('runPeaksQueue', () => {
     },
   );
 
+  it('a reply for a sampleId with no samples row does not wedge the queue (persistence failure treated like a decode failure)', async () => {
+    const { catalog, libraryRoot, ids } = setUp();
+    // waveforms.sample_id REFERENCES samples(id), and this catalog's foreign_keys pragma is ON
+    // by default (confirmed empirically, same as fixtureSpliceDb.ts's own note) — so writing a
+    // waveforms row for an id with no samples row throws a FOREIGN KEY SqliteError. `bogusId` is
+    // guaranteed not to collide with any real fixture id.
+    const bogusId = Math.max(...ids) + 1000;
+    const allIds = [...ids, bogusId];
+    const tracker = new ConcurrencyTracker();
+    const violations: string[] = [];
+    const fakeWorkers: FakeWorker[] = [];
+    // Every reply is "ok" — the bogus id fails at PERSISTENCE (writePeaks throws), not at decode
+    // (the fake never reports ok:false for it), which is the specific failure mode this test
+    // targets: a throw from inside settle() itself, not a worker-reported decode failure.
+    const forkWorker = vi.fn(() => {
+      const fake = makeFakeWorker({ tracker, failingIds: new Set(), violations });
+      fakeWorkers.push(fake);
+      return fake.worker;
+    });
+    const progressCalls: Array<[number, number]> = [];
+
+    await runPeaksQueue({
+      catalog,
+      libraryRoot,
+      sampleIds: allIds,
+      forkWorker,
+      onProgress: (done, total) => progressCalls.push([done, total]),
+    });
+
+    // The queue still completes: one tick per id, ending at done === total.
+    expect(progressCalls).toHaveLength(allIds.length);
+    expect(progressCalls[progressCalls.length - 1]).toEqual([allIds.length, allIds.length]);
+    // Every worker still gets killed on drain — the bad reply didn't leak one.
+    for (const w of fakeWorkers) expect(w.kill).toHaveBeenCalledTimes(1);
+    // The other (real) ids were processed normally — the one bad id didn't wedge the queue for
+    // everyone else.
+    for (const id of ids) {
+      expect(querySamples(catalog, {}).find((r) => r.id === id)).toMatchObject({ hasPeaks: true });
+    }
+  });
+
   it('resolves without forking any worker when sampleIds is empty', async () => {
     const { catalog, libraryRoot } = setUp();
     const forkWorker = vi.fn();

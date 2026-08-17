@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseTags, normalizeSample } from './transform';
+import { parseTags, normalizeSample, relPathToAbs } from './transform';
 
 describe('parseTags', () => {
   it('splits, trims, lowercases, dedupes, drops empties', () => {
@@ -7,21 +7,44 @@ describe('parseTags', () => {
   });
 });
 describe('normalizeSample', () => {
-  const base = { local_path: '/root/sounds/packs/P/kick.wav', file_hash: 'h', filename: 'kick.wav',
-    pack_uuid: 'u', sample_type: 'oneshot', bpm: 0, audio_key: '', chord_type: '', duration: 1395, tags: 'drums' };
+  const base = {
+    local_path: '/root/sounds/packs/P/kick.wav',
+    file_hash: 'h',
+    filename: 'kick.wav',
+    pack_uuid: 'u',
+    sample_type: 'oneshot',
+    bpm: 0,
+    audio_key: '',
+    chord_type: '',
+    duration: 1395,
+    tags: 'drums',
+  };
   it('maps zero/empty to null and keeps ms duration verbatim (spec §2.3 pin)', () => {
     const n = normalizeSample(base as any, '/root');
-    expect(n).toMatchObject({ bpm: null, audioKey: null, chordType: null, durationMs: 1395, relPath: 'sounds/packs/P/kick.wav' });
+    expect(n).toMatchObject({
+      bpm: null,
+      audioKey: null,
+      chordType: null,
+      durationMs: 1395,
+      relPath: 'sounds/packs/P/kick.wav',
+    });
   });
   it('keeps real bpm/key/chord', () => {
-    const n = normalizeSample({ ...base, bpm: 140, audio_key: 'c#', chord_type: 'minor' } as any, '/root');
+    const n = normalizeSample(
+      { ...base, bpm: 140, audio_key: 'c#', chord_type: 'minor' } as any,
+      '/root',
+    );
     expect(n).toMatchObject({ bpm: 140, audioKey: 'c#', chordType: 'minor' });
   });
   it('throws on an unknown sample_type instead of guessing', () => {
-    expect(() => normalizeSample({ ...base, sample_type: 'granular' } as any, '/root')).toThrow(/sample_type/);
+    expect(() => normalizeSample({ ...base, sample_type: 'granular' } as any, '/root')).toThrow(
+      /sample_type/,
+    );
   });
   it('throws when local_path is outside the library root (both paths in the message)', () => {
-    expect(() => normalizeSample(base as any, '/other-root')).toThrow(/\/other-root.*\/root|\/root.*\/other-root/);
+    expect(() => normalizeSample(base as any, '/other-root')).toThrow(
+      /\/other-root.*\/root|\/root.*\/other-root/,
+    );
   });
 });
 
@@ -54,5 +77,31 @@ describe('normalizeSample — additional (not in brief)', () => {
 describe('parseTags — additional (not in brief)', () => {
   it('returns an empty array for an empty tags string', () => {
     expect(parseTags('')).toEqual([]);
+  });
+});
+
+// Added Task 10 review round 1: relPathToAbs was hoisted out of duplicated copies in
+// importer.ts's statPass and queue.ts's absPathsFor (one-question-two-gates).
+describe('relPathToAbs — additional (not in brief)', () => {
+  it('rejoins a multi-segment POSIX rel_path under libraryRoot', () => {
+    expect(relPathToAbs('/root', 'sounds/packs/P/kick.wav')).toBe('/root/sounds/packs/P/kick.wav');
+  });
+
+  it('is the true inverse of toRelPath — round-trips through normalizeSample back to local_path', () => {
+    const base = {
+      local_path: '/root/sounds/packs/P/kick.wav',
+      file_hash: 'h',
+      filename: 'kick.wav',
+      pack_uuid: 'u',
+      sample_type: 'oneshot',
+      bpm: 0,
+      audio_key: '',
+      chord_type: '',
+      duration: 1395,
+      tags: 'drums',
+    };
+    const n = normalizeSample(base as any, '/root');
+
+    expect(relPathToAbs('/root', n.relPath)).toBe(base.local_path);
   });
 });

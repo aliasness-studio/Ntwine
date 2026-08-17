@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Catalog } from '../catalog/db';
 import type { ImportProgress } from '../../shared/ipcTypes';
 import type { SplicePack, SpliceSample } from './spliceDb';
-import { normalizeSample } from './transform';
+import { normalizeSample, relPathToAbs } from './transform';
 import { rebuildSearch } from '../catalog/search';
 import { readSplice, snapshotSpliceDb } from './spliceDb';
 import { downloadCovers, COVER_CANDIDATE_WHERE } from './covers';
@@ -158,11 +158,9 @@ export function buildCatalog(
 
 /**
  * Existence pass (spec §5 step 4): stat every sample's file under `libraryRoot` and set/clear
- * `samples.missing` accordingly. `rel_path` is always stored POSIX-relative regardless of host
- * OS (`transform.ts`'s `toRelPath` rewrites `sep` to `/` at import time so the catalog stays
- * portable across platforms) — rejoined here by splitting on `/` and passing each segment
- * through `path.join` individually, rather than `join(libraryRoot, relPath)` as one string, so a
- * POSIX-separated rel_path resolves to a correct native path on a Windows host too.
+ * `samples.missing` accordingly. Resolves each row's stored `rel_path` back to a native absolute
+ * path via `transform.ts`'s `relPathToAbs` (shared with `queue.ts`'s `absPathsFor` — Task 10
+ * review round 1 hoisted this out of two independently-maintained copies).
  *
  * Unconditional, not delta-only: every row gets its `missing` column freshly SET to the
  * just-observed 0/1 on every call, never merely set-when-newly-missing. That is what makes this
@@ -185,7 +183,7 @@ export function statPass(
 
   const run = db.transaction((toStat: SampleRelPathRow[]) => {
     for (const row of toStat) {
-      const absPath = join(libraryRoot, ...row.rel_path.split('/'));
+      const absPath = relPathToAbs(libraryRoot, row.rel_path);
       const exists = existsSync(absPath);
       setMissing.run(exists ? 0 : 1, row.id);
       if (exists) present++;

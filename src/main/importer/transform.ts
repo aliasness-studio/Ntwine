@@ -1,4 +1,4 @@
-import { isAbsolute, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import type { SpliceSample } from './spliceDb';
 
 // Ntwine's normalized shape for one sample row — field names transcribed verbatim from the
@@ -74,6 +74,24 @@ function toRelPath(localPath: string, libraryRoot: string): string {
   // just used (both come from the platform-default `node:path`), so this is a no-op on
   // POSIX hosts and a real backslash->slash rewrite on Windows.
   return rel.split(sep).join('/');
+}
+
+/**
+ * Inverse of `toRelPath`: resolves a stored `rel_path` (always POSIX-separated, per
+ * `toRelPath` above) back to a native absolute path under `libraryRoot`. Rejoined by splitting
+ * on `/` and passing each segment through `path.join` individually, rather than
+ * `join(libraryRoot, relPath)` as one string — the latter would resolve wrong on a Windows host
+ * for a POSIX-separated `rel_path` (backslash vs. forward-slash).
+ *
+ * Shared by `statPass` (importer.ts) and `runPeaksQueue`'s `absPathsFor` (queue.ts) — both
+ * answer the same question ("where is this sample's file on disk"), so they compute it from
+ * this ONE definition rather than two independently-maintained copies that could drift (owner's
+ * "one question, two gates" rule; `COVER_CANDIDATE_WHERE`, Task 9 review round 1, hoisted for
+ * the identical reason). Task 10 review round 1 hoisted this one, having initially left it
+ * duplicated between `statPass` and `absPathsFor`.
+ */
+export function relPathToAbs(libraryRoot: string, relPath: string): string {
+  return join(libraryRoot, ...relPath.split('/'));
 }
 
 /**

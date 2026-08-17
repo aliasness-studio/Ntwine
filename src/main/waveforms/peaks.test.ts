@@ -75,4 +75,25 @@ describe('computePeaks', () => {
 
     expect(Array.from(result).every((byte) => byte === 127)).toBe(true);
   });
+
+  it('clamps a negative out-of-range sample to -127 (mirrors the +127 clamp test)', () => {
+    // -1.5 * 127 = -190.5 -> floors to -191 (floor rounds toward -Infinity), which would wrap to
+    // +65 if assigned into the Int8Array unclamped (-191 + 256 = 65) — flipping the sign the
+    // other way. `clampInt8`'s two branches (> PEAKS_CLAMP, < -PEAKS_CLAMP) are genuinely
+    // separate code paths; the +1.5 test above only exercises the first one.
+    const result = computePeaks([constantChannel(-1.5, BUCKETS)], BUCKETS);
+
+    expect(Array.from(result).every((byte) => byte === -127)).toBe(true);
+  });
+
+  it('throws a clear error for buckets <= 0 instead of a RangeError from the Int8Array allocation', () => {
+    // `new Int8Array(buckets * 2)` would itself throw an uncontrolled RangeError for a negative
+    // buckets count if the allocation ran before this guard — this test pins the CONTROLLED
+    // error (matched by message), not just "throws something", since an uncontrolled RangeError
+    // would also make a bare `.toThrow()` pass.
+    expect(() => computePeaks([constantChannel(0.5, 10)], -1)).toThrow(
+      /buckets must be > 0, got -1/,
+    );
+    expect(() => computePeaks([constantChannel(0.5, 10)], 0)).toThrow(/buckets must be > 0, got 0/);
+  });
 });
