@@ -14,8 +14,6 @@ if (started) {
 const WAV_PATH =
   '/Users/<user>/Splice/sounds/packs/Essential Foley Sounds/BRS_Leaves_Scamper_Sml_Fast.wav';
 
-registerDragHandler(() => WAV_PATH);
-
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -42,7 +40,14 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow);
+app.whenReady().then(() => {
+  // Registered on confirmed-ready, not module scope: module-scope only ever
+  // proved "didn't throw" in the spike. Task 11 re-points resolvePath at the
+  // real catalog, which may carry its own readiness requirements (DB open,
+  // etc.) — whenReady() is the correct init order for that.
+  registerDragHandler(() => WAV_PATH);
+  createWindow();
+});
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
