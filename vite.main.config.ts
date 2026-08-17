@@ -18,6 +18,19 @@ export default defineConfig({
         main: 'src/main.ts',
         peaksWorker: 'src/main/waveforms/peaksWorker.ts',
       },
+      // better-sqlite3 ships a compiled native addon (Release/better_sqlite3.node) located
+      // through its own dynamic `require()` (a runtime path search, not a static string) —
+      // Rollup's commonjs plugin can't resolve that when the module gets INLINED into the
+      // bundle, and the inlined copy throws at runtime instead: "Could not dynamically require
+      // .../Release/better_sqlite3.node" (discovered via `yarn start` in Task 11 — the first
+      // code path to call `openCatalog` from the real bundled main.js rather than through the
+      // ELECTRON_RUN_AS_NODE vitest path, which imports the TS source directly and never hits
+      // Rollup's bundling at all). `external` leaves `require('better-sqlite3')` as a real
+      // Node require against node_modules at runtime — the standard fix for bundling a native
+      // Node addon — instead of inlining a module whose own loader depends on NOT being bundled.
+      // `@electron-forge/plugin-auto-unpack-natives` (spec §9.2) is a separate, later concern —
+      // for ASAR packaging specifically, which `yarn start`'s dev mode never invokes.
+      external: ['better-sqlite3'],
     },
   },
 });

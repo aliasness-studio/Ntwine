@@ -60,3 +60,25 @@ export interface ImportProgress {
   total: number;
   message?: string;
 }
+
+// THE bridge contract (Task 11): everything the renderer can reach main through crosses this one
+// object, exposed on `window.ntwine` by preload.ts's `contextBridge.exposeInMainWorld`. Every
+// later renderer task (12-15) imports this interface rather than reaching for ipcRenderer
+// directly — the renderer never touches Electron IPC APIs or the filesystem/SQLite itself (spec
+// §4). Field order/signatures transcribed verbatim from the Task 11 brief's Interfaces block.
+export interface NtwineApi {
+  getState(): Promise<{ imported: boolean; libraryRoot: string | null; spliceDbFound: boolean }>;
+  runImport(): Promise<void>; // resolves when catalog+stat+covers done; waveforms continue
+  onImportProgress(cb: (p: ImportProgress) => void): () => void;
+  pickLibraryRoot(): Promise<string | null>;
+  listPacks(): Promise<PackRow[]>;
+  listTags(): Promise<TagFacet[]>; // feeds the §7 tag chips (top-N by count, full list searchable)
+  querySamples(f: QueryFilters): Promise<SampleRow[]>; // whole result set — 4.2k rows max, one IPC hop
+  getPeaks(sampleIds: number[]): Promise<Record<number, ArrayBuffer>>;
+  decodePreviewPcm(
+    sampleId: number,
+  ): Promise<{ sampleRate: number; channels: Float32Array[] } | null>; // §4's ONE exception — capped + off-main, see below
+  startDrag(sampleId: number): void;
+  sampleUrl(sampleId: number): string; // `sample://s/${id}` — pure string helper
+  coverUrl(packId: number): string; // `cover://p/${id}`
+}
