@@ -44,10 +44,14 @@ Tables that matter (schema read firsthand):
 - **`samples`** — `local_path` (absolute), `file_hash` (UNIQUE), `filename`,
   `pack_uuid` → packs, `sample_type` (`'oneshot'` | `'loop'`, no other values in the
   data), `bpm` (INTEGER, 0 = none), `audio_key` (lowercase pitch class; exactly the 12
-  values `a a# b c c# d d# e f f# g g#`, sharps only; empty = none), `chord_type`
-  (`''` ×3737 | `'major'` ×40 | `'minor'` ×420), `duration` (INTEGER,
+  values `a a# b c c# d d# e f f# g g#`, sharps only; SQL NULL ×2977 = none), `chord_type`
+  (SQL NULL ×3737 | `'major'` ×40 | `'minor'` ×420), `duration` (INTEGER,
   **milliseconds** — verified against decoded audio length on 4 samples), `tags`
   (comma-separated text), `purchased_at`, `waveform_url` (remote), `provider_name`.
+  (The none-markers above were originally recorded as `''`: the sqlite3 CLI prints
+  NULL as an empty string, so the first probe conflated them. The first REAL import
+  (Task 13) failed on the actual NULLs; the importer now maps both NULL and `''`
+  to catalog NULL, and the fixture builder can represent real NULLs.)
 - **`packs`** — `uuid` (UNIQUE), `name`, `description`, `genre`, `provider_name`,
   `cover_url` (remote Cloudinary URL), `permalink`.
 
