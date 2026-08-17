@@ -12,4 +12,8 @@ export default tseslint.config(
   // no-undef needs the Node global environment explicitly — TS files get this for free from
   // typescript-eslint's type-aware checking, which is why this gap wasn't visible before.
   { files: ['scripts/**/*.{js,mjs,cjs}'], languageOptions: { globals: globals.node } },
+  // Test files map raw driver-level results (better-sqlite3 rows, etc.) that come back
+  // as `unknown` without an explicit generic; `no-explicit-any` forces every such spot
+  // into a cast. Scoped to *.test.ts, not repo-wide.
+  { files: ['**/*.test.ts'], rules: { '@typescript-eslint/no-explicit-any': 'off' } },
 );
