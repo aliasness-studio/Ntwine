@@ -15,13 +15,16 @@
 - **Nothing outside E2E mode may change behaviour.** Every new code path is behind `readE2EConfig(process.env) !== null` (i.e. `NTWINE_E2E=1`); with it unset the app is byte-for-byte v1. Unit-pinned in `src/main/e2e.test.ts`.
 - **E2E mode refuses to boot without `NTWINE_USER_DATA`** (absolute path). The suite never writes to `~/Splice`, `~/Library/Application Support/Ntwine`, `%APPDATA%\Ntwine`, or `.local/`. Fixture roots come from `fs.mkdtemp`.
 - **Runner ABI:** `yarn e2e:only` = `cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/@playwright/test/cli.js test --project default`. `launchNtwine` **deletes** `ELECTRON_RUN_AS_NODE` from the child env. Task 2 proves this or switches the whole plan to the named fallback (helper CLI) — decided once, recorded in the ledger.
-- **Launch target:** production build only — `.vite/build/main.js` + `.vite/renderer/main_window/index.html` produced by `electron-forge package`; the harness fails fast on a dev-mode build (`http://localhost:` inside `main.js`) or a missing renderer index.
+- **Launch target:** production build only — `.vite/build/main.js` + `.vite/renderer/main_window/index.html` produced by `electron-forge package`; the harness fails fast on a dev-mode build (`http://localhost:` inside `main.js`), a missing renderer index, or a build older than anything under `src/` (stale).
 - **Waits are conditions, never sleeps.** No `waitForTimeout`. Negatives are seam counters that stay flat while a sibling positive increments.
 - **Locators:** roles / `aria-label`s / visible text first; `data-testid` only on the five elements §3.1 of the spec licenses (`detected-splice-db`, `result-count`, `missing-badge`, `settings-library-root`, `cover-fallback`). Filenames are matched on the row's `title` attribute (visible text is middle-truncated at 42 chars).
 - **Every spec is falsifiable:** its task report names the falsifier run once by hand (comment out the guard/hook/branch under test → the spec fails).
 - Cross-platform: `path.join`, `os.tmpdir()`, `pathToFileURL`, `fileURLToPath`; no `/` literals; binaries resolved per platform. macOS is the first-hand gate; Windows is the owner's gate (expected to find app defects — record them, don't fix them in this lane).
 - Pins: `@playwright/test` **1.62.1** exact; MobX/React/TS pins unchanged; no `eslint-plugin-playwright`; no `playwright install`; CI env `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
-- Gates on every commit: `yarn test && yarn typecheck && yarn lint` green on the committed tree; from Task 2 on, also `yarn e2e:only` (after a `yarn package`) for the specs that exist. Commit author `AliasNess Studio <aliasness.studio@proton.me>`. Never stash/amend/rebase/force-push.
+- Gates on every commit: `yarn test && yarn typecheck && yarn lint` green on the committed tree; from Task 2 on, also the e2e suite for the specs that exist — **`yarn e2e` (which packages first) whenever the task touched anything under `src/`; `yarn e2e:only` is valid only when nothing under `src/` changed since the last `yarn package`** (a stale production build passes the dev-build guard and makes a new `data-testid` read as a locator bug; the harness also refuses a build older than `src/`, Task 2). Commit author `AliasNess Studio <aliasness.studio@proton.me>`. Never stash/amend/rebase/force-push.
+- **Two different "how many" answers exist in the app and the fixture names both:** `querySamples` (→ the top-bar `result-count`, `readCount`) has **no** `missing` predicate and counts every row; `listPacks` (→ rail counts) and `listTags` (→ tag-chip counts) join `AND s.missing = 0` and count **present** rows only (`src/main/catalog/queries.ts:184,203`). `FixtureLibrary` therefore carries `totalSamples`/`perPack` (all rows) AND `presentSamples`/`perPackPresent` (present rows); every count assertion says which one it means.
+- Seam recorder semantics (`harness/seam.ts`): `count(name)` is **cumulative** since `arm`; `drain(name)` **empties** the payload buffer and returns what was in it. Drain after every assertion that inspects payloads, so the next drain holds only what happened since.
+- The sample list is virtualized (TanStack Virtual, `ROW_HEIGHT = 40`). The fixture's 12 rows (480 px) always fit the default window, so `getByRole('option')` within `Sample list` sees every row; no spec may assume that for a larger library.
 - Repo hygiene: `.gitignore` gains `playwright-report/`, `test-results/`; Vitest keeps `src/**/*.test.ts`; Playwright owns `tests/e2e/**/*.spec.ts`; `tsconfig.json` unchanged (no `include`, `allowJs: true`).
 
 ---
@@ -37,8 +40,13 @@ src/main/drag.ts                    + optional e2eEmit → emit + skip native st
 src/main/protocol.ts                + optional e2eEmit → protocol seam
 src/main/ipc.ts                     + defaultLibraryRoot threading, preview-pcm seam
 src/preload.ts                      + `--ntwine-e2e` → window.ntwineE2E = true
-src/renderer.tsx                    + play counter wrapper + window.__ntwineE2E snapshot (armed only)
+src/renderer/e2eSnapshot.ts         wrapPlayPort / installE2ESnapshot (pure; unit-tested armed vs unarmed)
+src/renderer/e2eSnapshot.test.ts
+src/renderer.tsx                    two call sites into e2eSnapshot.ts (armed only)
 src/renderer/global.d.ts            + ntwineE2E / __ntwineE2E typings
+src/main/ipc.libraryRoot.test.ts    currentLibraryRoot precedence (default arg vs persisted meta)
+src/main/importer/fixtureSpliceDb.ts + .test.ts   duration: explicit null → SQL NULL (omitted → 0 unchanged)
+eslint.config.js                    drop the dead scripts/** block once scripts/ is empty
 src/renderer/components/*.tsx       + the five data-testids (attributes only)
 tests/support/sineAudio.ts          writeSineWav / writeSineAiff (shared generator; replaces scripts/gen-fixture-audio.mjs + tests/fixtures/*)
 src/main/waveforms/decode.test.ts   generates its inputs via tests/support/sineAudio.ts
@@ -61,7 +69,7 @@ README.md                           Verification section
 ### Task 1: E2E mode contract in the app
 
 **Files:**
-- Create: `src/main/e2e.ts`, `src/main/e2e.test.ts`, `src/shared/e2eTypes.ts`
+- Create: `src/main/e2e.ts`, `src/main/e2e.test.ts`, `src/shared/e2eTypes.ts`, `src/main/ipc.libraryRoot.test.ts`, `src/renderer/e2eSnapshot.ts`, `src/renderer/e2eSnapshot.test.ts`
 - Modify: `src/main.ts`, `src/main/drag.ts`, `src/main/protocol.ts`, `src/main/ipc.ts`, `src/preload.ts`, `src/renderer.tsx`, `src/renderer/global.d.ts`
 
 **Interfaces:**
@@ -69,11 +77,12 @@ README.md                           Verification section
   ```ts
   export interface E2EConfig { userData: string; appData: string | null; libraryRoot: string | null; bootMarker: string | null }
   export class E2EConfigError extends Error {}
-  export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null   // null unless env.NTWINE_E2E === '1'; throws E2EConfigError when armed without an absolute NTWINE_USER_DATA
+  export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null   // null unless env.NTWINE_E2E === '1'; throws E2EConfigError when armed without an absolute NTWINE_USER_DATA, or when any SUPPLIED optional override is not absolute
   export type E2EEmit = (event: string, payload: unknown) => void
   export interface EmitterLike { emit(eventName: string, ...args: unknown[]): boolean }
   export function makeE2EEmitter(app: EmitterLike, cfg: E2EConfig | null): E2EEmit | null   // null when unarmed
   ```
+  (`app` satisfies `EmitterLike`: Electron's `App` interface redeclares `on`/`once`/`addListener` with literal event-name overloads only, but inherits `emit(eventName: string | symbol, …)` unchanged from `NodeJS.EventEmitter` — `node_modules/electron/electron.d.ts:48ff`. That is why main can `emit` a custom name without a cast while the harness's `app.on(name, …)` needs one — Task 2.)
   Seam event names (string literals, used verbatim by later tasks): `ntwine:e2e:drag` `{ sampleId: number; file: string | null }`, `ntwine:e2e:protocol` `{ scheme: 'sample' | 'cover'; id: number | null; hit: boolean }`, `ntwine:e2e:preview-pcm` `{ sampleId: number; ok: boolean }`, `ntwine:e2e:nav-denied` `{ url: string }`, `ntwine:e2e:window-open-denied` `{ url: string }`.
 - Produces (`src/shared/e2eTypes.ts`):
   ```ts
@@ -110,6 +119,11 @@ describe('readE2EConfig', () => {
   });
   it('leaves optional overrides null when absent', () => {
     expect(readE2EConfig({ NTWINE_E2E: '1', NTWINE_USER_DATA: '/tmp/ud' })).toStrictEqual({ userData: '/tmp/ud', appData: null, libraryRoot: null, bootMarker: null });
+  });
+  it('refuses a SUPPLIED optional override that is not absolute (a typo must not run against cwd-relative data)', () => {
+    for (const key of ['NTWINE_APP_DATA', 'NTWINE_LIBRARY_ROOT', 'NTWINE_E2E_BOOT_MARKER'] as const) {
+      expect(() => readE2EConfig({ NTWINE_E2E: '1', NTWINE_USER_DATA: '/tmp/ud', [key]: 'relative/path' })).toThrow(new RegExp(key));
+    }
   });
 });
 
@@ -151,6 +165,14 @@ export interface E2EConfig {
 
 export class E2EConfigError extends Error {}
 
+/** Absent → null; present but not absolute → E2EConfigError (the spec's env table says <abs …> for every key). */
+function absoluteOrNull(env: NodeJS.ProcessEnv, key: string): string | null {
+  const value = env[key];
+  if (value === undefined || value === '') return null;
+  if (!isAbsolute(value)) throw new E2EConfigError(`${key} must be an absolute path (got "${value}")`);
+  return value;
+}
+
 export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null {
   if (env.NTWINE_E2E !== '1') return null;
   const userData = env.NTWINE_USER_DATA;
@@ -161,9 +183,9 @@ export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null {
   }
   return {
     userData,
-    appData: env.NTWINE_APP_DATA ?? null,
-    libraryRoot: env.NTWINE_LIBRARY_ROOT ?? null,
-    bootMarker: env.NTWINE_E2E_BOOT_MARKER ?? null,
+    appData: absoluteOrNull(env, 'NTWINE_APP_DATA'),
+    libraryRoot: absoluteOrNull(env, 'NTWINE_LIBRARY_ROOT'),
+    bootMarker: absoluteOrNull(env, 'NTWINE_E2E_BOOT_MARKER'),
   };
 }
 
@@ -261,7 +283,7 @@ In `whenReady`: `const getLibraryRoot = () => currentLibraryRoot(catalog, e2e?.l
     if (file) event.sender.startDrag({ file, icon });
 ```
 
-- [ ] **Step 7: Wire protocol.ts** — `RegisterProtocolsDeps` gains `e2eEmit?: E2EEmit | null`; in `handler`, after `resolved` is computed:
+- [ ] **Step 7: Wire protocol.ts** — `RegisterProtocolsDeps` gains `e2eEmit?: E2EEmit | null`; in `handler`, **immediately after the `resolveProtocolRequest(...)` call and BEFORE the `resolved === null` early return** (otherwise `hit` is always `true` and the 404 path is never observable):
 
 ```ts
     if (deps.e2eEmit) {
@@ -291,7 +313,7 @@ In `whenReady`: `const getLibraryRoot = () => currentLibraryRoot(catalog, e2e?.l
   });
 ```
 
-Add a unit case to the existing `src/main/ipc.test.ts` neighbourhood or a new `it` in `e2e.test.ts` is NOT possible for `currentLibraryRoot` (it needs a Catalog) — instead extend `src/main/catalog/queries.test.ts`'s style: in a new `src/main/ipc.libraryRoot.test.ts` (Vitest, real `openCatalog` in a temp dir): `currentLibraryRoot(catalog)` → `join(homedir(),'Splice')`; `currentLibraryRoot(catalog, '/x')` → `'/x'`; after `catalog.setMeta('library_root','/persisted')` both calls → `'/persisted'` (persisted wins — production precedence preserved). Write it failing first (the second-arg call fails to compile / returns the default), then implement.
+Precedence pin (TDD): `src/main/ipc.test.ts` already imports `./ipc` under Vitest with a real `openCatalog` in a temp dir (`ipc.test.ts:1-16`) — add a `describe('currentLibraryRoot')` there (or the sibling file `src/main/ipc.libraryRoot.test.ts` in the same style, if `ipc.test.ts` is already long): `currentLibraryRoot(catalog)` → `join(homedir(), 'Splice')`; `currentLibraryRoot(catalog, '/x')` → `'/x'`; after `catalog.setMeta('library_root', '/persisted')` both calls → `'/persisted'` (persisted wins — production precedence preserved). Write it failing first (the second-arg call does not compile / returns the default), then implement.
 
 - [ ] **Step 9: Wire preload.ts** — after `const api`, before `exposeInMainWorld('ntwine', api)`:
 
@@ -304,51 +326,118 @@ if (process.argv.includes('--ntwine-e2e')) {
 }
 ```
 
-- [ ] **Step 10: Wire renderer.tsx + global.d.ts** — `global.d.ts` adds to `Window`: `ntwineE2E?: true; __ntwineE2E?: () => E2ESnapshot;` (import the type from `../shared/e2eTypes`). In `renderer.tsx`, replace the `playPort` construction and add the snapshot:
+- [ ] **Step 10: Renderer arming — pure module + unit pin, then two call sites.** `renderer.tsx` is un-importable under Vitest by design, and the spec's `security.spec` row requires "a unit test pins that it is never attached unarmed" — so the arming logic lives in a pure module. `global.d.ts` adds to `Window`: `ntwineE2E?: true; __ntwineE2E?: () => E2ESnapshot;` (import the type from `../shared/e2eTypes`).
+
+Failing test first — `src/renderer/e2eSnapshot.test.ts` (Vitest, node env; no DOM needed):
+
+```ts
+import { describe, expect, it, vi } from 'vitest';
+import type { PlayPort } from './stores/PlayerStore';
+import { installE2ESnapshot, wrapPlayPort } from './e2eSnapshot';
+
+const fakePort = (): PlayPort => ({ play: vi.fn(), stop: vi.fn(), setVolume: vi.fn() });
+
+describe('wrapPlayPort', () => {
+  it('unarmed: returns the SAME port object — nothing wrapped, nothing counted', () => {
+    const base = fakePort();
+    const { port, counters } = wrapPlayPort(base, false);
+    expect(port).toBe(base);
+    port.play(7);
+    expect(counters()).toStrictEqual({ playCount: 0, lastPlayedId: null });
+  });
+  it('armed: counts plays and records the last id, then delegates every method', () => {
+    const base = fakePort();
+    const { port, counters } = wrapPlayPort(base, true);
+    expect(port).not.toBe(base);
+    port.play(3); port.play(9); port.stop(); port.setVolume(0.3);
+    expect(counters()).toStrictEqual({ playCount: 2, lastPlayedId: 9 });
+    expect(base.play).toHaveBeenNthCalledWith(1, 3);
+    expect(base.play).toHaveBeenNthCalledWith(2, 9);
+    expect(base.stop).toHaveBeenCalledOnce();
+    expect(base.setVolume).toHaveBeenCalledWith(0.3);
+  });
+});
+
+describe('installE2ESnapshot', () => {
+  it('unarmed: never attaches — the property stays absent (spec §4 security row)', () => {
+    const target: { __ntwineE2E?: unknown } = {};
+    installE2ESnapshot(target, false, () => { throw new Error('must not be read'); });
+    expect('__ntwineE2E' in target).toBe(false);
+  });
+  it('armed: attaches synchronously and returns the live reading on every call', () => {
+    const target: { __ntwineE2E?: () => unknown } = {};
+    let n = 0;
+    installE2ESnapshot(target, true, () => ({ n: ++n }) as never);
+    expect(typeof target.__ntwineE2E).toBe('function');
+    expect(target.__ntwineE2E!()).toStrictEqual({ n: 1 });
+    expect(target.__ntwineE2E!()).toStrictEqual({ n: 2 });
+  });
+});
+```
+
+Run (`yarn test src/renderer/e2eSnapshot.test.ts`) — **FAIL** (module missing). Then `src/renderer/e2eSnapshot.ts`:
+
+```ts
+import type { E2ESnapshot } from '../shared/e2eTypes';
+import type { PlayPort } from './stores/PlayerStore';
+
+export interface PlayCounters { playCount: number; lastPlayedId: number | null }
+
+/**
+ * E2E mode (armed by preload when main passed --ntwine-e2e): count plays BEFORE delegating, so a
+ * replay served from previewPlayer's buffer cache — no fetch, no protocol seam — is still
+ * observable. Explicit delegation, not a spread: createPreviewPlayer returns a class instance.
+ * Unarmed returns the base port itself — the production object graph is unchanged.
+ */
+export function wrapPlayPort(base: PlayPort, armed: boolean): { port: PlayPort; counters: () => PlayCounters } {
+  let playCount = 0;
+  let lastPlayedId: number | null = null;
+  const counters = (): PlayCounters => ({ playCount, lastPlayedId });
+  if (!armed) return { port: base, counters };
+  const port: PlayPort = {
+    play: (id) => { playCount++; lastPlayedId = id; base.play(id); },
+    stop: () => base.stop(),
+    setVolume: (v) => base.setVolume(v),
+  };
+  return { port, counters };
+}
+
+/** Attaches `__ntwineE2E` synchronously when armed; touches nothing when not. */
+export function installE2ESnapshot(target: { __ntwineE2E?: () => E2ESnapshot }, armed: boolean, read: () => E2ESnapshot): void {
+  if (!armed) return;
+  target.__ntwineE2E = read;
+}
+```
+
+Run — **PASS**. Then `renderer.tsx` keeps only the two call sites (replace the `playPort` construction):
 
 ```ts
 import { toJS } from 'mobx';
-import type { E2ESnapshot } from './shared/e2eTypes';
-import type { PlayPort } from './renderer/stores/PlayerStore';
+import { installE2ESnapshot, wrapPlayPort } from './renderer/e2eSnapshot';
 
-const basePort = createPreviewPlayer({ fetchBytes, decodeFallback: api.decodePreviewPcm, sampleUrl: api.sampleUrl });
-
-// E2E mode (armed by preload when main passed --ntwine-e2e): count plays before delegating, so a
-// replay served from previewPlayer's buffer cache — no fetch, no protocol seam — is still
-// observable. Explicit delegation, not a spread: createPreviewPlayer returns a class instance.
 const e2eArmed = window.ntwineE2E === true;
-let playCount = 0;
-let lastPlayedId: number | null = null;
-const playPort: PlayPort = e2eArmed
-  ? {
-      play: (id) => { playCount++; lastPlayedId = id; basePort.play(id); },
-      stop: () => basePort.stop(),
-      setVolume: (v) => basePort.setVolume(v),
-    }
-  : basePort;
+const basePort = createPreviewPlayer({ fetchBytes, decodeFallback: api.decodePreviewPcm, sampleUrl: api.sampleUrl });
+const { port: playPort, counters } = wrapPlayPort(basePort, e2eArmed);
 
 const stores: Stores = { library: new LibraryStore(api), player: new PlayerStore(playPort), importStore: new ImportStore(api) };
 
-if (e2eArmed) {
-  // Attached synchronously, before any async work — the harness waits on typeof === 'function'.
-  window.__ntwineE2E = (): E2ESnapshot => ({
-    rows: stores.library.rows.length,
-    resultCount: stores.library.resultCount,
-    selectedId: stores.player.selectedId,
-    volume: stores.player.volume,
-    filters: toJS(stores.library.filters) as Record<string, unknown>,
-    importPhase: stores.importStore.phase,
-    running: stores.importStore.running,
-    peaksCached: stores.library.peaksCache.size,
-    playCount,
-    lastPlayedId,
-  });
-}
+// Synchronous, before any async work — the harness waits on typeof === 'function'.
+installE2ESnapshot(window, e2eArmed, () => ({
+  rows: stores.library.rows.length,
+  resultCount: stores.library.resultCount,
+  selectedId: stores.player.selectedId,
+  volume: stores.player.volume,
+  filters: toJS(stores.library.filters) as Record<string, unknown>,
+  importPhase: stores.importStore.phase,
+  running: stores.importStore.running,
+  peaksCached: stores.library.peaksCache.size,
+  ...counters(),
+}));
 ```
 
 Every field read above exists at HEAD with exactly these names: `ImportStore.phase: ImportProgress['phase'] | null` and `.running`; `LibraryStore.rows`, `.filters: QueryFilters`, `.peaksCache: Map<number, ArrayBuffer>`, `get resultCount()`; `PlayerStore.selectedId: number | null`, `.volume = 1`; `PlayPort { play(id); stop(); setVolume(v) }` in `src/renderer/stores/PlayerStore.ts`.
 
-- [ ] **Step 11: Gates + unarmed boot check.** `yarn test && yarn typecheck && yarn lint` green. Then `yarn start` (unarmed) — app boots to the library exactly as before, DevTools opens (dev), no `window.__ntwineE2E` (`typeof window.__ntwineE2E` in the DevTools console is `'undefined'`; verify via a temporary `executeJavaScript` log if DevTools is not driveable, revert before commit). Kill the app by process tree.
+- [ ] **Step 11: Gates + unarmed boot smoke.** `yarn test && yarn typecheck && yarn lint` green (the armed/unarmed pins are `e2e.test.ts`, `ipc.libraryRoot.test.ts`, `e2eSnapshot.test.ts` — those are the gate). Then a one-time smoke, not a gate: `yarn start` (unarmed) — the app boots to the library exactly as before, DevTools opens (dev). Kill the app by process tree afterwards.
 
 - [ ] **Step 12: Commit** — `feat(e2e): app honours the E2E-mode contract (data dirs, library root, seams, snapshot, boot probe)`.
 
@@ -365,7 +454,7 @@ Every field read above exists at HEAD with exactly these names: `ImportStore.pha
 - Produces (`seam.ts`): `export interface Seam { arm(name: string): Promise<void>; count(name: string): Promise<number>; drain<T = unknown>(name: string): Promise<T[]> }`; `export function createSeam(app: ElectronApplication): Seam`.
 - Produces (scripts): `yarn e2e` (`electron-forge package && yarn e2e:only`), `yarn e2e:only`, `yarn e2e:real`.
 
-- [ ] **Step 1: Deps + scripts.** `cd <repo> && yarn add -D --exact @playwright/test@1.62.1` (add `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` to the command's env; then confirm no browsers were pulled: `ls ~/Library/Caches/ms-playwright 2>/dev/null` shows nothing new). Scripts:
+- [ ] **Step 1: Deps + scripts.** First `npm view @playwright/test version` — the plan was written against **1.62.1** (verified 2026-08-17); if a newer 1.x has since shipped, use that and record the resolved version as the first line of the task report (the spec says "latest 1.x at implementation time, pinned exactly"). Then `cd <repo> && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 yarn add -D --exact @playwright/test@<version>`; confirm no browsers were pulled (`ls ~/Library/Caches/ms-playwright 2>/dev/null` shows nothing new). Scripts:
 
 ```json
 "e2e": "electron-forge package && yarn e2e:only",
@@ -404,6 +493,8 @@ import type { ElectronApplication } from '@playwright/test';
  * ONLY AFTER it is installed — always `await seam.arm(...)` before the action under test, then
  * assert with `expect.poll(() => seam.count(...))`. Negatives are counters that stay flat while a
  * sibling positive increments — never "no event within a timeout".
+ * `count` is CUMULATIVE since arm; `drain` EMPTIES the payload buffer and returns it — drain after
+ * every payload assertion so the next drain holds only what happened since.
  */
 export interface Seam {
   arm(name: string): Promise<void>;
@@ -423,7 +514,9 @@ export function createSeam(app: ElectronApplication): Seam {
         if (g.__ntwineSeam[name]) return;
         const slot: Slot = { count: 0, payloads: [] };
         g.__ntwineSeam[name] = slot;
-        app.on(name, (payload: unknown) => {
+        // Electron's `App` type redeclares `on` with literal event-name overloads only (no
+        // `string` catch-all — electron.d.ts:48ff), so a custom name needs the EventEmitter view.
+        (app as unknown as NodeJS.EventEmitter).on(name, (payload: unknown) => {
           slot.count++;
           slot.payloads.push(payload);
         });
@@ -445,22 +538,38 @@ export function createSeam(app: ElectronApplication): Seam {
 
 ```ts
 import { _electron, type ElectronApplication, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSeam, type Seam } from './seam';
 
 export const REPO_ROOT = join(__dirname, '..', '..', '..');
 const MAIN_JS = join(REPO_ROOT, '.vite', 'build', 'main.js');
 const RENDERER_INDEX = join(REPO_ROOT, '.vite', 'renderer', 'main_window', 'index.html');
+const SRC_DIR = join(REPO_ROOT, 'src');
+
+function newestMtimeUnder(dir: string): number {
+  let newest = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) newest = Math.max(newest, newestMtimeUnder(full));
+    else if (entry.isFile()) newest = Math.max(newest, statSync(full).mtimeMs);
+  }
+  return newest;
+}
 
 /** `.vite/build/main.js` is written by BOTH `yarn start` (dev) and `electron-forge package` (prod);
- * only the production build is a valid launch target (e2e spec §3.3). */
+ * only a CURRENT production build is a valid launch target (e2e spec §3.3): a dev build is
+ * rejected by content, a stale production build (older than anything under src/) by mtime — a
+ * stale build would make a freshly added data-testid read as a locator bug. */
 export function assertProductionArtifact(): void {
   if (!existsSync(MAIN_JS) || !existsSync(RENDERER_INDEX)) {
     throw new Error('e2e: no production build found — run `yarn e2e` (or `yarn package`) first');
   }
   if (readFileSync(MAIN_JS, 'utf8').includes('http://localhost:')) {
     throw new Error('e2e: .vite/build/main.js is a DEV build (yarn start) — run `yarn package` first');
+  }
+  if (statSync(MAIN_JS).mtimeMs < newestMtimeUnder(SRC_DIR)) {
+    throw new Error('e2e: production build is older than src/ — run `yarn package` (or `yarn e2e`) first');
   }
 }
 
@@ -493,7 +602,15 @@ export async function launchNtwine(opts: LaunchOptions): Promise<Launched> {
   const app = await _electron.launch({ args: [MAIN_JS], env, cwd: REPO_ROOT });
   const page = await app.firstWindow();
   await page.waitForFunction(() => typeof window.__ntwineE2E === 'function');
-  return { app, page, seam: createSeam(app), close: () => app.close() };
+  // Idempotent: a spec may close the app itself (persistence relaunch) and the fixture's teardown
+  // closes it again — the second call must be a no-op, not a "target closed" throw.
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    await app.close();
+  };
+  return { app, page, seam: createSeam(app), close };
 }
 ```
 
@@ -516,7 +633,7 @@ test('better-sqlite3 loads in the Playwright runner process', () => {
 
 ```ts
 import { expect, test } from '@playwright/test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchNtwine } from './harness/launch';
@@ -534,9 +651,10 @@ test('the production build boots in E2E mode against empty temp dirs', async () 
     const snap = await page.evaluate(() => window.__ntwineE2E!());
     expect(snap.running).toBe(false);
     expect(snap.rows).toBe(0);
-    // userData landed in OUR temp dir, not the developer's.
+    // userData landed in OUR temp dir, not the developer's (realpath both sides: macOS tmpdir is a
+    // /var → /private/var symlink and Electron may hand back either spelling).
     const userData = await launched.app.evaluate(({ app }) => app.getPath('userData'));
-    expect(userData).toBe(join(root, 'userData'));
+    expect(realpathSync(userData)).toBe(realpathSync(join(root, 'userData')));
   } finally {
     await launched.close();
     rmSync(root, { recursive: true, force: true });
@@ -556,8 +674,10 @@ test('the production build boots in E2E mode against empty temp dirs', async () 
 ### Task 3: Shared audio generator + fixture library builder
 
 **Files:**
-- Create: `tests/support/sineAudio.ts`, `tests/e2e/fixture/library.ts`, `tests/e2e/fixture.spec.ts`
-- Modify: `src/main/waveforms/decode.test.ts` (generate inputs), delete `scripts/gen-fixture-audio.mjs`, delete `tests/fixtures/sine.wav`, `tests/fixtures/sine.aiff`
+- Create: `tests/support/sineAudio.ts`, `tests/e2e/fixture/library.ts`, `tests/e2e/fixture.spec.ts`, `src/main/importer/fixtureSpliceDb.test.ts`
+- Modify: `src/main/waveforms/decode.test.ts` (generate inputs), `src/main/importer/fixtureSpliceDb.ts` (NULL duration), `eslint.config.js` (drop the `scripts/**` block once `scripts/` is empty), `docs/superpowers/specs/2026-08-17-ntwine-e2e-backstop-design.md` §3.2 (one sentence, see Step 2); delete `scripts/gen-fixture-audio.mjs`, delete `tests/fixtures/sine.wav`, `tests/fixtures/sine.aiff`
+
+**Deliberate supersession of spec §3.2:** the spec said the generator lives at `tests/e2e/fixture/audio.ts` and `scripts/gen-fixture-audio.mjs` "becomes a two-line caller". The plan puts it at `tests/support/sineAudio.ts` (a Vitest test under `src/` imports it — `tests/e2e/` would be the wrong home) and **deletes** the script and the committed binaries outright: an `.mjs` cannot import a TS module without a loader, and once `decode.test.ts` generates its inputs into a temp dir there is nothing left to regenerate (`git grep` confirms `decode.test.ts:7,14` is the only consumer of `tests/fixtures/*`). Step 2 edits the spec sentence to match so the two documents agree.
 
 **Interfaces:**
 - Produces (`tests/support/sineAudio.ts`): `export function sinePcm16(ms: number, hz = 440, rate = 44100): Int16Array`; `export function writeSineWav(path: string, ms: number, hz?: number): void`; `export function writeSineAiff(path: string, ms: number, hz?: number): void` — 44100 Hz mono 16-bit, byte-for-byte the algorithm of the deleted script (RIFF/WAVE 44-byte header; FORM/AIFF with COMM 80-bit extended rate `40 0E AC 44 00×6` and SSND).
@@ -565,28 +685,64 @@ test('the production build boots in E2E mode against empty temp dirs', async () 
   ```ts
   export interface FixtureLibrary {
     root: string; userData: string; appData: string; libraryRoot: string;
-    totalSamples: number;                                  // 12
+    totalSamples: number;                                  // 12 — every row (querySamples / top-bar count)
+    presentSamples: number;                                // 11 — rows whose file exists (listPacks / listTags counts)
     packs: string[];                                       // ['Alpha Drums', 'Beta Keys', 'Gamma FX'] (rail order = name asc)
     coveredPacks: string[];                                // ['Alpha Drums', 'Beta Keys']
     uncoveredPack: string;                                 // 'Gamma FX'
-    perPack: Record<string, number>;                       // { 'Alpha Drums': 6, 'Beta Keys': 3, 'Gamma FX': 3 }
-    counts: { oneshot: number; loop: number; keyCSharp: number; keyA: number; keyNull: number; bpm100to140: number; tagKick: number; tagSnare: number; tagDrums: number; kickAndSnare: number };
-    missingFilename: string; aiffFilenames: string[]; nfdFilename: string;
+    perPack: Record<string, number>;                       // all rows      { 'Alpha Drums': 6, 'Beta Keys': 3, 'Gamma FX': 3 }
+    perPackPresent: Record<string, number>;                // present rows  { 'Alpha Drums': 6, 'Beta Keys': 3, 'Gamma FX': 2 }
+    counts: { oneshot: number; loop: number; keyCSharp: number; keyA: number; keyNull: number; bpm100to140: number; tagKick: number; tagSnare: number; tagDrums: number; kickAndSnare: number; kickOrSnare: number; searchKick: number };   // searchKick: rows with a `kick*` token in filename ∪ tags ∪ pack name (FTS model, Task 6)
+    missingFilename: string; aiffFilenames: string[]; nfdFilename: string;             // NFD row is PRESENT; missing row is ASCII — never the same row
     keyBpmRow: { filename: string; pack: string; keyText: string; bpmText: string };   // AD_Loop_128_kick.wav · 'C♯ min' · '128'
     durationRow: { filename: string; durationText: string; tags: string[] };          // AD_Kick_02.wav · '1.4s' · ['drums','kick','punchy']
+    nullDurationFilename: string;                                                     // AD_Snare_01.wav → duration cell '—'
   }
   export function buildFixtureLibrary(root: string): FixtureLibrary
   ```
-  Every number is computed from the `SAMPLES` table by `filter(...).length` — never typed twice.
+  Every number is computed from the `SAMPLES` table by `filter(...).length` — never typed twice. **All-rows vs present-rows is the one asymmetry the app has** (see Global Constraints) and the fixture names both so no spec guesses.
 
 - [ ] **Step 1: Failing test — `decode.test.ts` on generated inputs.** Change the two hardcoded `tests/fixtures/...` paths to files generated in `beforeAll` into `mkdtempSync(join(tmpdir(), 'ntwine-decode-'))` via `writeSineWav(join(dir, 'sine.wav'), 100)` / `writeSineAiff(join(dir, 'sine.aiff'), 100)`; add one assertion that both decode to `sampleRate === 44100` and `channels[0].length === 4410`. Run `yarn test src/main/waveforms/decode.test.ts` — **FAIL** (module `tests/support/sineAudio` missing).
-- [ ] **Step 2: Implement `tests/support/sineAudio.ts`** — port the deleted script verbatim into the three functions (keep the comments about the AIFF extended-float rate). Run — **PASS**. Delete `scripts/gen-fixture-audio.mjs` and `tests/fixtures/sine.*` (`git rm`); `grep -rn "gen-fixture-audio\|tests/fixtures" src scripts package.json` must be empty. Commit: `refactor(fixtures): shared sine WAV/AIFF generator; decode test generates its inputs`.
+- [ ] **Step 2: Implement `tests/support/sineAudio.ts`** — port the deleted script verbatim into the three functions (keep the comments about the AIFF extended-float rate). Run — **PASS**. Delete `scripts/gen-fixture-audio.mjs` and `tests/fixtures/sine.*` (`git rm`); `grep -rn "gen-fixture-audio\|tests/fixtures" src scripts package.json` must be empty. `scripts/` is now empty, so remove the now-dead `files: ['scripts/**/*.{js,mjs,cjs}']` block from `eslint.config.js` (`yarn lint` must stay green). The spec's §3.2 generator sentence was already amended at plan-review time to say exactly this (`tests/support/sineAudio.ts`; script and committed binaries deleted) — read it, do not re-edit it. Commit: `refactor(fixtures): shared sine WAV/AIFF generator; decode test generates its inputs`.
+- [ ] **Step 2b: NULL duration in the fixture builder (TDD).** New `src/main/importer/fixtureSpliceDb.test.ts`:
+
+```ts
+import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { buildFixtureSpliceDb } from './fixtureSpliceDb';
+
+describe('buildFixtureSpliceDb duration', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ntwine-fixture-db-'));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  it('omitted → 0 (the documented sentinel), explicit null → SQL NULL, number → number', () => {
+    const dbPath = join(dir, 'sounds.db');
+    buildFixtureSpliceDb(dbPath, [
+      { table: 'samples', file_hash: 'a', filename: 'a.wav' },
+      { table: 'samples', file_hash: 'b', filename: 'b.wav', duration: null },
+      { table: 'samples', file_hash: 'c', filename: 'c.wav', duration: 1395 },
+    ]);
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare('select file_hash, duration from samples order by file_hash').all();
+    db.close();
+    expect(rows).toEqual([
+      { file_hash: 'a', duration: 0 },
+      { file_hash: 'b', duration: null },
+      { file_hash: 'c', duration: 1395 },
+    ]);
+  });
+});
+```
+
+Run — **FAIL** (`duration: null` rejected by the type / stored as 0). Widen `FixtureSampleRow.duration?: number | null` and change the insert to `duration: row.duration === undefined ? 0 : row.duration,` — the same `=== undefined` idiom `audio_key`/`chord_type` already use two lines above (`fixtureSpliceDb.ts:135-138`); update the builder's doc comment (line ~79) to say `duration` follows the same rule. Run — **PASS**; `yarn test` — all green (no existing caller passes `null`). Commit: `test(fixtures): fixture Splice DB can store a NULL duration`.
 - [ ] **Step 3: Failing test — `tests/e2e/fixture.spec.ts`** (runs in the runner, no app):
 
 ```ts
 import { expect, test } from '@playwright/test';
 import Database from 'better-sqlite3';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFixtureLibrary } from './fixture/library';
@@ -599,22 +755,34 @@ test('buildFixtureLibrary writes a Splice-shaped tree + sounds.db with the docum
     const dbPath = join(f.appData, 'com.splice.Splice', 'users', 'default', 'e2e', 'sounds.db');
     expect(existsSync(dbPath)).toBe(true);
     const db = new Database(dbPath, { readonly: true });
-    const rows = db.prepare('select local_path, sample_type, bpm, audio_key, tags from samples').all() as {
-      local_path: string; sample_type: string; bpm: number; audio_key: string | null; tags: string;
+    const rows = db.prepare('select local_path, sample_type, bpm, audio_key, duration, tags from samples').all() as {
+      local_path: string; sample_type: string; bpm: number; audio_key: string | null; duration: number | null; tags: string;
     }[];
-    expect(rows).toHaveLength(12);
-    expect(rows.filter((r) => r.sample_type === 'oneshot')).toHaveLength(8);
-    expect(rows.filter((r) => r.audio_key === 'c#')).toHaveLength(3);
-    expect(rows.filter((r) => r.audio_key === null)).toHaveLength(4);        // real NULL, not ''
-    expect(rows.filter((r) => r.bpm >= 100 && r.bpm <= 140)).toHaveLength(4);
-    expect(rows.filter((r) => /(^|,)\s*kick\s*(,|$)/i.test(r.tags))).toHaveLength(3);
+    expect(rows).toHaveLength(f.totalSamples);                                 // 12
+    expect(rows.filter((r) => r.sample_type === 'oneshot')).toHaveLength(f.counts.oneshot);
+    expect(rows.filter((r) => r.audio_key === 'c#')).toHaveLength(f.counts.keyCSharp);
+    expect(rows.filter((r) => r.audio_key === null)).toHaveLength(f.counts.keyNull);   // real NULL, not ''
+    expect(rows.filter((r) => r.duration === null)).toHaveLength(1);           // real NULL duration (→ '—')
+    expect(rows.filter((r) => r.bpm >= 100 && r.bpm <= 140)).toHaveLength(f.counts.bpm100to140);
+    expect(rows.filter((r) => /(^|,)\s*kick\s*(,|$)/i.test(r.tags))).toHaveLength(f.counts.tagKick);   // 4
     // 11 files exist, exactly one row's file is absent, all under libraryRoot
     const present = rows.filter((r) => existsSync(r.local_path));
-    expect(present).toHaveLength(11);
+    expect(present).toHaveLength(f.presentSamples);
     expect(rows.every((r) => r.local_path.startsWith(f.libraryRoot))).toBe(true);
     expect(rows.find((r) => !existsSync(r.local_path))!.local_path.endsWith(f.missingFilename)).toBe(true);
-    // covers: 2 PNGs on disk, addressed by file URLs
-    expect(readdirSync(join(root, 'covers-src'))).toHaveLength(2);
+    // the NFD name is on disk under its exact bytes and is NOT the missing row
+    const nfdRow = rows.find((r) => r.local_path.endsWith(f.nfdFilename))!;
+    expect(f.nfdFilename).not.toBe(f.missingFilename);
+    expect(existsSync(nfdRow.local_path)).toBe(true);
+    expect(f.nfdFilename.normalize('NFC')).not.toBe(f.nfdFilename);         // it really is decomposed
+    // covers: 2 PNGs on disk (signature + 1×1 IHDR), addressed by file URLs
+    const pngs = readdirSync(join(root, 'covers-src'));
+    expect(pngs).toHaveLength(2);
+    for (const name of pngs) {
+      const bytes = readFileSync(join(root, 'covers-src', name));
+      expect(bytes.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([1, 1]);
+    }
     const packs = db.prepare('select name, cover_url from packs').all() as { name: string; cover_url: string | null }[];
     expect(packs.filter((p) => p.cover_url?.startsWith('file:'))).toHaveLength(2);
     expect(packs.filter((p) => p.cover_url === null)).toHaveLength(1);
@@ -647,30 +815,42 @@ const PACKS = [
 // bpm 0 = none (5 rows) · 90 (3) · 128 (4)  →  100–140 matches 4
 // audio_key NULL (4) · 'c#' (3) · 'a' (5)  — passed as an EXPLICIT null (see below)
 // sample_type oneshot (8) · loop (4)
-// tags: kick ×3, snare ×2, drums ×6 (case/space variants exercise parseTags: trim+lowercase+dedupe)
-// ms is the DB `duration` value formatDuration renders (ms) — unrelated to the generated audio length.
-// The builder stores `duration ?? 0` (fixtureSpliceDb.ts:138), so a NULL duration is not producible — none here.
-const SAMPLES: Array<{ file: string; pack: 0 | 1 | 2; type: 'oneshot' | 'loop'; bpm: number; key: string | null; chord: 'major' | 'minor' | null; ms: number; tags: string; audioMs: number; kind: 'wav' | 'aiff' | 'missing' }> = [
+// tags: kick ×4, snare ×2, drums ×6, kick∧snare ×1 (AD_Snare_02), kick∨snare ×5 (case/space variants exercise parseTags: trim+lowercase+dedupe)
+// ms is the DB `duration` value formatDuration renders (ms) — unrelated to the generated audio length;
+// `null` is a real SQL NULL (→ '—'; Step 2b widened the builder for it).
+// The NFD filename (é as e + U+0301) is on a PRESENT row so statPass proves the on-disk name round-trips
+// on APFS and NTFS; the missing row is plain ASCII — the two claims must never share a row.
+const SAMPLES: Array<{ file: string; pack: 0 | 1 | 2; type: 'oneshot' | 'loop'; bpm: number; key: string | null; chord: 'major' | 'minor' | null; ms: number | null; tags: string; audioMs: number; kind: 'wav' | 'aiff' | 'missing' }> = [
   { file: 'AD_Kick_01.wav',        pack: 0, type: 'oneshot', bpm: 0,   key: null, chord: null,    ms: 412,  tags: 'Drums, kick',            audioMs: 400,  kind: 'wav' },
   { file: 'AD_Kick_02.wav',        pack: 0, type: 'oneshot', bpm: 0,   key: 'c#', chord: 'minor', ms: 1395, tags: 'drums,Kick ,punchy',     audioMs: 1400, kind: 'wav' },  // durationRow: 1.4s · tags drums,kick,punchy
-  { file: 'AD_Snare_01.wav',       pack: 0, type: 'oneshot', bpm: 0,   key: null, chord: null,    ms: 300,  tags: 'drums, snare',            audioMs: 300,  kind: 'wav' },
-  { file: 'AD_Snare_02.wav',       pack: 0, type: 'oneshot', bpm: 0,   key: 'a',  chord: null,    ms: 350,  tags: 'Drums,SNARE,tight',       audioMs: 350,  kind: 'wav' },
+  { file: 'AD_Snare_01.wav',       pack: 0, type: 'oneshot', bpm: 0,   key: null, chord: null,    ms: null, tags: 'drums, snare',            audioMs: 300,  kind: 'wav' },  // nullDurationFilename: '—'
+  { file: 'AD_Snare_02.wav',       pack: 0, type: 'oneshot', bpm: 0,   key: 'a',  chord: null,    ms: 350,  tags: 'Drums,SNARE,kick,tight',  audioMs: 350,  kind: 'wav' },  // the one kick∧snare row
   { file: 'AD_Loop_128_kick.wav',  pack: 0, type: 'loop',    bpm: 128, key: 'c#', chord: 'minor', ms: 1875, tags: 'drums, loop, kick',       audioMs: 1800, kind: 'wav' },  // keyBpmRow: C♯ min · 128
   { file: 'AD_Loop_128_b.wav',     pack: 0, type: 'loop',    bpm: 128, key: 'a',  chord: 'major', ms: 1875, tags: 'drums, loop',             audioMs: 1800, kind: 'wav' },
   { file: 'BK_Chord_90.aiff',      pack: 1, type: 'loop',    bpm: 90,  key: 'a',  chord: 'major', ms: 2500, tags: 'keys, chord',             audioMs: 2500, kind: 'aiff' },
   { file: 'BK_Pluck.aiff',         pack: 1, type: 'oneshot', bpm: 0,   key: 'a',  chord: null,    ms: 800,  tags: 'keys, pluck',             audioMs: 800,  kind: 'aiff' },
   { file: 'BK_Pad_128.wav',        pack: 1, type: 'loop',    bpm: 128, key: 'c#', chord: 'major', ms: 2200, tags: 'keys, pad',               audioMs: 2200, kind: 'wav' },
-  { file: 'GF_Riser_90.wav',       pack: 2, type: 'oneshot', bpm: 90,  key: null, chord: null,    ms: 2000, tags: 'fx, riser',               audioMs: 2000, kind: 'wav' },
+  { file: 'GF_Café_Riser_90.wav', pack: 2, type: 'oneshot', bpm: 90,  key: null, chord: null,    ms: 2000, tags: 'fx, riser',               audioMs: 2000, kind: 'wav' },   // nfdFilename — PRESENT (é = e + U+0301)
   { file: 'GF_Impact_128.wav',     pack: 2, type: 'oneshot', bpm: 128, key: 'a',  chord: null,    ms: 900,  tags: 'fx, impact',              audioMs: 900,  kind: 'wav' },
-  { file: 'GF_Café_Hit_90.wav', pack: 2, type: 'oneshot', bpm: 90, key: null, chord: null,  ms: 1500, tags: 'fx, hit',                 audioMs: 100,  kind: 'missing' }, // NFD é; the missing row
+  { file: 'GF_Hit_90.wav',         pack: 2, type: 'oneshot', bpm: 90,  key: null, chord: null,    ms: 1500, tags: 'fx, hit',                 audioMs: 100,  kind: 'missing' }, // missingFilename — plain ASCII, no file written
 ];
 ```
 
-`buildFixtureLibrary(root)`: `mkdirSync` `userData/`, `appData/com.splice.Splice/users/default/e2e/`, `library/sounds/packs/<Pack>/vendor/`, `covers-src/`; write a tiny valid PNG (1×1 RGBA via `deflateSync` — a 67-byte file: signature, IHDR, IDAT, IEND with CRCs; implement `writePng1x1(path)` locally, ~25 lines) for the two covered packs; write each `wav`/`aiff` sample with the shared generator (`kind === 'missing'` writes nothing); build the DB rows: packs `{ table: 'packs', uuid, name, cover_url: covered ? pathToFileURL(png).toString() : null }`, samples `{ table: 'samples', file_hash: <unique>, local_path: <abs path>, filename, pack_uuid, sample_type, bpm, audio_key: key, chord_type: chord, duration: ms, tags }` — **pass `audio_key: null` / `chord_type: null` explicitly for the "none" rows**: `buildFixtureSpliceDb` maps `undefined` to `''` and only an explicit `null` to a real SQL NULL (`fixtureSpliceDb.ts:135-137`), and real Splice rows are NULL (v1's first real import crashed on exactly this shape); call `buildFixtureSpliceDb(dbPath, rows)`; return the `FixtureLibrary` with every count computed **from `SAMPLES`** (`filter(...).length`; `perPack` keyed by pack name; `kickAndSnare` = rows whose parsed tags include both), `keyBpmRow` = `AD_Loop_128_kick.wav` (`keyText: 'C♯ min'`, `bpmText: '128'` — what `formatKey('c#','minor')` renders), `durationRow` = `AD_Kick_02.wav` (`durationText: '1.4s'`, `tags: ['drums','kick','punchy']` — `parseTags` order), `missingFilename`, `aiffFilenames`, `nfdFilename`, `packs` (name-ascending, the rail's order), `coveredPacks`, `uncoveredPack`.
+`buildFixtureLibrary(root)`: `mkdirSync` `userData/`, `appData/com.splice.Splice/users/default/e2e/`, `library/sounds/packs/<Pack>/vendor/`, `covers-src/`; write the cover PNGs for the two covered packs from a constant — no hand-rolled encoder:
+
+```ts
+// 1×1 transparent PNG (68 bytes) — the standard minimal PNG; fixture.spec pins its signature + IHDR.
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+);
+```
+
+(v1's cover pipeline stores every fetched cover as `<uuid>.jpg` regardless of source bytes — `src/main/importer/covers.ts:83` — so the PNG bytes are served with an `image/jpeg` type; Blink picks the image decoder by content signature, not Content-Type, so `naturalWidth > 0` in Task 5 still holds. If it ever does not, that is a finding about the pipeline, not this fixture.) Write each `wav`/`aiff` sample with the shared generator (`kind === 'missing'` writes nothing) — the NFD filename is written with its exact decomposed bytes (`join(...)`, no `normalize`); build the DB rows: packs `{ table: 'packs', uuid, name, cover_url: covered ? pathToFileURL(png).toString() : null }`, samples `{ table: 'samples', file_hash: <unique>, local_path: <abs path>, filename, pack_uuid, sample_type, bpm, audio_key: key, chord_type: chord, duration: ms, tags }` — **pass `audio_key: null` / `chord_type: null` / `duration: null` explicitly for the "none" rows**: `buildFixtureSpliceDb` maps `undefined` to the sentinel (`''` / `0`) and only an explicit `null` to a real SQL NULL (`fixtureSpliceDb.ts:135-138`, Step 2b), and real Splice rows are NULL (v1's first real import crashed on exactly this shape); call `buildFixtureSpliceDb(dbPath, rows)`; return the `FixtureLibrary` with every count computed **from `SAMPLES`** (`filter(...).length`; `perPack` keyed by pack name over all rows, `perPackPresent` over `kind !== 'missing'`; `presentSamples` likewise; `kickAndSnare` = rows whose parsed tags include both, `kickOrSnare` = either), `keyBpmRow` = `AD_Loop_128_kick.wav` (`keyText: 'C♯ min'`, `bpmText: '128'` — what `formatKey('c#','minor')` renders), `durationRow` = `AD_Kick_02.wav` (`durationText: '1.4s'`, `tags: ['drums','kick','punchy']` — `parseTags` order), `nullDurationFilename` = `AD_Snare_01.wav`, `missingFilename` = `GF_Hit_90.wav`, `nfdFilename` = the Café row, `aiffFilenames`, `packs` (name-ascending, the rail's order), `coveredPacks`, `uncoveredPack`.
 
 Run — **PASS**. Then hand-verify the fixture imports through the REAL app once (temporary spec or a `boot.spec` variant launched with this fixture's dirs, click Import, count reads `12 samples`) — this is the moment the whole strategy is proven end to end; keep that as `first-run.spec` in Task 4, but do the check now and note the outcome in the report.
 
-- [ ] **Step 5: Gates** (`yarn test && yarn typecheck && yarn lint`, `yarn e2e:only`). **Step 6: Commit** — `feat(e2e): synthetic Splice-shaped fixture library with derived expectations`.
+- [ ] **Step 5: Gates** (`yarn test && yarn typecheck && yarn lint`, then `yarn e2e` — this task touched `src/`, so the harness's staleness guard requires a fresh package). **Step 6: Commit** — `feat(e2e): synthetic Splice-shaped fixture library with derived expectations`.
 
 ---
 
@@ -682,7 +862,7 @@ Run — **PASS**. Then hand-verify the fixture imports through the REAL app once
 
 **Interfaces:**
 - Produces (`fixtures.ts`): `export const test = base.extend<{ ntwine: Launched & { fixture: FixtureLibrary; root: string } }>(...)`; `export { expect } from '@playwright/test'`. Every later spec imports `{ test, expect }` from `./harness/fixtures`.
-- Produces (`actions.ts`): `importAndWait(page): Promise<void>` (click `Import library`, wait for `getByRole('listbox', { name: 'Sample list' })`), `readCount(page): Promise<number>` (parses `[data-testid=result-count]` text `/^(\d+) samples$/`), `snapshot(page): Promise<E2ESnapshot>` (`page.evaluate(() => window.__ntwineE2E!())`), `search(page, text)` (fill `Search samples`), `clickPack(page, name)` — the rail option's accessible name is `"<name> <count>"` (`PackRail.tsx`: `<Name>` + `<Count>`), so match `page.getByRole('listbox', { name: 'Packs' }).getByRole('option', { name: new RegExp('^' + escapeRegExp(name) + ' \\d+$') })`, `toggleType(page, 'One-shot' | 'Loop')` (`getByRole('button', { name, exact: true })`), `pickKey(page, key | '')` (`selectOption` on `Key filter`), `setBpm(page, min | '', max | '')` (fill `Minimum BPM`/`Maximum BPM`), `toggleTag(page, tag)` — the chip is a `<button>` whose accessible name is `"<tag> <count>"`, so `getByRole('button', { name: new RegExp('^' + escapeRegExp(tag) + ' \\d+$') })`, `rowByFilename(page, filename): Locator` — the `title` attribute lives on the `Filename` span inside the row, so `page.getByRole('listbox', { name: 'Sample list' }).getByRole('option').filter({ has: page.locator(`[title="${filename}"]`) })`, `openSettings(page)` (`getByRole('button', { name: 'Settings' })` — `App.tsx` gear), plus a local `escapeRegExp`. `waitForWaveform`/`isRealWaveform` are added to this file by Task 7.
+- Produces (`actions.ts`): `importAndWait(page): Promise<void>` (click `Import library`, wait for `getByRole('listbox', { name: 'Sample list' })`), `readCount(page): Promise<number>` (parses `[data-testid=result-count]` text `/^(\d+) samples$/`), `snapshot(page): Promise<E2ESnapshot>` (`page.evaluate(() => window.__ntwineE2E!())`), `search(page, text)` (fill `Search samples`), `clickPack(page, name)` — the rail option's accessible name is the pack name followed by its count (`PackRail.tsx`: `<Name>` + `<Count>`, both flex children; whether Playwright's name computation puts a space between them is not verifiable statically), so match `page.getByRole('listbox', { name: 'Packs' }).getByRole('option', { name: new RegExp('^' + escapeRegExp(name) + '\\s*\\d+$') })` — and in this task, **log the exact accessible name once** (`await option.evaluate((e) => e.textContent)` plus the locator's match) in the report so Tasks 5–6 inherit a verified shape; `toggleType(page, 'One-shot' | 'Loop')` (`getByRole('button', { name, exact: true })`), `pickKey(page, key | '')` (`selectOption` on `Key filter`), `setBpm(page, min | '', max | '')` (fill `Minimum BPM`/`Maximum BPM`), `toggleTag(page, tag)` — the chip is a `<button>` whose accessible name is the tag followed by its count, so `getByRole('button', { name: new RegExp('^' + escapeRegExp(tag) + '\\s*\\d+$') })`, `rowByFilename(page, filename): Locator` — the `title` attribute lives on the `Filename` span inside the row, so `page.getByRole('listbox', { name: 'Sample list' }).getByRole('option').filter({ has: page.locator(`[title="${filename}"]`) })`, `openSettings(page)` (`getByRole('button', { name: 'Settings' })` — `App.tsx` gear), plus a local `escapeRegExp`. `waitForWaveform`/`isRealWaveform` are added to this file by Task 7.
 - Consumes: `launchNtwine`, `buildFixtureLibrary`.
 
 - [ ] **Step 1: `harness/fixtures.ts`:**
@@ -743,9 +923,28 @@ test('the same detection reads "not found" against an empty appData (the glob is
 });
 ```
 
-`persistence.spec.ts`: import via `ntwine`, `close()`, `launchNtwine` again with the same three dirs → `getByRole('listbox', { name: 'Sample list' })` visible without any FirstRun (`getByRole('button', { name: 'Import library' })` count 0), `readCount === 12`; open settings → `getByTestId('settings-library-root')` has text `fixture.libraryRoot`.
+`persistence.spec.ts`: import via `ntwine`, **close the first app** (`Launched.close()` is idempotent, so the fixture's teardown closing it again is a no-op — never two live instances on one `userData`), relaunch on the same three dirs, and assert inside a `try/finally` that closes the relaunched app (a leaked second Electron process is exactly what holds SQLite WAL handles open on Windows):
 
-- [ ] **Step 3: Run — FAIL** (test ids). **Step 4: add the five `data-testid`s + write `actions.ts`.** **Step 5: Run — PASS** (`yarn e2e:only`). Falsifier for the report: temporarily point `NTWINE_APP_DATA` at the empty dir in the first spec → `found` assertion fails; revert.
+```ts
+test('a second launch skips first-run and shows the imported library from disk', async ({ ntwine }) => {
+  const { page, fixture } = ntwine;
+  await importAndWait(page);
+  expect(await readCount(page)).toBe(fixture.totalSamples);
+  await ntwine.close();
+  const second = await launchNtwine({ userData: fixture.userData, appData: fixture.appData, libraryRoot: fixture.libraryRoot });
+  try {
+    await expect(second.page.getByRole('listbox', { name: 'Sample list' })).toBeVisible();
+    await expect(second.page.getByRole('button', { name: 'Import library' })).toHaveCount(0);
+    expect(await readCount(second.page)).toBe(fixture.totalSamples);
+    await openSettings(second.page);
+    await expect(second.page.getByTestId('settings-library-root')).toHaveText(fixture.libraryRoot);
+  } finally {
+    await second.close();
+  }
+});
+```
+
+- [ ] **Step 3: Run — FAIL** (test ids). **Step 4: add the five `data-testid`s + write `actions.ts`.** **Step 5: Run — PASS** (`yarn e2e` — this task edits `src/`). Falsifier for the report: temporarily point `NTWINE_APP_DATA` at the empty dir in the first spec → `found` assertion fails; revert.
 - [ ] **Step 6: Gates + commit** — `feat(e2e): Playwright fixture + action helpers; first-run and persistence pinned`.
 
 ---
@@ -754,8 +953,8 @@ test('the same detection reads "not found" against an empty appData (the glob is
 
 **Files:** Create `tests/e2e/browse.spec.ts`, `tests/e2e/rows.spec.ts`.
 
-- [ ] **Step 1: `browse.spec.ts`** — after `importAndWait`: the `Packs` listbox has 4 options whose names (regex-stripped of the trailing count) are `['All Samples', ...fixture.packs]` in that order; for each of `fixture.coveredPacks` the option contains an `img` with `naturalWidth > 0` (`await expect.poll(() => img.evaluate((e: HTMLImageElement) => e.naturalWidth)).toBeGreaterThan(0)`) whose `src` starts with `cover://p/`; the `fixture.uncoveredPack` option shows `[data-testid=cover-fallback]` visible; `clickPack(fixture.packs[0])` → `expect.poll(readCount)` equals `fixture.perPack[fixture.packs[0]]` (6); `clickPack('All Samples')` → `fixture.totalSamples`; the `All Samples` option's own count text equals `fixture.totalSamples` (the rail count is a second reading of the same number as the top bar — pin both).
-- [ ] **Step 2: `rows.spec.ts`** — `rowByFilename(fixture.keyBpmRow.filename)` contains the texts `fixture.keyBpmRow.pack`, `fixture.keyBpmRow.keyText` (`C♯ min`) and `fixture.keyBpmRow.bpmText` (`128`); `rowByFilename(fixture.durationRow.filename)` contains `fixture.durationRow.durationText` (`1.4s`) and each of `fixture.durationRow.tags` (`drums`, `kick`, `punchy` — the first three in `parseTags` order; `MAX_INLINE_TAGS = 3`); a bpm-0 row (`AD_Kick_01.wav`) renders `—` for bpm and its key column renders `—` (both NULL sentinels — one row, two dashes; assert on the row's cell texts, not a bare `—` anywhere); the missing row (`fixture.missingFilename`) shows `[data-testid=missing-badge]` visible and has `toHaveCSS('opacity', '0.4')`; both `fixture.aiffFilenames` rows are present with no missing badge and no `couldn't decode` badge.
+- [ ] **Step 1: `browse.spec.ts`** — after `importAndWait`: the `Packs` listbox has 4 options whose names (regex-stripped of the trailing count) are `['All Samples', ...fixture.packs]` in that order; for each of `fixture.coveredPacks` the option contains an `img` with `naturalWidth > 0` (`await expect.poll(() => img.evaluate((e: HTMLImageElement) => e.naturalWidth)).toBeGreaterThan(0)`) whose `src` starts with `cover://p/`; the `fixture.uncoveredPack` option shows `[data-testid=cover-fallback]` visible; `clickPack(fixture.packs[0])` → `expect.poll(readCount)` equals `fixture.perPack[fixture.packs[0]]` (6 — `querySamples` counts every row); `clickPack('All Samples')` → `fixture.totalSamples` (12). **The rail counts are the other answer:** the `All Samples` option's own count text equals `fixture.presentSamples` (11) and the `fixture.uncoveredPack` option's count equals `fixture.perPackPresent[fixture.uncoveredPack]` (2, not 3) — `listPacks` joins `s.missing = 0`. Pin the asymmetry on purpose: top bar 12 while the rail says 11 is today's behaviour, and a future "make them agree" change should have to touch this spec.
+- [ ] **Step 2: `rows.spec.ts`** — `rowByFilename(fixture.keyBpmRow.filename)` contains the texts `fixture.keyBpmRow.pack`, `fixture.keyBpmRow.keyText` (`C♯ min`) and `fixture.keyBpmRow.bpmText` (`128`); `rowByFilename(fixture.durationRow.filename)` contains `fixture.durationRow.durationText` (`1.4s`) and each of `fixture.durationRow.tags` (`drums`, `kick`, `punchy` — the first three in `parseTags` order; `MAX_INLINE_TAGS = 3`); `rowByFilename(fixture.nullDurationFilename)` renders `—` in its duration cell (`formatDuration(null)`); a bpm-0 row (`AD_Kick_01.wav`) renders `—` for bpm and `—` for key (both NULL sentinels — one row, two dashes; assert on the row's cell texts, not a bare `—` anywhere); the missing row (`fixture.missingFilename`) shows `[data-testid=missing-badge]` visible and has `toHaveCSS('opacity', '0.4')`; **the NFD row (`fixture.nfdFilename`) is present with NO missing badge** — that is the encoding assertion (its exact decomposed name round-tripped through `statPass` on this filesystem; the first thing to read on the Windows run); both `fixture.aiffFilenames` rows are present with no missing badge and no `couldn't decode` badge.
 - [ ] **Step 3: Run — FAIL first** (write both files before any helper exists that they need; then implement/adjust helpers), **PASS**, falsifiers noted (e.g. change the expected `perPack` count → fails). **Step 4: Gates + commit** — `test(e2e): browse (rail, covers, scoping) and row rendering pinned`.
 
 ---
@@ -764,8 +963,8 @@ test('the same detection reads "not found" against an empty appData (the glob is
 
 **Files:** Create `tests/e2e/filters.spec.ts`, `tests/e2e/search.spec.ts`.
 
-- [ ] **Step 1: `filters.spec.ts`** — sequence with `expect.poll(() => readCount(page))`: `toggleType('One-shot')` → `counts.oneshot` (8); `toggleType('One-shot')` again (off) → 12; `toggleType('Loop')` → 4; off → 12; `pickKey('c#')` → 3; `pickKey('')` → 12; `setBpm('100','140')` → 4; `setBpm('','')` → 12; `toggleTag('kick')` → 3; `toggleTag('snare')` (AND) → `counts.kickAndSnare`; toggle both off → 12; the tag-list text filter (`Filter tag list`) typed `sna` → only chips containing `sna` remain (assert the `snare` chip visible, the `kick` chip count 0); after all clears: `snapshot(page).filters` is `{}` (`toEqual({})` — `LibraryStore.patchFilters` deletes cleared keys rather than leaving them `undefined`; `toEqual` is right either way).
-- [ ] **Step 2: `search.spec.ts`** — `search('kick')` → poll count 3; `search('kic')` → 3; `search('zzzqqq')` → 0 and `result-count` reads `0 samples`; `search('')` → 12; NFD pin: `search('Caf')` — measure once during implementation what the app returns for the ASCII prefix, and pin **that** with a comment `// pinned as-is (time capsule): FTS5 unicode61 folding on the NFD filename` and the number; also pin `search(fixture.nfdFilename.slice(0, 7))` similarly.
+- [ ] **Step 1: `filters.spec.ts`** — sequence with `expect.poll(() => readCount(page))`: `toggleType('One-shot')` → `counts.oneshot` (8); `toggleType('One-shot')` again (off) → 12; `toggleType('Loop')` → 4; off → 12; `pickKey('c#')` → 3; `pickKey('')` → 12; `setBpm('100','140')` → 4; `setBpm('','')` → 12; `toggleTag('kick')` → `counts.tagKick` (4); `toggleTag('snare')` (AND) → `counts.kickAndSnare` (1 — `AD_Snare_02.wav` carries both; assert with the message `` `AND semantics: OR would read ${fixture.counts.kickOrSnare}` `` so an AND→OR regression is unambiguous, and an always-empty filter cannot pass); toggle both off → 12; the tag-list text filter (`Filter tag list`) typed `sna` → only chips containing `sna` remain (assert the `snare` chip visible, the `kick` chip count 0); after all clears: `snapshot(page).filters` is `{}` (`toEqual({})` — `LibraryStore.patchFilters` deletes cleared keys rather than leaving them `undefined`; `toEqual` is right either way).
+- [ ] **Step 2: `search.spec.ts`** — search is FTS5 over `filename`, `pack_name`, `tag_text` (unicode61 tokenizer, prefix match per token, implicit AND — `src/main/catalog/search.ts`, `db.ts:73-77`), so `search('kick')` matches every row whose filename **or** tags **or** pack name carries a `kick*` token: `AD_Kick_01`, `AD_Kick_02`, `AD_Loop_128_kick` (filename token `kick` — unicode61 splits on `_`), plus `AD_Snare_02` (tag) = **4**; expose that as `fixture.counts.searchKick` computed from `SAMPLES` (filename tokens split on non-alphanumerics, lowercased, ∪ parsed tags, ∪ pack-name tokens; `startsWith('kick')`) — the derivation IS the model of the tokenizer, so if the app disagrees the number in the failure names which side is wrong; `search('kic')` → same count (prefix); `search('Alpha')` → `perPack['Alpha Drums']` (pack-name column); `search('zzzqqq')` → 0 and `result-count` reads `0 samples`; `search('')` → 12; NFD pin on the PRESENT NFD row: `search('Caf')` — measure once during implementation what the app returns for the ASCII prefix of a decomposed name, and pin **that** with a comment `// pinned as-is (time capsule): FTS5 unicode61 folding on the NFD filename` and the number; also pin `search(fixture.nfdFilename.slice(0, 7))` similarly.
 - [ ] **Step 3: FAIL → PASS**, falsifiers (e.g. break `toggleTag` AND semantics expectation), gates, commit — `test(e2e): every filter and search behaviour pinned to fixture-derived counts`.
 
 ---
@@ -802,8 +1001,8 @@ export const waitForWaveform = (canvas: Locator, real: boolean) =>
 ```
 
 - [ ] **Step 2: `waveforms.spec.ts`** — after import: for every visible non-missing row (`page.getByRole('option')` within `Sample list`, filter out the missing one), `waitForWaveform(row.locator('canvas'), true)`; the missing row's canvas → `waitForWaveform(..., false)` (poll immediately resolves false and stays false — assert once after the others are real); `snapshot(page).peaksCached >= visibleNonMissing`.
-- [ ] **Step 3: `preview.spec.ts`** — `await seam.arm('ntwine:e2e:protocol'); await seam.arm('ntwine:e2e:preview-pcm');` click `rowByFilename('AD_Kick_01.wav')` → `expect.poll(() => seam.count('ntwine:e2e:protocol'))` ≥ 1 and `drain` contains `{ scheme: 'sample', id, hit: true }` where `id` is the clicked row's sample id (get it from the option's `data-` attribute if present, else via `snapshot().selectedId`); `snapshot().selectedId === id`, `playCount === 1`; focus the list (`getByRole('listbox', { name: 'Sample list' }).focus()`), `keyboard.press('ArrowDown')` → `selectedId` changes to the next visible row's id, `playCount === 2`, a protocol hit for the new id; `keyboard.press('Space')` → `playCount === 3`, `lastPlayedId` unchanged, and the protocol counter did **not** increase (cache hit — assert equality of the counter before/after); click `rowByFilename('BK_Pluck.aiff')` → `expect.poll(() => seam.count('ntwine:e2e:preview-pcm'))` ≥ 1 with `{ ok: true }`; volume: `getByRole('slider', { name: 'Volume' }).fill('0.3')` (or `evaluate` a value + `input` event if `fill` on a range is refused) → `snapshot().volume` ≈ 0.3.
-- [ ] **Step 4: FAIL → PASS**, falsifiers (comment out the `preview-pcm` emit → spec fails; comment out `playCount++` → fails), gates, commit — `test(e2e): waveform fill, preview via protocol/pcm seams, keyboard walk, replay from cache pinned`.
+- [ ] **Step 3: `preview.spec.ts`** — `await seam.arm('ntwine:e2e:protocol'); await seam.arm('ntwine:e2e:preview-pcm');` click `rowByFilename('AD_Kick_01.wav')` → `expect.poll(() => seam.count('ntwine:e2e:protocol'))` ≥ 1 and `drain` contains `{ scheme: 'sample', id, hit: true }` where `id` is the clicked row's sample id (get it from the option's `data-` attribute if present, else via `snapshot().selectedId`); `snapshot().selectedId === id`, `playCount === 1`; focus the list (`getByRole('listbox', { name: 'Sample list' }).focus()`), `keyboard.press('ArrowDown')` → `selectedId` changes to the next visible row's id, `playCount === 2`, a protocol hit for the new id; `keyboard.press('Space')` → `playCount === 3`, `lastPlayedId` unchanged, and **no new `sample://` request** — the protocol seam is one handler for both schemes, so a late/retried `cover://` fetch would make a raw-counter negative flaky; instead drain the buffer immediately before the Space press (discarding it), then after `playCount` reaches 3 assert `(await seam.drain('ntwine:e2e:protocol')).filter((p) => p.scheme === 'sample')` is `[]` (cache hit — `previewPlayer` serves the decoded buffer without a fetch); click `rowByFilename('BK_Pluck.aiff')` → `expect.poll(() => seam.count('ntwine:e2e:preview-pcm'))` ≥ 1 with `{ ok: true }`; volume: `getByRole('slider', { name: 'Volume' }).fill('0.3')` (or `evaluate` a value + `input` event if `fill` on a range is refused) → `snapshot().volume` ≈ 0.3.
+- [ ] **Step 4: FAIL → PASS** (`yarn e2e:only` is fine here if `src/` is untouched since the last package — otherwise `yarn e2e`), falsifiers (comment out the `preview-pcm` emit → spec fails; comment out `playCount++` → fails), gates, commit — `test(e2e): waveform fill, preview via protocol/pcm seams, keyboard walk, replay from cache pinned`.
 
 ---
 
@@ -811,10 +1010,10 @@ export const waitForWaveform = (canvas: Locator, real: boolean) =>
 
 **Files:** Create `tests/e2e/drag.spec.ts`, `tests/e2e/settings.spec.ts`, `tests/e2e/security.spec.ts`.
 
-- [ ] **Step 1: `drag.spec.ts`** — `await seam.arm('ntwine:e2e:drag')`; `rowByFilename('AD_Kick_01.wav').dispatchEvent('dragstart')` → poll count 1; `drain()[0]` is `{ sampleId: <number>, file: <string> }` with `file` absolute, `startsWith(fixture.libraryRoot)`, `existsSync(file)`; missing row: `toHaveAttribute('draggable', 'false')`, `dispatchEvent('dragstart')` on it, then a second real-row `dragstart` → poll count **2** (the missing dispatch contributed nothing — the counter went 1 → 2, not 3); bypass: `page.evaluate((id) => window.ntwine.startDrag(id), missingId)` → poll count 3 and the drained payload is `{ sampleId: missingId, file: null }` (get `missingId` from `window.ntwine.querySamples({ search: ... })` in `page.evaluate`, or from `snapshot()`-adjacent data — simplest: `page.evaluate(async () => (await window.ntwine.querySamples({})).find(r => r.missing)!.id)`).
-- [ ] **Step 2: `settings.spec.ts`** — `openSettings(page)`; `getByTestId('settings-library-root')` has text `fixture.libraryRoot`; `getByRole('button', { name: 'Re-run import' })` click → poll until enabled again → close settings → `readCount === 12` (idempotent); re-pick: `await app.evaluate(({ dialog }, root) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [root] })) as typeof dialog.showOpenDialog; }, fixture.libraryRoot)`; open settings, `Re-pick folder` → root text unchanged (same root) and `snapshot().running === false`; if the stub does not take effect (dialog captured by reference), implement the spec's fallback: E2E-armed `NTWINE_E2E_PICK_ROOT` read in `ipc.ts`'s handler (`deps.e2ePickRoot ?? await dialog.showOpenDialog(...)`), threaded from `readE2EConfig` (add `pickRoot: string | null`) — with a unit case in `e2e.test.ts`.
+- [ ] **Step 1: `drag.spec.ts`** — remember: `count` is cumulative, `drain` empties the buffer — drain after every payload assertion. `await seam.arm('ntwine:e2e:drag')`; `rowByFilename('AD_Kick_01.wav').dispatchEvent('dragstart')` → poll count 1; `const [first] = await seam.drain<{ sampleId: number; file: string | null }>('ntwine:e2e:drag')` is `{ sampleId: <number>, file: <string> }` with `file` absolute, `startsWith(fixture.libraryRoot)`, `existsSync(file)`; missing row: `toHaveAttribute('draggable', 'false')`, `dispatchEvent('dragstart')` on it, then a second real-row `dragstart` (`AD_Kick_02.wav`) → poll count **2** (the missing dispatch contributed nothing — the counter went 1 → 2, not 3; `SampleRow.handleDragStart` returns before `api.startDrag` when `row.missing`), then `await seam.drain(...)` and discard (it holds the second real payload); bypass the renderer guard: `page.evaluate((id) => window.ntwine.startDrag(id), missingId)` → poll count 3 and `expect(await seam.drain('ntwine:e2e:drag')).toEqual([{ sampleId: missingId, file: null }])` — exactly one payload, the refusal (`missingId` = `await page.evaluate(async () => (await window.ntwine.querySamples({})).find((r) => r.missing)!.id)`).
+- [ ] **Step 2: `settings.spec.ts`** — `openSettings(page)`; `getByTestId('settings-library-root')` has text `fixture.libraryRoot`; `getByRole('button', { name: 'Re-run import' })` click → poll until enabled again → close settings → `readCount === 12` (idempotent). Re-pick must be able to fail, so it moves the root to a NEW directory and proves the move persisted: `const relocated = join(ntwine.root, 'relocated'); mkdirSync(relocated);` then stub the dialog to return it — `await app.evaluate(({ dialog }, dir) => { dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog; }, relocated)` — open settings, click `Re-pick folder` → `getByTestId('settings-library-root')` becomes `relocated` (poll), and every row now shows the missing badge (`statPass` against an empty root — assert `page.getByTestId('missing-badge')` count equals `fixture.totalSamples`); then close the app (`ntwine.close()`, idempotent) and relaunch on the same dirs → settings still shows `relocated` (`meta.library_root` persisted — the same relaunch shape as `persistence.spec`, `try/finally` around the second app). If the stub does not take effect because `ipc.ts` captured `dialog.showOpenDialog` by reference, implement the spec's fallback instead: `readE2EConfig` gains `pickRoot: string | null` from `NTWINE_E2E_PICK_ROOT` (absolute-validated, unit-cased in `e2e.test.ts`), `RegisterIpcDeps` gains `e2ePickRoot?: string | null`, and the handler branches with the right shape — `const result = deps.e2ePickRoot ? { canceled: false, filePaths: [deps.e2ePickRoot] } : await dialog.showOpenDialog({ properties: ['openDirectory'] });` — the harness passes it via `extraEnv`. Either way the assertions above are the same.
 - [ ] **Step 3: `security.spec.ts`** — arm `ntwine:e2e:window-open-denied` and `ntwine:e2e:nav-denied`; `page.evaluate(() => { window.open('https://example.com'); })` → poll window-open counter 1, `app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length) === 1`; `const before = page.url(); page.evaluate(() => { location.href = 'https://example.com'; })` → poll nav counter 1, `page.url() === before`; `page.evaluate(() => typeof (window as unknown as { require?: unknown }).require) === 'undefined'`; `page.evaluate(() => Object.keys(window.ntwine).sort())` equals the sorted 12-method list (`coverUrl, decodePreviewPcm, getPeaks, getState, listPacks, listTags, onImportProgress, pickLibraryRoot, querySamples, runImport, sampleUrl, startDrag`); `page.evaluate(() => typeof window.__ntwineE2E) === 'function'`.
-- [ ] **Step 4: FAIL → PASS**, falsifiers (drop the `nav-denied` emit → fails; make the missing row `draggable` → count 3 → fails), gates, commit — `test(e2e): drag chain both layers, settings re-import/re-pick, security fences pinned`.
+- [ ] **Step 4: FAIL → PASS** (`yarn e2e` if the pick-root fallback touched `src/`, else `yarn e2e:only`), falsifiers (drop the `nav-denied` emit → fails; make the missing row `draggable` → the drag count reads 3 where 2 is expected → fails; stub the dialog to return `fixture.libraryRoot` instead of `relocated` → the re-pick assertions fail), gates, commit — `test(e2e): drag chain both layers, settings re-import/re-pick, security fences pinned`.
 
 ---
 
@@ -872,12 +1071,30 @@ test('the packaged app boots, loads the renderer, and quits on the boot marker',
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('the packaged app refuses E2E mode without NTWINE_USER_DATA', async () => {
-  const { code, stderr } = await run(packagedExecutable(), { ...baseEnv(), NTWINE_E2E: '1' });
-  expect(code).toBe(2);
-  expect(stderr).toMatch(/NTWINE_USER_DATA/);
+test('the packaged app refuses E2E mode without NTWINE_USER_DATA — and touches no app-data path first', async () => {
+  // Spec §4 also guards §7: the refusal must happen before any path under the real app-data root
+  // is created. The developer's real `…/Ntwine/ntwine-data` already exists (it cannot be asserted
+  // absent), so redirect the home root to a fresh temp dir and assert nothing appeared under it.
+  // macOS: Chromium/Foundation resolve Application Support from $HOME. Windows: roaming AppData
+  // comes from the shell known-folder API, which ignores %APPDATA% — only the exit code is
+  // asserted there.
+  const fakeHome = mkdtempSync(join(tmpdir(), 'ntwine-e2e-home-'));
+  try {
+    const env = { ...baseEnv(), NTWINE_E2E: '1' };
+    if (process.platform === 'darwin') env.HOME = fakeHome;
+    const { code, stderr } = await run(packagedExecutable(), env);
+    expect(code).toBe(2);
+    expect(stderr).toMatch(/NTWINE_USER_DATA/);
+    if (process.platform === 'darwin') {
+      expect(existsSync(join(fakeHome, 'Library', 'Application Support', 'Ntwine'))).toBe(false);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 ```
+
+(If on macOS the `HOME` redirect turns out not to be honoured — i.e. the app still resolves the real Application Support — the exit-2 + stderr assertions remain the guard and the report records the platform fact; do not weaken the exit-code assertion.)
 
 - [ ] **Step 3: Run against the CURRENT `out/` (no F7 yet)** — `yarn package && yarn e2e:only tests/e2e/packaged.spec.ts`. **Record the result honestly**: if the boot probe FAILS with a native-module load error, F7 was a real defect; if it PASSES, Electron's asar dlopen fallback carried it. Either way, **Step 4:** register the plugin (`import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives'; … plugins: [new AutoUnpackNativesPlugin({}), new VitePlugin(...), new FusesPlugin(...)]` — Forge docs order: auto-unpack before the packaging plugins), `yarn package` again, both probes **PASS**, and `ls out/Ntwine-*/Ntwine.app/Contents/Resources/app.asar.unpacked` (macOS) shows `better-sqlite3`. Report which case occurred.
 - [ ] **Step 5: Gates + commit** — `feat(e2e): packaged boot probe (fuse-safe marker) + auto-unpack natives (F7)`.
@@ -979,7 +1196,11 @@ Validate: `node -e "require('js-yaml')"` is not available — use `yarn dlx yaml
 
 ## Self-review checklist (run after writing, before execution)
 
-- **Spec coverage:** §3.1 contract → Task 1 (env, guard, seams, additionalArguments, snapshot, boot marker, library root); §3.2 fixture → Task 3; §3.3 harness/runner/launch guard/config → Task 2 + 4; §3.4 waiting discipline → seam counters (Task 2) + `expect.poll` everywhere; §4 capsule rows → Tasks 4 (first-run, persistence), 5 (browse, rows), 6 (filters, search), 7 (waveforms, preview), 8 (drag, settings, security), 9 (packaged), 10 (@real); §5 gate/CI/README → Task 11; §6 pins/hygiene → Task 2 (deps, scripts, .gitignore) + Task 3 (fixture generator, deleted script); C1 F7 → Task 9; unit pins (e2e.test.ts, libraryRoot precedence, decode on generated audio) → Tasks 1, 3.
+- **Spec coverage:** §3.1 contract → Task 1 (env + absolute-path validation, guard, seams, additionalArguments, snapshot via the pure `e2eSnapshot.ts`, boot marker, library root); §3.2 fixture → Task 3 (incl. NULL duration, NFD-on-a-present-row, `.jpg`-stored PNG covers); §3.3 harness/runner/launch guard (dev AND stale) /config → Task 2 + 4; §3.4 waiting discipline → seam counters + drain semantics (Task 2) + `expect.poll` everywhere; §4 capsule rows → Tasks 4 (first-run, persistence), 5 (browse incl. the all-rows/present-rows asymmetry, rows), 6 (filters, search), 7 (waveforms, preview), 8 (drag, settings re-pick to a NEW root, security), 9 (packaged + boot guard with redirected home), 10 (@real); §5 gate/CI/README → Task 11; §6 pins/hygiene → Task 2 (deps, scripts, .gitignore) + Task 3 (fixture generator, deleted script, dead eslint block); C1 F7 → Task 9; unit pins (`e2e.test.ts`, `ipc.libraryRoot.test.ts`, `e2eSnapshot.test.ts` armed/unarmed, `fixtureSpliceDb.test.ts`, decode on generated audio) → Tasks 1, 3.
 - **Placeholder scan:** none — the one "measure once and pin" item (NFD search prefix, Task 6) is an explicit time-capsule instruction with a named recording spot, not a deferral.
-- **Type consistency:** `E2EConfig`/`E2EEmit`/`makeE2EEmitter` (Task 1) consumed by main/drag/protocol/ipc verbatim; `Launched`/`launchNtwine`/`Seam` (Task 2) consumed by fixtures (Task 4) and specs; `FixtureLibrary` fields (`perPack`, `keyBpmRow`, `durationRow`, `uncoveredPack`, `counts.*`) defined in Task 3 and read by name in Tasks 5–6; `E2ESnapshot` (Task 1) read by `snapshot()`; seam event names identical in Task 1's emitters and Tasks 7–8's specs.
-- **Known judgment points the plan itself pins:** runner ABI (Task 2 spike, fallback named); F7 red/green recorded honestly (Task 9); dialog stub vs `NTWINE_E2E_PICK_ROOT` (Task 8, test either way).
+- **Type consistency:** `E2EConfig`/`E2EEmit`/`makeE2EEmitter` (Task 1) consumed by main/drag/protocol/ipc verbatim; `wrapPlayPort`/`installE2ESnapshot` (Task 1) called from `renderer.tsx` only; `Launched` (with idempotent `close`)/`launchNtwine`/`Seam` (Task 2) consumed by fixtures (Task 4) and specs; `FixtureLibrary` fields (`totalSamples`/`presentSamples`, `perPack`/`perPackPresent`, `keyBpmRow`, `durationRow`, `nullDurationFilename`, `nfdFilename`, `missingFilename`, `uncoveredPack`, `counts.*` incl. `kickOrSnare`, `searchKick`) defined in Task 3 and read by name in Tasks 4–8; `E2ESnapshot` (Task 1) read by `snapshot()`; seam event names identical in Task 1's emitters and Tasks 7–8's specs.
+- **Known judgment points the plan itself pins:** runner ABI (Task 2 spike, fallback named); F7 red/green recorded honestly (Task 9); dialog stub vs `NTWINE_E2E_PICK_ROOT` (Task 8, same assertions either way); `HOME` redirect honoured or not on macOS (Task 9, exit code stays the guard).
+
+## Panel outcome (mirror review, 2026-08-17)
+
+Three reviewers on the byte-identical prompt (`md5 10d50c868eaddf60ff9200e889d11899`, run dir `mirror-plan-review/Ntwine/c9cbc8d7b65f`): Claude NEEDS REVISION (5 required / 8 suggested / 3 informational), Codex NEEDS REVISION (2 required / 2 suggested), agy SOUND (1 informational). Every finding was re-verified against the repo before being applied; all applicable ones are folded in above (rail/tag counts are present-only; NFD name and missing row separated; re-pick assertion made falsifiable; `App.on` typing cast; renderer arming unit-pinned via `e2eSnapshot.ts`; NULL-duration fixture row + builder widening; absolute-path validation for every override; drain semantics; protocol negative by payload; `kick∧snare` non-empty; stale-build guard + `yarn e2e` after `src/` edits; PNG constant; persistence relaunch closes both apps; boot-guard probe with a redirected home; spec §3.2 generator sentence superseded deliberately). Nothing left open.

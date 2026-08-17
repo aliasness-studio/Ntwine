@@ -213,11 +213,14 @@ caller-supplied temp `root`:
   `buildFixtureSpliceDb` (the unit suite's builder; it models real `NULL`s). Rows: **3
   packs**, **12 samples**.
 - `root/library/sounds/packs/<Pack>/<vendor>/<file>` — **11 real audio files** written by a
-  new shared generator `tests/e2e/fixture/audio.ts` exporting `writeSineWav(path, ms)` /
-  `writeSineAiff(path, ms)` — extracted from `scripts/gen-fixture-audio.mjs`, which becomes a
-  two-line caller of the same functions so "the same generator" is literally true; **9 wav +
-  2 aiff**, durations varied 100 ms–2.5 s (these drive only waveform shape); and **1 DB row
-  whose file is deliberately absent** (the missing-row case). All `local_path`s are under
+  new shared generator `tests/support/sineAudio.ts` exporting `writeSineWav(path, ms)` /
+  `writeSineAiff(path, ms)` — extracted from `scripts/gen-fixture-audio.mjs`, which is then
+  **deleted** together with the committed `tests/fixtures/sine.*` (`decode.test.ts` generates
+  its inputs into a temp dir through the same functions, so "the same generator" is literally
+  true; an `.mjs` cannot import a TS module, and with no committed binaries there is nothing
+  left to regenerate — plan-review ruling 2026-08-17); **9 wav + 2 aiff**, durations varied
+  100 ms–2.5 s (these drive only waveform shape); and **1 DB row whose file is deliberately
+  absent** (the missing-row case — a plain-ASCII name, never the NFD row). All `local_path`s are under
   `root/library`. One filename carries a non-ASCII NFD character (parent §10 case) and must
   be written to disk under that exact name (checked by `statPass` on both APFS and NTFS —
   the first thing to look at on the Windows run).
