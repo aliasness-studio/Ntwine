@@ -130,7 +130,9 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
         </DetectedRow>
         <DetectedRow>
           <span>Splice database</span>
-          <DetectedValue>{state.spliceDbFound ? 'found' : 'not found'}</DetectedValue>
+          <DetectedValue data-testid="detected-splice-db">
+            {state.spliceDbFound ? 'found' : 'not found'}
+          </DetectedValue>
         </DetectedRow>
       </DetectedList>
       <ImportButton type="button" disabled={importing} onClick={handleImport}>

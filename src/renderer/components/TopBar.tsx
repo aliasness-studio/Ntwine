@@ -65,7 +65,7 @@ export const TopBar = observer(function TopBar() {
         value={library.searchText}
         onChange={(e) => library.setSearch(e.target.value)}
       />
-      <ResultCount>{library.resultCount} samples</ResultCount>
+      <ResultCount data-testid="result-count">{library.resultCount} samples</ResultCount>
       <VolumeRow>
         <VolumeIcon aria-hidden="true">Vol</VolumeIcon>
         <VolumeSlider
