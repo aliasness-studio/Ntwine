@@ -44,10 +44,14 @@ Tables that matter (schema read firsthand):
 - **`samples`** — `local_path` (absolute), `file_hash` (UNIQUE), `filename`,
   `pack_uuid` → packs, `sample_type` (`'oneshot'` | `'loop'`, no other values in the
   data), `bpm` (INTEGER, 0 = none), `audio_key` (lowercase pitch class; exactly the 12
-  values `a a# b c c# d d# e f f# g g#`, sharps only; empty = none), `chord_type`
-  (`''` ×3737 | `'major'` ×40 | `'minor'` ×420), `duration` (INTEGER,
+  values `a a# b c c# d d# e f f# g g#`, sharps only; SQL NULL ×2977 = none), `chord_type`
+  (SQL NULL ×3737 | `'major'` ×40 | `'minor'` ×420), `duration` (INTEGER,
   **milliseconds** — verified against decoded audio length on 4 samples), `tags`
   (comma-separated text), `purchased_at`, `waveform_url` (remote), `provider_name`.
+  (The none-markers above were originally recorded as `''`: the sqlite3 CLI prints
+  NULL as an empty string, so the first probe conflated them. The first REAL import
+  (Task 13) failed on the actual NULLs; the importer now maps both NULL and `''`
+  to catalog NULL, and the fixture builder can represent real NULLs.)
 - **`packs`** — `uuid` (UNIQUE), `name`, `description`, `genre`, `provider_name`,
   `cover_url` (remote Cloudinary URL), `permalink`.
 
@@ -233,8 +237,11 @@ waveforms(sample_id INTEGER PRIMARY KEY REFERENCES samples(id),
           peaks BLOB NOT NULL,            -- §5.1: 200 min/max pairs, Int8
           bucket_count INTEGER NOT NULL,
           format INTEGER NOT NULL DEFAULT 1);  -- bump to invalidate/recompute
--- Search: FTS5 table sample_search(sample_id UNINDEXED, filename, pack_name,
--- tag_text) holding denormalized text, rebuilt TRANSACTIONALLY during import.
+-- Search: FTS5 table sample_search(filename, pack_name, tag_text,
+-- sample_id UNINDEXED) holding denormalized text, rebuilt TRANSACTIONALLY
+-- during import. Column order here matches the implemented DDL (db.ts) —
+-- FTS5 highlight()/snippet() address columns by absolute index, so the DDL
+-- is the one source of truth for order.
 -- No live sync triggers in v1 — the catalog only changes at import time, and
 -- import-time rebuild is where trigger-desync bugs can't exist.
 ```
@@ -292,9 +299,14 @@ implementation, not specified here.
   exists via `files: []` (future-proof for multi-select).
 - **Audio serving**: register scheme before ready via
   `protocol.registerSchemesAsPrivileged([{scheme:'sample', privileges:{standard,
-  secure, supportFetchAPI, stream: true}}])`, then `protocol.handle('sample', req =>
+  secure, supportFetchAPI, corsEnabled, stream: true}}])`, then `protocol.handle('sample', req =>
   net.fetch(pathToFileURL(...)))`. The old `registerFileProtocol` family is
-  deprecated.
+  deprecated. `corsEnabled` was added by Task 14's hand-QA: the renderer's origin
+  (dev server / packaged file://) is cross-origin to the scheme, and Electron 43's
+  CORS enforcement (CVE-2026-70604 hardening) blocks `fetch()` on a non-CORS scheme.
+  It is scheme-wide, so it is safe ONLY while the app loads zero remote content —
+  enforced by `setWindowOpenHandler` all-deny + a `will-navigate` origin allowlist
+  in main.ts, with a trip-wire comment beside the flag in protocol.ts.
 - **Known Electron bug** (open, electron#38749): media served via `protocol.handle`
   does not honor `Range` requests automatically → seeking/scrubbing snaps to 0. v1
   preview is play-from-start so this doesn't block, but the handler must implement

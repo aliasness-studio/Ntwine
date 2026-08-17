@@ -1,0 +1,22 @@
+/* App-shell reset (Task 13) — the scaffold's original rules here (max-width: 38rem, centered
+   margin, padding) were sized for a "Hello World" text page and would squeeze/pad the real
+   three-region browser window (spec §7) into a narrow centered column. The app manages its own
+   scrolling per-region (PackRail's list, SampleList's virtualized scroller), so the outer
+   document itself never needs to scroll. Font stack is the system stack ONLY — no @font-face/
+   webfont link anywhere in this file or index.html — the app must work fully offline. */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
