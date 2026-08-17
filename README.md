@@ -11,7 +11,7 @@ for now.
 
 ## Prerequisites
 
-- Node ≥ 22
+- Node ≥ 20 (project developed on 20.x; the test suite runs under Electron's own bundled Node)
 - yarn (classic)
 - macOS
 
