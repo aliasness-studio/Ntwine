@@ -1,6 +1,6 @@
 # Ntwine v1 — Design Spec
 
-**Date:** 2026-08-16 · **Status:** committed for mirror-panel review · **Repo:** `aliasness-studio/Ntwine`
+**Date:** 2026-08-16 · **Status:** mirror-panel reviewed (Claude + Codex + agy), consensus applied — ready for the implementation plan · **Repo:** `aliasness-studio/Ntwine`
 
 ## 1. What and why
 
@@ -82,7 +82,9 @@ first-run import, uninstalling is safe.
 1. **First-run import** (§5): snapshot Splice's DB, build Ntwine's own catalog, cache
    cover art, start background waveform computation. Re-runnable, idempotent.
 2. **Browse**: left rail of packs (cover, name) + "All Samples"; filters for
-   sample type (one-shot/loop), key, BPM range, and tags.
+   sample type (one-shot/loop), key, BPM range, and tags. An active BPM or key
+   filter **excludes** samples whose value is unknown — and unknowns are the
+   majority (§2.2) — so the result count must make the shrinkage visible.
 3. **Search**: one text box, instant-as-you-type, matching filename, tags, and pack
    name, combined with active filters.
 4. **Preview**: click a row → it plays immediately. Arrow keys move selection and
@@ -135,9 +137,10 @@ components read stores only.
 
 ```
 ┌─ Main process (Node) ──────────────────────────────┐
-│ catalog.db (SQLite + FTS5)   import pipeline       │
-│ cover/waveform caches        webContents.startDrag │
-│ custom protocol: sample:// streams audio files     │
+│ catalog.db (SQLite + FTS5, incl. waveform peaks)   │
+│ import pipeline → utilityProcess decode workers    │
+│ cover cache                  webContents.startDrag │
+│ custom protocol: sample:// serves audio by id      │
 └──────────────┬─────────────────────────────────────┘
         typed IPC bridge (preload, contextIsolation on)
 ┌──────────────┴─────────────────────────────────────┐
@@ -150,22 +153,35 @@ components read stores only.
 Rules:
 
 - The renderer never touches the filesystem or SQLite. Everything crosses one typed
-  IPC surface (a single `ntwine` API object exposed via the preload script).
+  IPC surface (a single `ntwine` API object exposed via the preload script). Its
+  method groups: catalog queries (search/filter/list), `getPeaks`,
+  `decodePreviewPcm` (the one §9.3 AIFF fallback), `startDrag`, import control +
+  progress events, settings (library root). Exact signatures are plan-phase work.
 - Audio bytes reach the renderer only through the `sample://` custom protocol (no
-  `file://`, `webSecurity` stays on).
+  `file://`, `webSecurity` stays on) — with **one** typed exception:
+  `decodePreviewPcm(sampleId)`, the AIFF preview fallback (§9.3), size-capped and
+  resolved by main, never path-addressed.
+- **`sample://` URLs are opaque catalog ids** (`sample://s/<id>`), never paths. Main
+  resolves id → absolute path via the catalog, verifies the result stays under the
+  library root, and refuses unresolvable or missing-flagged rows. A renderer-supplied
+  path must never select a file — that would be filesystem read access with extra
+  steps. (`standard: true` case-normalizes the URL host; numeric ids are immune.)
 - Drag-out: renderer `onDragStart` → `ipc: drag-start(sampleId)` → main resolves the
   absolute path → `webContents.startDrag`.
-- All catalog state lives in `app.getPath('userData')`:
-  `catalog.db`, `splice-snapshot/sounds.db`, `covers/<pack_uuid>.jpg`,
-  and waveform peaks (§5.1).
+- All catalog state lives in a subdirectory of `app.getPath('userData')`:
+  `catalog.db`, `splice-snapshot/sounds.db`, `covers/<pack_uuid>.jpg`. Waveform
+  peaks live **inside `catalog.db`** (§6 `waveforms` table) — one store, one home.
 
 ## 5. Import pipeline
 
 Order matters; each step is resumable and idempotent.
 
-1. **Locate**: default library root `~/Splice`; default Splice DB at the path in §2.2
-   (user directory segment discovered by globbing `users/default/*/sounds.db`, not
-   hardcoded to one username). Either can be overridden by a picker.
+1. **Locate**: default library root `~/Splice`. The Splice DB base directory is
+   resolved cross-platform via `app.getPath('appData')` + the Splice app's
+   per-OS subpath (`com.splice.Splice/users/default/*/sounds.db` on macOS is the
+   verified instance, §2.2; the username segment is globbed, never hardcoded).
+   Either location can be overridden by a picker. No macOS-only literal paths in
+   the resolver.
 2. **Snapshot**: copy `sounds.db` into userData before reading anything. If the
    original is already gone but a snapshot exists, import from the snapshot.
 3. **Catalog build**: read `samples` + `packs` from the snapshot, write Ntwine's
@@ -184,10 +200,16 @@ path it looked for. (Filename-based fallback import is future work, out of v1.)
 
 ### 5.1 Waveform peaks
 
-- Peaks are computed once per sample: decode PCM, downsample to a fixed bucket count
-  (enough for a row thumbnail; exact count decided in the plan), store min/max pairs.
-- Decode happens in the **main process** (§9.3 — Chromium cannot decode AIFF). The
-  invariants: **no network, computed from local audio, cached persistently, computed
+- Peaks are computed once per sample: decode PCM, downsample to **200 min/max
+  buckets** (this line owns the number), store in the §6 `waveforms` table.
+- **PCM decode never runs on the main event loop.** Decoding is main-process-*side*
+  (§9.3 — Chromium cannot decode AIFF) but executes in a **`utilityProcess`** (or
+  worker thread) that main spawns; main only coordinates the bounded queue and
+  commits results to SQLite. `audio-decode` is pure JS — synchronous CPU — so
+  running it on main would stall every IPC round trip and `sample://` response for
+  the whole first-run pass, exactly when the user first browses. The concurrency
+  bound (2–4) caps memory, not blocking; placement is what protects the feel bar.
+- Invariants: **no network, computed from local audio, cached persistently, computed
   lazily/in background without blocking the UI.**
 
 ## 6. Catalog schema (Ntwine's own DB)
@@ -207,13 +229,23 @@ samples(id INTEGER PRIMARY KEY, file_hash TEXT UNIQUE NOT NULL, rel_path TEXT NO
 tags(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
 sample_tags(sample_id INTEGER REFERENCES samples(id),
             tag_id INTEGER REFERENCES tags(id), PRIMARY KEY (sample_id, tag_id));
--- FTS5 external-content table over filename + tag text + pack name,
--- rebuilt/synced at import time; exact triggers decided in the plan.
+waveforms(sample_id INTEGER PRIMARY KEY REFERENCES samples(id),
+          peaks BLOB NOT NULL,            -- §5.1: 200 min/max pairs, Int8
+          bucket_count INTEGER NOT NULL,
+          format INTEGER NOT NULL DEFAULT 1);  -- bump to invalidate/recompute
+-- Search: FTS5 table sample_search(sample_id UNINDEXED, filename, pack_name,
+-- tag_text) holding denormalized text, rebuilt TRANSACTIONALLY during import.
+-- No live sync triggers in v1 — the catalog only changes at import time, and
+-- import-time rebuild is where trigger-desync bugs can't exist.
 ```
 
 Persisted-enum law (carried from the monorepo): `sample_type` stays TEXT, never a
 bare renumberable integer. Room for favorites later = a future `user_meta` table,
-not columns bolted onto `samples`.
+not columns bolted onto `samples`. One honest caveat on the §3.2 importer seam:
+the `LibraryImporter` *interface* is the easy half — these Splice-shaped
+constraints (`file_hash NOT NULL`, the binary `sample_type` CHECK) are where a
+non-Splice importer forces schema surgery. Accepted pre-release; noted so nobody
+oversells the seam.
 
 ## 7. UI
 
@@ -227,6 +259,8 @@ Single window, three regions:
   truncated), pack name, key, BPM, duration, tag chips. Selected row highlighted;
   keyboard ↑/↓ moves + auto-plays; Space replays; drag anywhere on the row drags the
   file out.
+- **Settings affordance** (small gear, bottom of the rail): library-root re-pick
+  (§8) and re-run import (§5). This is where those §5/§8 behaviors live in the UI.
 
 Feel bar: scrolling 4,197 rows and typing in search must never jank. That is the
 product. Visual design language: dark, dense-but-calm; detailed look developed during
@@ -284,6 +318,15 @@ implementation, not specified here.
   the tools it unifies), so better-sqlite3 gets rebuilt against Electron's ABI by
   the standard toolchain; add `@electron-forge/plugin-auto-unpack-natives` once
   packaging with asar.
+- **The dual-ABI trap (named so it can't stall TDD):** one `node_modules` holds one
+  compiled better-sqlite3, but the app runs under Electron's ABI while Vitest runs
+  under system Node's — after the first `yarn start`, catalog tests would fail to
+  load the module (the well-known better-sqlite3 + Electron + Vitest collision).
+  **Strategy: run Vitest under Electron's own Node** (`ELECTRON_RUN_AS_NODE=1
+  electron node_modules/vitest/vitest.mjs`, wrapped as `yarn test`) so one ABI
+  serves both. Fallback if that fights Vitest: confine `electron-rebuild` to
+  start/package and keep tests on a Node-ABI build. Milestone 1 proves the chosen
+  path with the first catalog test.
 
 ### 9.3 Renderer: list virtualization, waveforms, preview playback
 
@@ -294,12 +337,17 @@ implementation, not specified here.
   npm latest is MobX 7.0.0 / lite 5.0.0 — held back deliberately for cross-repo
   parity). Virtualizer + observer compose cleanly: the store owns the filtered id
   list; rows observe per-sample state.
-- **Waveform peaks are computed in the MAIN process**, not the renderer:
-  **Chromium cannot decode AIFF**, and 16 library files are `.aif`. Use
-  **`audio-decode` 3.12.0** (pure JS, active, wav+aiff+more) in main (or a
-  `utilityProcess`), decode → downsample to ~200 min/max `Int8` buckets → store as a
-  SQLite blob (<2 MB for all 4,197 files) → drop the PCM immediately. Concurrency
-  bounded (2–4 in flight) — each in-flight decode holds a full Float32 PCM image.
+- **Waveform peaks are computed main-process-side, in a `utilityProcess`** — never
+  on the main event loop (§5.1), and not in the renderer: **Chromium cannot decode
+  AIFF**, and 16 library files are `.aif`. Use **`audio-decode` 3.12.0** (pure JS,
+  active, wav+aiff+more): decode → downsample to the 200 min/max `Int8` buckets
+  §5.1 owns → store in the §6 `waveforms` table (<2 MB for all 4,197 files) → drop
+  the PCM immediately. Concurrency bounded (2–4 in flight) — each in-flight decode
+  holds a full Float32 PCM image. **Gate:** the first waveform task decodes one
+  real library `.aif` through `audio-decode` in a fixture test *before* the queue
+  is built — AIFF support is the one §9 claim not verified firsthand; if it fails,
+  the named fallback is a small IFF/AIFF PCM parser (~100 lines) or another
+  maintained decoder.
 - **Thumbnails**: canvas per row, drawn from cached peak buckets on mount (the
   peaks.js / wavesurfer production pattern). Virtualization caps live canvases at
   ~viewport count. Backing store sized by `devicePixelRatio`. No PNG round-trip.
@@ -309,9 +357,10 @@ implementation, not specified here.
   ~10 ms gain ramp to zero (hard stops click). Bonus: buffer playback never touches
   the Electron Range-request bug (§9.1) — no streaming element involved.
 - **AIFF preview fallback**: renderer `decodeAudioData` will reject the 16 `.aif`
-  files → on decode failure, ask main for PCM (`audio-decode`), ship Float32
-  channels over IPC, construct the `AudioBuffer` renderer-side. One code path, one
-  fallback, covered by a test.
+  files → on decode failure, call `decodePreviewPcm(sampleId)` — the single
+  sanctioned IPC exception named in §4 — main decodes via `audio-decode`, ships
+  Float32 channels (size-capped), renderer constructs the `AudioBuffer`. One code
+  path, one fallback, covered by a test.
 - `decodeAudioData` detaches its input ArrayBuffer — hand it a copy if the bytes are
   reused. Electron autoplay policy: row-click is a user gesture so the context
   resumes fine; `--autoplay-policy=no-user-gesture-required` is the fallback switch.
@@ -321,8 +370,10 @@ implementation, not specified here.
 TDD throughout — test first, watch it fail, then implement. Vitest for all logic:
 
 - **Importer**: runs against a small fixture `sounds.db` (a few packs/samples with
-  edge cases: empty tags casing, bpm 0, missing file, re-run idempotency). Fixture is
-  built by a checked-in script, checked into the repo.
+  edge cases: empty tags casing, bpm 0, missing file, re-run idempotency, **and a
+  unicode/NFD filename + pack name** — APFS normalization and tag lower-casing
+  diverge exactly there). Fixture is built by a checked-in script, checked into
+  the repo.
 - **Tag parsing / key + BPM normalization / duration-unit pin (§2.3)**: pure-function
   tests. Round-trips pin **every** enum member, not a representative one.
 - **Catalog queries**: search + filter combinations against the fixture catalog,
@@ -333,7 +384,13 @@ TDD throughout — test first, watch it fail, then implement. Vitest for all log
   Vitest here is the candidate shared standard, not a divergence.
 - Renderer components: thin; hand-QA in the running app is the v1 bar (the "loop for
   a while" phase). No Playwright in v1.
+- **Drag-out is proven first, not last.** Milestone 1 opens with a walking-skeleton
+  spike: `webContents.startDrag` of one hardcoded file (with the §9.1 drag icon),
+  dropped into Reaper and Finder. Its failure modes are external (macOS icon rule,
+  DAW acceptance) and cost the most when discovered after the catalog and UI exist.
+  From then on, a short **scripted manual drag gate** (drag one wav + one aif into
+  Reaper) runs in every QA round — type checks cannot see this wiring.
 
 Definition of done for v1: import completes on the real library; search/filter/preview
-feel instant; a sample dragged from Ntwine lands in Reaper; missing-file row behaves;
-all tests green.
+feel instant; a sample dragged from Ntwine lands in Reaper (the scripted drag gate);
+missing-file row behaves; all tests green.
