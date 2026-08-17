@@ -123,8 +123,22 @@ export class LibraryStore {
     this.patchFilters({ search: s === '' ? undefined : s });
   }
 
+  // Review round 1, Finding 1: a naive `{ ...this.filters, ...patch }` spread leaves a patch's
+  // `undefined`-valued keys (e.g. `{ packId: undefined }` from `setPack(null)`) as stale OWN
+  // properties instead of removing them — `querySamples` itself doesn't care (main-process
+  // filters are read with `!== undefined` checks either way), but a future filter-chip/active-
+  // count UI reading `Object.keys(store.filters)`/`Object.entries(...)` would show a phantom
+  // entry for every dimension the user has ever touched-then-cleared this session. Deleting is
+  // legal here (unlike a generic `keyof T`-indexed delete, which TS sometimes rejects) because
+  // EVERY field of the concrete `QueryFilters` type is declared optional.
   private patchFilters(patch: Partial<QueryFilters>): void {
-    this.filters = { ...this.filters, ...patch };
+    const merged: QueryFilters = { ...this.filters, ...patch };
+    for (const key of Object.keys(merged) as (keyof QueryFilters)[]) {
+      if (merged[key] === undefined) {
+        delete merged[key];
+      }
+    }
+    this.filters = merged;
     void this.runQuery();
   }
 

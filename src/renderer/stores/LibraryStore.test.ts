@@ -311,6 +311,62 @@ describe('LibraryStore', () => {
     });
   });
 
+  // Review round 1, Finding 1: `patchFilters` used to spread-merge `undefined`-valued patch
+  // entries (e.g. `{ packId: undefined }` from `setPack(null)`) straight into `this.filters`,
+  // leaving a stale OWN key rather than removing it. `toEqual`/`toHaveBeenCalledWith` (used
+  // everywhere above) are equality-insensitive to "key present with value undefined" vs "key
+  // absent" — that's why none of those 20 tests caught it. `toStrictEqual` (and reading
+  // `Object.keys` directly) is what actually distinguishes them, which matters because that's
+  // exactly what a future filter-chip / active-filter-count UI (Task 13) would read.
+  describe('filters — exact shape (no stale undefined-valued keys after clearing)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('touching and clearing EVERY filter dimension (including search) leaves filters strictly empty', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setPack(5);
+      store.setPack(null);
+
+      store.toggleType('loop');
+      store.toggleType('loop'); // toggling the same type again clears it
+
+      store.setBpmRange(90, 140);
+      store.setBpmRange(null, null);
+
+      store.setKey('c#');
+      store.setKey(null);
+
+      store.toggleTag('kick');
+      store.toggleTag('kick'); // removes the only tag — exercises the tags: undefined branch,
+      // otherwise untested by any test above (all of which only ever add tags).
+
+      store.setSearch('kick');
+      vi.advanceTimersByTime(50);
+      store.setSearch('');
+      vi.advanceTimersByTime(50);
+
+      expect(store.filters).toStrictEqual({});
+      expect(Object.keys(store.filters)).toEqual([]);
+    });
+
+    it('clearing ONE filter removes exactly its own key, leaving the exact key set of others still active untouched', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setPack(5);
+      store.setKey('c#');
+      store.setPack(null); // clear only the pack
+
+      expect(store.filters).toStrictEqual({ audioKey: 'c#' });
+    });
+  });
+
   describe('fetchPeaks', () => {
     it('requests only ids not already cached, and merges the result into peaksCache', async () => {
       const bufA = new ArrayBuffer(8);
