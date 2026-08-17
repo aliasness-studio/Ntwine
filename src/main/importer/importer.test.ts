@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { openCatalog } from '../catalog/db';
+import { dirname, join } from 'node:path';
+import { openCatalog, type Catalog } from '../catalog/db';
 import { buildFixtureSpliceDb, type FixtureRow } from './fixtureSpliceDb';
 import { readSplice } from './spliceDb';
-import { buildCatalog } from './importer';
+import { buildCatalog, statPass } from './importer';
 
 // Step 6 (brief prose only, no verbatim code given — authored per Task 5's own precedent for
 // prose-only steps): "using fixture db from Task 5: buildCatalog twice is idempotent (same row
@@ -225,5 +225,117 @@ describe('buildCatalog', () => {
     // does (hash-loop still references it); asserted for completeness, not the point of the test.
     const tagRow = catalog.db.prepare('SELECT id FROM tags WHERE name = ?').get('drums');
     expect(tagRow).toBeDefined();
+  });
+});
+
+// Task 8 Step 1 (brief prose only, same as Task 6's own prose-only steps): "create temp library
+// root with one real file matching one row; assert that row missing=0, others missing=1; run
+// twice = same result." The interface line's parenthetical — "(sets/clears samples.missing)" —
+// is a second, distinct claim from "run twice = same result": a bug that only ever sets
+// missing=1 and never clears it back to 0 would still pass a same-filesystem rerun (it would be
+// stably wrong both times). The reappear test below exercises the "clears" half directly rather
+// than leaving it to be implied by the other two.
+describe('statPass', () => {
+  const STAT_PACK_UUID = 'pack-stat-uuid';
+
+  // Three samples sharing one pack, distinct multi-segment rel_paths (matches the "sounds/packs/
+  // <name>/<file>" shape every other importer fixture uses) — only "present.wav"'s resolved path
+  // gets a real file written to it in setUpStat below.
+  function buildStatFixtureRows(libraryRoot: string): FixtureRow[] {
+    const sample = (fileHash: string, filename: string) => ({
+      table: 'samples' as const,
+      file_hash: fileHash,
+      local_path: join(libraryRoot, 'sounds/packs/Stat Pack', filename),
+      filename,
+      pack_uuid: STAT_PACK_UUID,
+      sample_type: 'oneshot' as const,
+      bpm: 0,
+      audio_key: '',
+      chord_type: '',
+      duration: 500,
+      tags: '',
+    });
+    return [
+      { table: 'packs', uuid: STAT_PACK_UUID, name: 'Stat Pack' },
+      sample('stat-present', 'present.wav'),
+      sample('stat-missing-1', 'missing-1.wav'),
+      sample('stat-missing-2', 'missing-2.wav'),
+    ];
+  }
+
+  function presentSamplePath(libraryRoot: string): string {
+    return join(libraryRoot, 'sounds/packs/Stat Pack/present.wav');
+  }
+
+  function missingSample1Path(libraryRoot: string): string {
+    return join(libraryRoot, 'sounds/packs/Stat Pack/missing-1.wav');
+  }
+
+  function writeRealFile(path: string): void {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'real-audio-bytes');
+  }
+
+  function setUpStat() {
+    const libraryRoot = tmp();
+    const dbPath = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(dbPath, buildStatFixtureRows(libraryRoot));
+    const data = readSplice(dbPath);
+    const catalog = freshCatalog();
+    buildCatalog(catalog, data, libraryRoot);
+
+    // Only present.wav's rel_path resolves to a file that actually exists on disk; the other
+    // two rows' resolved paths were never written to.
+    writeRealFile(presentSamplePath(libraryRoot));
+
+    return { libraryRoot, catalog };
+  }
+
+  function missingFlagByHash(catalog: Catalog, fileHash: string): number {
+    const row = catalog.db
+      .prepare('SELECT missing FROM samples WHERE file_hash = ?')
+      .get(fileHash) as { missing: number } | undefined;
+    if (!row) throw new Error(`no such sample: ${fileHash}`);
+    return row.missing;
+  }
+
+  it('sets missing=0 for the row whose file exists on disk and missing=1 for every other row', () => {
+    const { libraryRoot, catalog } = setUpStat();
+
+    const result = statPass(catalog, libraryRoot);
+
+    expect(result).toEqual({ present: 1, missing: 2 });
+    expect(missingFlagByHash(catalog, 'stat-present')).toBe(0);
+    expect(missingFlagByHash(catalog, 'stat-missing-1')).toBe(1);
+    expect(missingFlagByHash(catalog, 'stat-missing-2')).toBe(1);
+  });
+
+  it('running twice with no filesystem change produces the same result', () => {
+    const { libraryRoot, catalog } = setUpStat();
+
+    const first = statPass(catalog, libraryRoot);
+    const second = statPass(catalog, libraryRoot);
+
+    expect(second).toEqual(first);
+    expect(missingFlagByHash(catalog, 'stat-present')).toBe(0);
+    expect(missingFlagByHash(catalog, 'stat-missing-1')).toBe(1);
+    expect(missingFlagByHash(catalog, 'stat-missing-2')).toBe(1);
+  });
+
+  it('clears missing back to 0 when a previously-absent file reappears on disk', () => {
+    const { libraryRoot, catalog } = setUpStat();
+    statPass(catalog, libraryRoot);
+    expect(missingFlagByHash(catalog, 'stat-missing-1')).toBe(1);
+
+    // The file shows up later (e.g. a reconnected drive) — reuse the exact path statPass itself
+    // would resolve the rel_path to, not a hand-rolled second path.
+    writeRealFile(missingSample1Path(libraryRoot));
+
+    const result = statPass(catalog, libraryRoot);
+
+    expect(result).toEqual({ present: 2, missing: 1 });
+    expect(missingFlagByHash(catalog, 'stat-missing-1')).toBe(0);
+    // The still-absent row is untouched by the reappearance of an unrelated file.
+    expect(missingFlagByHash(catalog, 'stat-missing-2')).toBe(1);
   });
 });

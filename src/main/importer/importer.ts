@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Catalog } from '../catalog/db';
 import type { SplicePack, SpliceSample } from './spliceDb';
 import { normalizeSample } from './transform';
@@ -5,6 +7,11 @@ import { rebuildSearch } from '../catalog/search';
 
 interface IdRow {
   id: number;
+}
+
+interface SampleRelPathRow {
+  id: number;
+  rel_path: string;
 }
 
 interface PackUpsertParams {
@@ -143,4 +150,45 @@ export function buildCatalog(
   });
 
   run(data);
+}
+
+/**
+ * Existence pass (spec §5 step 4): stat every sample's file under `libraryRoot` and set/clear
+ * `samples.missing` accordingly. `rel_path` is always stored POSIX-relative regardless of host
+ * OS (`transform.ts`'s `toRelPath` rewrites `sep` to `/` at import time so the catalog stays
+ * portable across platforms) — rejoined here by splitting on `/` and passing each segment
+ * through `path.join` individually, rather than `join(libraryRoot, relPath)` as one string, so a
+ * POSIX-separated rel_path resolves to a correct native path on a Windows host too.
+ *
+ * Unconditional, not delta-only: every row gets its `missing` column freshly SET to the
+ * just-observed 0/1 on every call, never merely set-when-newly-missing. That is what makes this
+ * idempotent (`present`/`missing` counts and every row's flag are identical across repeat calls
+ * with no filesystem change) *and* self-healing (a file that reappears — e.g. a reconnected
+ * drive — flips its row's `missing` back to 0 on the very next pass, not just on the next
+ * import).
+ */
+export function statPass(
+  catalog: Catalog,
+  libraryRoot: string,
+): { present: number; missing: number } {
+  const { db } = catalog;
+
+  const rows = db.prepare<[], SampleRelPathRow>('SELECT id, rel_path FROM samples').all();
+  const setMissing = db.prepare<[number, number]>('UPDATE samples SET missing = ? WHERE id = ?');
+
+  let present = 0;
+  let missing = 0;
+
+  const run = db.transaction((toStat: SampleRelPathRow[]) => {
+    for (const row of toStat) {
+      const absPath = join(libraryRoot, ...row.rel_path.split('/'));
+      const exists = existsSync(absPath);
+      setMissing.run(exists ? 0 : 1, row.id);
+      if (exists) present++;
+      else missing++;
+    }
+  });
+  run(rows);
+
+  return { present, missing };
 }
