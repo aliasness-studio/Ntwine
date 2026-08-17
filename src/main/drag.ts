@@ -1,4 +1,5 @@
 import { ipcMain, nativeImage, type NativeImage } from 'electron';
+import { existsSync } from 'node:fs';
 
 export function makeDragIcon(): NativeImage {
   const size = 24;
@@ -22,6 +23,11 @@ export function registerDragHandler(resolvePath: (sampleId: number) => string | 
   const icon = makeDragIcon();
   ipcMain.on('ntwine:drag-start', (event, sampleId: number) => {
     const file = resolvePath(Number(sampleId));
-    if (file) event.sender.startDrag({ file, icon });
+    // resolvePath only checks the DB row (missing flag) and path containment — not the
+    // filesystem itself, so a file deleted since the last statPass (importer.ts) can still
+    // resolve here. decodePreviewPcm re-stats before touching the file (ipc.ts); startDrag has no
+    // re-stat of its own, so this existsSync is it. A vanished file is a silent no-op, same as
+    // any other resolvePath null (spec §8: "Drag of missing file -> Drag refused").
+    if (file && existsSync(file)) event.sender.startDrag({ file, icon });
   });
 }

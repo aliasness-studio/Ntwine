@@ -352,8 +352,13 @@ describe('writePeaks', () => {
     const { catalog } = setUp();
     const id = idOf(catalog, 'h-kick');
 
-    expect(() => writePeaks(catalog, id, new Int8Array(0))).toThrow(/length.*0/);
-    expect(() => writePeaks(catalog, id, new Int8Array(3))).toThrow(/length.*3/);
+    // Tight, not `/length.*0/`: the message's static "...and > 0..." clause contains a literal
+    // "0" regardless of the interpolated value, so a loose `.*0` pattern would pass even if the
+    // interpolation were broken. Pin the actual "got length N" tail instead — matches the
+    // `/got length 3/` sibling below (which happens not to be vacuous today, since no OTHER "3"
+    // appears in the message, but is written the same tight way on purpose).
+    expect(() => writePeaks(catalog, id, new Int8Array(0))).toThrow(/got length 0/);
+    expect(() => writePeaks(catalog, id, new Int8Array(3))).toThrow(/got length 3/);
     // Neither rejected call left a row behind.
     expect(waveformRow(catalog, id)).toBeUndefined();
   });

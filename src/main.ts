@@ -34,6 +34,16 @@ const createWindow = (): BrowserWindow => {
     },
   });
 
+  // macOS keeps the app process alive after its one-and-only window closes (see
+  // window-all-closed below) — a background pass (e.g. the waveform peaks queue, queue.ts) can
+  // easily still be mid-flight at that point and deliver another worker reply afterwards. Null
+  // out the module-level ref here so sendProgress's isDestroyed() guard below has "no window" to
+  // check against, instead of a dangling reference to a destroyed BrowserWindow. Guarded against
+  // a second window's 'closed' racing an already-newer `mainWindow` (activate can recreate one).
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   const indexPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
 
   // and load the index.html of the app.
@@ -68,8 +78,11 @@ const createWindow = (): BrowserWindow => {
     }
   });
 
-  // Open the DevTools.
-  win.webContents.openDevTools();
+  // Open the DevTools — dev-server loads only. A packaged build has no
+  // MAIN_WINDOW_VITE_DEV_SERVER_URL, so devtools must never auto-open there.
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    win.webContents.openDevTools();
+  }
   return win;
 };
 
@@ -106,7 +119,16 @@ app.whenReady().then(() => {
     catalog,
     snapshotDir,
     coversDir,
-    sendProgress: (p: ImportProgress) => mainWindow?.webContents.send('ntwine:import-progress', p),
+    // Guarded, not a bare `mainWindow?.webContents.send(...)`: a still-running background pass
+    // (e.g. queue.ts's peaks queue) can deliver a worker reply well after the window is gone —
+    // closing the WINDOW on macOS leaves the app (and this callback) alive, and `.webContents` on
+    // a destroyed BrowserWindow throws. Uncaught inside a worker-message callback, that would
+    // wedge runPeaksQueue: it never resolves, workers never get killed, 'done' never fires.
+    sendProgress: (p: ImportProgress) => {
+      if (mainWindow !== null && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ntwine:import-progress', p);
+      }
+    },
   });
 });
 

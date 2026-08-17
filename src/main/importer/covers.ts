@@ -1,6 +1,21 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { Catalog } from '../catalog/db';
+
+// Containment check, replicated (not imported) from protocol.ts's `isContained` — protocol.ts
+// isn't exported there, and importer/ modules are currently only depended ON by main-root
+// modules (protocol.ts itself pulls `relPathToAbs` from importer/transform.ts), never the other
+// way; importing it here would open a main<->importer dependency tangle for one three-line
+// function. transform.ts's `toRelPath` already carries its own independent copy of this same
+// idiom for the identical reason (see protocol.ts's comment on `isContained`) — this is now the
+// third. Same "read vs write halves of one question" split this codebase already has for sample
+// paths (transform.ts's toRelPath at write/import time, protocol.ts's resolveSampleAbsPath at
+// read/serve time): this is the write-time half for cover paths, protocol.ts's
+// resolveCoverAbsPath is the read-time half.
+function isContained(root: string, resolved: string): boolean {
+  const rel = relative(root, resolved);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
 
 // The single definition of "is this pack a candidate for a cover fetch" (owner's "one question,
 // two gates" rule): a pack needs BOTH `cover_url` (something to fetch) and `splice_uuid`
@@ -66,6 +81,21 @@ export async function downloadCovers(
 
   for (const pack of packs) {
     const filename = `${pack.splice_uuid}.jpg`;
+    const target = join(coversDir, filename);
+
+    // `splice_uuid` is untrusted (straight from the Splice sounds.db, copied verbatim into
+    // `packs.splice_uuid` by buildCatalog's upsertPack — nothing validates it looks like an
+    // opaque id rather than a path fragment). A hostile/corrupt row (`splice_uuid = "../evil"`)
+    // must not let this write land outside coversDir. Same degrade as every other per-pack
+    // failure below: log, count it, move on — one bad row must never block the rest of the pass.
+    if (!isContained(coversDir, target)) {
+      console.error(
+        `downloadCovers: pack ${pack.id} — splice_uuid resolves outside coversDir, skipping`,
+      );
+      failed++;
+      continue;
+    }
+
     if (pack.cover_file !== null && existsSync(join(coversDir, pack.cover_file))) {
       continue; // skip-existing
     }
@@ -78,7 +108,7 @@ export async function downloadCovers(
         continue;
       }
       const bytes = await res.arrayBuffer();
-      writeFileSync(join(coversDir, filename), Buffer.from(bytes));
+      writeFileSync(target, Buffer.from(bytes));
       setCoverFile.run(filename, pack.id);
       ok++;
     } catch (err) {

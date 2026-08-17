@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openCatalog, type Catalog } from '../catalog/db';
@@ -141,5 +141,44 @@ describe('downloadCovers', () => {
     expect(result).toEqual({ ok: 0, failed: 0 });
     expect(fetchFn).not.toHaveBeenCalled();
     expect(coverFileByUuid(catalog, 'pack-no-cover')).toBeNull();
+  });
+
+  // Review-wave finding: `splice_uuid` comes straight from the Splice sounds.db (untrusted
+  // input, same threat model protocol.test.ts's containment-trap tests use for `rel_path`) and
+  // buildCatalog copies it into `packs.splice_uuid` verbatim, no path validation. downloadCovers
+  // then builds `${splice_uuid}.jpg` and writes it under coversDir with no containment check — a
+  // hostile/corrupt sounds.db row can walk the write outside coversDir entirely. One `..` is
+  // enough to prove it and keeps the escape target inside this test's own tmp root (see the
+  // `root`/`coversDir` split below) rather than the shared OS tmpdir.
+  it('refuses a splice_uuid that would escape coversDir, counts it as a failure, and continues to the next pack', async () => {
+    const root = tmp();
+    const coversDir = join(root, 'covers');
+    const dbPath = join(root, 'sounds.db');
+    const HOSTILE_UUID = '../evil';
+    buildFixtureSpliceDb(dbPath, [
+      { table: 'packs', uuid: HOSTILE_UUID, name: 'Hostile Pack', cover_url: URL_OK },
+      { table: 'packs', uuid: PACK_OK, name: 'OK Pack', cover_url: URL_OK },
+    ]);
+    const data = readSplice(dbPath);
+    const catalog = freshCatalog();
+    buildCatalog(catalog, data, root);
+    const fetchFn = makeFetchFn();
+
+    const result = await downloadCovers(catalog, coversDir, fetchFn);
+
+    expect(result).toEqual({ ok: 1, failed: 1 });
+
+    // The traversal target — one level above coversDir, i.e. a sibling of covers/ under the same
+    // per-test root — must not exist: nothing escaped coversDir.
+    expect(existsSync(join(root, 'evil.jpg'))).toBe(false);
+    // coversDir itself holds only the well-behaved pack's file.
+    expect(readdirSync(coversDir)).toEqual([`${PACK_OK}.jpg`]);
+
+    // The importer continued past the hostile row instead of aborting the whole pass.
+    expect(coverFileByUuid(catalog, PACK_OK)).toBe(`${PACK_OK}.jpg`);
+    expect(coverFileByUuid(catalog, HOSTILE_UUID)).toBeNull();
+    // The containment check rejects before any network fetch — the hostile row never reaches
+    // fetchFn at all, only the OK pack does.
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });
