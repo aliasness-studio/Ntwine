@@ -1,11 +1,20 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { registerDragHandler } from './main/drag';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
+
+// Task 2 spike: one real wav confirmed with `ls` (see task-2-report.md) standing
+// in for the catalog. Task 11 re-points this resolvePath closure at the real
+// catalog lookup — registerDragHandler itself is not temporary.
+const WAV_PATH =
+  '/Users/<user>/Splice/sounds/packs/Essential Foley Sounds/BRS_Leaves_Scamper_Sml_Fast.wav';
+
+registerDragHandler(() => WAV_PATH);
 
 const createWindow = () => {
   // Create the browser window.
