@@ -6,7 +6,7 @@ import { openCatalog, type Catalog } from './db';
 import { buildFixtureSpliceDb, type FixtureRow } from '../importer/fixtureSpliceDb';
 import { readSplice } from '../importer/spliceDb';
 import { buildCatalog } from '../importer/importer';
-import { listPacks, listTags, querySamples } from './queries';
+import { listPacks, listTags, pendingPeakIds, querySamples } from './queries';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-queries-'));
 const freshCatalog = () => openCatalog(join(tmp(), 'catalog.db'));
@@ -273,5 +273,39 @@ describe('listTags', () => {
       { name: 'kick', count: 1 },
       { name: 'loop', count: 1 },
     ]);
+  });
+});
+
+describe('pendingPeakIds', () => {
+  it('returns non-missing samples with no waveforms row — excludes missing, succeeded, and failed-decode rows', () => {
+    const { catalog } = setUp();
+    const insertWaveform = catalog.db.prepare(
+      'INSERT INTO waveforms (sample_id, peaks, bucket_count, format) VALUES (?, ?, ?, ?)',
+    );
+    // loop.wav: a real decode succeeded (format 1) — has a row, so it's not pending.
+    insertWaveform.run(idOf(catalog, 'h-loop'), Buffer.alloc(400), 200, 1);
+    // kick.wav: Task 10 writes format 0 for a failed decode — still has a row, still not
+    // "pending" (a bare `no row` check must not resurrect a known-failed sample here).
+    insertWaveform.run(idOf(catalog, 'h-kick'), Buffer.alloc(400), 200, 0);
+    // tom.wav: missing entirely — excluded even though it also has no waveforms row, since
+    // there is no file to decode.
+    markMissing(catalog, 'h-tom');
+    // bass.wav, boo.wav: non-missing, no waveforms row — the only two that should come back.
+
+    const ids = pendingPeakIds(catalog);
+
+    expect(ids).toEqual([idOf(catalog, 'h-bass'), idOf(catalog, 'h-boo')]);
+  });
+
+  it('returns [] once every non-missing sample has a waveforms row', () => {
+    const { catalog } = setUp();
+    const insertWaveform = catalog.db.prepare(
+      'INSERT INTO waveforms (sample_id, peaks, bucket_count, format) VALUES (?, ?, ?, ?)',
+    );
+    for (const hash of ['h-kick', 'h-loop', 'h-bass', 'h-tom', 'h-boo']) {
+      insertWaveform.run(idOf(catalog, hash), Buffer.alloc(400), 200, 1);
+    }
+
+    expect(pendingPeakIds(catalog)).toEqual([]);
   });
 });

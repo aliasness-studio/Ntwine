@@ -1,9 +1,13 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Catalog } from '../catalog/db';
+import type { ImportProgress } from '../../shared/ipcTypes';
 import type { SplicePack, SpliceSample } from './spliceDb';
 import { normalizeSample } from './transform';
 import { rebuildSearch } from '../catalog/search';
+import { readSplice, snapshotSpliceDb } from './spliceDb';
+import { downloadCovers } from './covers';
+import { pendingPeakIds } from '../catalog/queries';
 
 interface IdRow {
   id: number;
@@ -191,4 +195,181 @@ export function statPass(
   run(rows);
 
   return { present, missing };
+}
+
+// Named alias for `downloadCovers`'s own `fetchFn` parameter shape (covers.ts is the source of
+// truth for the real signature; this is purely a convenience type for `ImportDeps` and its
+// callers, so Task 11 doesn't have to repeat the structural type by hand when building one).
+export type CoversFetch = (
+  url: string,
+) => Promise<{ ok: boolean; arrayBuffer(): Promise<ArrayBuffer> }>;
+
+// The real Splice metadata db is named this on every platform verified so far (spec §2.2;
+// `paths.ts`'s own resolver glob ends in the same literal). `snapshotSpliceDb` preserves the
+// source filename via `basename(src)`, so a prior snapshot in `snapshotDir` always lands at
+// this same name too — which is what makes the fallback lookup below a plain `existsSync` on
+// one known path rather than a directory scan.
+const SPLICE_DB_FILENAME = 'sounds.db';
+
+export interface ImportDeps {
+  catalog: Catalog;
+  libraryRoot: string;
+  spliceDbPath: string | null;
+  snapshotDir: string;
+  coversDir: string;
+  fetchFn: CoversFetch;
+  // Injected clock for `meta.imported_at` (an ISO string) — defaults to the real wall clock.
+  // Tests pin a fixed value so the meta round-trip assertion isn't a moving target.
+  now?: () => string;
+}
+
+interface CoverCandidateCountRow {
+  n: number;
+}
+
+/**
+ * Count of packs `downloadCovers` might actually call `fetchFn` for — mirrors its own skip
+ * condition (`cover_url === null || splice_uuid === null`) exactly, so the covers phase's
+ * reported `total` means "candidates downloadCovers would consider," not just "every pack in
+ * the catalog." A skip-existing candidate (already cached on disk) still counts here — this is
+ * "how many are worth considering," not "how many will actually hit the network" — which is why
+ * the covers-phase completion event below always reports `done === total` regardless of how
+ * many of those candidates turned out to be skip-existing.
+ */
+function countCoverCandidates(catalog: Catalog): number {
+  const row = catalog.db
+    .prepare<[], CoverCandidateCountRow>(
+      'SELECT COUNT(*) AS n FROM packs WHERE cover_url IS NOT NULL AND splice_uuid IS NOT NULL',
+    )
+    .get();
+  return row ? row.n : 0;
+}
+
+/**
+ * Runs the whole import pipeline (spec §5 steps 2-5) in order — snapshot, catalog build,
+ * existence check, covers — reporting one start and one completion `ImportProgress` event per
+ * phase via `onProgress` (`covers` additionally ticks once per pack it actually attempts a
+ * fetch for). Resolves with the ids of every non-missing sample that has no `waveforms` row yet
+ * (`pendingPeakIds`) — the seam Task 10's background decode queue consumes. This function never
+ * decodes audio or touches the `waveforms` table itself.
+ *
+ * `runImport`/`ImportDeps` IS the `LibraryImporter` seam spec §3.2 promises ("the importer is
+ * behind a LibraryImporter interface so a second strategy slots in without surgery"): there is
+ * no separate marker interface to implement — a second strategy (e.g. a future NI-expansions
+ * importer) is simply another `runImport`-shaped async function accepting the same `ImportDeps`
+ * shape, swappable wherever Task 11's IPC handler calls this one.
+ *
+ * Snapshot resolution (spec §5 step 2): `deps.spliceDbPath` wins when given — copied into
+ * `snapshotDir` via `snapshotSpliceDb`. When it's `null` (the live Splice db couldn't be
+ * located this run), a snapshot already sitting in `snapshotDir` from a previous run is read in
+ * place instead — NOT re-copied onto itself, which would be both unnecessary (it already IS the
+ * snapshot) and unsafe (`copyFileSync` with an identical source/destination path is not a
+ * defined no-op). Only when neither exists does this reject, naming the one path it looked for
+ * so the caller can surface something better than a bare ENOENT.
+ *
+ * Any failure — including the neither-source case above — is reported as one final
+ * `{ phase: 'error' }` progress event before the promise rejects, so a progress-only listener
+ * (e.g. the renderer's ImportStore) can learn why a run stopped without wrapping every call in
+ * its own try/catch.
+ */
+export async function runImport(
+  deps: ImportDeps,
+  onProgress: (p: ImportProgress) => void,
+): Promise<number[]> {
+  const now = deps.now ?? (() => new Date().toISOString());
+
+  try {
+    // --- snapshot (spec §5 step 2) -----------------------------------------
+    const priorSnapshotPath = join(deps.snapshotDir, SPLICE_DB_FILENAME);
+    onProgress({
+      phase: 'snapshot',
+      done: 0,
+      total: 1,
+      message:
+        deps.spliceDbPath !== null
+          ? `Copying Splice database from "${deps.spliceDbPath}"…`
+          : `No Splice database path given — looking for a prior snapshot at "${priorSnapshotPath}"…`,
+    });
+
+    let snapshotPath: string;
+    if (deps.spliceDbPath !== null) {
+      snapshotPath = snapshotSpliceDb(deps.spliceDbPath, deps.snapshotDir);
+    } else if (existsSync(priorSnapshotPath)) {
+      snapshotPath = priorSnapshotPath; // already the snapshot — read in place, don't re-copy.
+    } else {
+      throw new Error(
+        `runImport: no Splice database available — no path was given, and no prior snapshot ` +
+          `exists at "${priorSnapshotPath}"`,
+      );
+    }
+    onProgress({
+      phase: 'snapshot',
+      done: 1,
+      total: 1,
+      message: `Snapshot ready: "${snapshotPath}"`,
+    });
+
+    // --- catalog (spec §5 step 3) -------------------------------------------
+    onProgress({ phase: 'catalog', done: 0, total: 1, message: 'Reading Splice metadata…' });
+    const data = readSplice(snapshotPath);
+    buildCatalog(deps.catalog, data, deps.libraryRoot);
+    onProgress({
+      phase: 'catalog',
+      done: 1,
+      total: 1,
+      message: `Imported ${data.samples.length} samples, ${data.packs.length} packs`,
+    });
+
+    // --- stat (spec §5 step 4) -----------------------------------------------
+    onProgress({ phase: 'stat', done: 0, total: 1, message: 'Checking files on disk…' });
+    const { present, missing } = statPass(deps.catalog, deps.libraryRoot);
+    onProgress({
+      phase: 'stat',
+      done: 1,
+      total: 1,
+      message: `${present} present, ${missing} missing`,
+    });
+
+    // --- covers (spec §5 step 5) -----------------------------------------------
+    const coverTotal = countCoverCandidates(deps.catalog);
+    onProgress({
+      phase: 'covers',
+      done: 0,
+      total: coverTotal,
+      message: 'Downloading pack covers…',
+    });
+    let coverTicks = 0;
+    // Wraps the caller's fetchFn purely to observe each attempt as a progress tick —
+    // downloadCovers itself has no progress hook, so this is the only seam available without
+    // reaching into (or duplicating) its skip/tolerate logic. try/finally ticks on both a
+    // resolved AND a rejected fetch, since downloadCovers's own try/catch is what turns a
+    // rejection into a counted `failed` — this wrapper must not swallow or alter that.
+    const tickingFetch: CoversFetch = async (url) => {
+      try {
+        return await deps.fetchFn(url);
+      } finally {
+        coverTicks++;
+        onProgress({ phase: 'covers', done: coverTicks, total: coverTotal, message: url });
+      }
+    };
+    const { ok, failed } = await downloadCovers(deps.catalog, deps.coversDir, tickingFetch);
+    onProgress({
+      phase: 'covers',
+      done: coverTotal,
+      total: coverTotal,
+      message: `${ok} covers downloaded, ${failed} failed`,
+    });
+
+    // Meta stamps land only after every phase above has actually completed (per the brief: "after
+    // the covers phase completes") — a run that throws partway through must never look imported.
+    deps.catalog.setMeta('imported', '1');
+    deps.catalog.setMeta('library_root', deps.libraryRoot);
+    deps.catalog.setMeta('imported_at', now());
+
+    return pendingPeakIds(deps.catalog);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    onProgress({ phase: 'error', done: 0, total: 0, message });
+    throw err;
+  }
 }

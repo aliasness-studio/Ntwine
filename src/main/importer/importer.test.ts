@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openCatalog, type Catalog } from '../catalog/db';
+import type { ImportProgress } from '../../shared/ipcTypes';
 import { buildFixtureSpliceDb, type FixtureRow } from './fixtureSpliceDb';
-import { readSplice } from './spliceDb';
-import { buildCatalog, statPass } from './importer';
+import { readSplice, snapshotSpliceDb } from './spliceDb';
+import { buildCatalog, statPass, runImport, type CoversFetch, type ImportDeps } from './importer';
 
 // Step 6 (brief prose only, no verbatim code given — authored per Task 5's own precedent for
 // prose-only steps): "using fixture db from Task 5: buildCatalog twice is idempotent (same row
@@ -337,5 +338,193 @@ describe('statPass', () => {
     expect(missingFlagByHash(catalog, 'stat-missing-1')).toBe(0);
     // The still-absent row is untouched by the reappearance of an unrelated file.
     expect(missingFlagByHash(catalog, 'stat-missing-2')).toBe(1);
+  });
+});
+
+// Task 9 Step 1 (brief prose only, same as Tasks 5/6/8's own prose-only steps): "full pipeline
+// over fixture db + temp dirs emits phases in order snapshot -> catalog -> stat -> covers and
+// returns ids missing peaks; with spliceDbPath: null but an existing prior snapshot, still
+// succeeds (spec §5.2); with neither, rejects with a message naming the searched path."
+describe('runImport', () => {
+  const RUN_PACK_UUID = 'pack-run-import-1';
+  const RUN_PACK_UUID_2 = 'pack-run-import-2';
+  const COVER_URL = 'https://cdn.example.com/covers/run-import-1.jpg';
+  const COVER_URL_2 = 'https://cdn.example.com/covers/run-import-2.jpg';
+
+  // Two packs (both carrying a cover_url, so the covers phase has two real fetch candidates —
+  // needed to observe a genuine mid-phase tick, not just a start/completion bookend that a
+  // single-candidate run would make look identical) and two samples under the first pack: one
+  // whose resolved path is a real file on disk, one that is not.
+  function buildRunImportRows(libraryRoot: string): FixtureRow[] {
+    const sample = (fileHash: string, filename: string) => ({
+      table: 'samples' as const,
+      file_hash: fileHash,
+      local_path: join(libraryRoot, 'sounds/packs/Run Import Pack', filename),
+      filename,
+      pack_uuid: RUN_PACK_UUID,
+      sample_type: 'oneshot' as const,
+      bpm: 0,
+      audio_key: '',
+      chord_type: '',
+      duration: 500,
+      tags: '',
+    });
+    return [
+      { table: 'packs', uuid: RUN_PACK_UUID, name: 'Run Import Pack', cover_url: COVER_URL },
+      {
+        table: 'packs',
+        uuid: RUN_PACK_UUID_2,
+        name: 'Run Import Pack Two',
+        cover_url: COVER_URL_2,
+      },
+      sample('hash-present', 'present.wav'),
+      sample('hash-absent', 'absent.wav'),
+    ];
+  }
+
+  function presentSamplePath(libraryRoot: string): string {
+    return join(libraryRoot, 'sounds/packs/Run Import Pack/present.wav');
+  }
+
+  function writeRealFile(path: string): void {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'real-audio-bytes');
+  }
+
+  function idOf(catalog: Catalog, fileHash: string): number {
+    const row = catalog.db.prepare('SELECT id FROM samples WHERE file_hash = ?').get(fileHash) as
+      { id: number } | undefined;
+    if (!row) throw new Error(`fixture sample "${fileHash}" not found`);
+    return row.id;
+  }
+
+  // Always ok, tiny body — these tests are about orchestration/progress, not cover-fetch
+  // outcomes (those are covers.test.ts's job).
+  function okFetch(): CoversFetch {
+    return async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer });
+  }
+
+  // Builds the "live Splice db" fixture and its libraryRoot; does NOT touch snapshotDir/coversDir
+  // — each test wires those itself so the snapshot-fallback/rejection cases can control them.
+  function setUpSource() {
+    const libraryRoot = tmp();
+    const sourceDbPath = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(sourceDbPath, buildRunImportRows(libraryRoot));
+    writeRealFile(presentSamplePath(libraryRoot));
+    return { libraryRoot, sourceDbPath };
+  }
+
+  it('runs snapshot -> catalog -> stat -> covers in order, ticks covers per pack, stamps meta, and returns ids still needing peaks', async () => {
+    const { libraryRoot, sourceDbPath } = setUpSource();
+    const catalog = freshCatalog();
+    const snapshotDir = join(tmp(), 'snapshot');
+    const coversDir = join(tmp(), 'covers');
+    const events: ImportProgress[] = [];
+    const FIXED_NOW = '2026-08-16T00:00:00.000Z';
+
+    const deps: ImportDeps = {
+      catalog,
+      libraryRoot,
+      spliceDbPath: sourceDbPath,
+      snapshotDir,
+      coversDir,
+      fetchFn: okFetch(),
+      now: () => FIXED_NOW,
+    };
+
+    const ids = await runImport(deps, (p) => events.push(p));
+
+    // Phase order: first-seen order of distinct phases. Each phase's own events are contiguous
+    // (a phase's start is immediately followed later by its own completion, never interleaved
+    // with another phase's events), so de-duplicating consecutive-by-first-occurrence gives
+    // exactly the phase sequence the brief asks for.
+    const phaseOrder = [...new Set(events.map((e) => e.phase))];
+    expect(phaseOrder).toEqual(['snapshot', 'catalog', 'stat', 'covers']);
+
+    // Start/completion shape: the very first event is snapshot's start (0 of 1); the very last
+    // is covers' completion (done === total).
+    expect(events[0]).toMatchObject({ phase: 'snapshot', done: 0, total: 1 });
+    const last = events[events.length - 1];
+    expect(last.phase).toBe('covers');
+    expect(last.done).toBe(last.total);
+
+    // hash-present has a real file on disk and no waveforms row yet -> still needs peaks.
+    // hash-absent has no real file (statPass marks it missing) -> excluded even though it also
+    // has no waveforms row. pendingPeakIds' own exclusion matrix (missing / succeeded / failed)
+    // is pinned directly in queries.test.ts; this only proves runImport is wired to read it
+    // against the real post-pipeline catalog state.
+    expect(ids).toEqual([idOf(catalog, 'hash-present')]);
+
+    // Covers: two packs both carry a cover_url and coversDir starts empty, so both are real
+    // fetch attempts -> start, two ticks, completion. The mid-phase tick assertion below is the
+    // falsifier that actually distinguishes "ticks per pack" from "only start+completion" — with
+    // total 2, an event at done:1 cannot be either bookend.
+    const coversEvents = events.filter((e) => e.phase === 'covers');
+    expect(coversEvents[0]).toMatchObject({ done: 0, total: 2 });
+    expect(coversEvents.some((e) => e.done === 1 && e.total === 2)).toBe(true);
+    expect(coversEvents[coversEvents.length - 1]).toMatchObject({ done: 2, total: 2 });
+
+    // Meta stamps land only after the covers phase completes, using the injected clock rather
+    // than the real one — so this pins the exact value, not just "is a string".
+    expect(catalog.getMeta('imported')).toBe('1');
+    expect(catalog.getMeta('library_root')).toBe(libraryRoot);
+    expect(catalog.getMeta('imported_at')).toBe(FIXED_NOW);
+  });
+
+  it('falls back to an existing prior snapshot when spliceDbPath is null (spec §5.2)', async () => {
+    const { libraryRoot, sourceDbPath } = setUpSource();
+    const catalog = freshCatalog();
+    const snapshotDir = join(tmp(), 'snapshot');
+    const coversDir = join(tmp(), 'covers');
+    // Plant the "prior snapshot" the way a REAL earlier run would have produced it: via
+    // snapshotSpliceDb itself, not a hand-rolled file copy.
+    snapshotSpliceDb(sourceDbPath, snapshotDir);
+    const events: ImportProgress[] = [];
+
+    const deps: ImportDeps = {
+      catalog,
+      libraryRoot,
+      spliceDbPath: null,
+      snapshotDir,
+      coversDir,
+      fetchFn: okFetch(),
+    };
+
+    const ids = await runImport(deps, (p) => events.push(p));
+
+    expect([...new Set(events.map((e) => e.phase))]).toEqual([
+      'snapshot',
+      'catalog',
+      'stat',
+      'covers',
+    ]);
+    expect(catalog.db.prepare('SELECT COUNT(*) AS n FROM packs').get()).toEqual({ n: 2 });
+    expect(ids).toEqual([idOf(catalog, 'hash-present')]);
+  });
+
+  it('rejects, naming the searched path, when spliceDbPath is null and no prior snapshot exists', async () => {
+    const catalog = freshCatalog();
+    const snapshotDir = join(tmp(), 'snapshot'); // never populated
+    const coversDir = join(tmp(), 'covers');
+    const events: ImportProgress[] = [];
+
+    const deps: ImportDeps = {
+      catalog,
+      libraryRoot: tmp(),
+      spliceDbPath: null,
+      snapshotDir,
+      coversDir,
+      fetchFn: okFetch(),
+    };
+
+    await expect(runImport(deps, (p) => events.push(p))).rejects.toThrow(
+      join(snapshotDir, 'sounds.db'),
+    );
+
+    // The reject path still reports through onProgress — a listener watching only the progress
+    // stream (not a try/catch around the call) can still learn why the run stopped.
+    const last = events[events.length - 1];
+    expect(last.phase).toBe('error');
+    expect(last.message ?? '').toContain(join(snapshotDir, 'sounds.db'));
   });
 });

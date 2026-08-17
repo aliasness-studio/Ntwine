@@ -206,3 +206,33 @@ export function listTags(catalog: Catalog): TagFacet[] {
     )
     .all();
 }
+
+interface PendingPeakIdRow {
+  id: number;
+}
+
+/**
+ * Ids of every non-missing sample with no `waveforms` row yet — Task 9's `runImport` calls this
+ * once per pipeline run to hand off exactly the ids Task 10's background decode queue still
+ * needs to process, and Task 10 will re-query it the same way on later runs. Lives here (not
+ * inline in importer.ts) because both tasks need it.
+ *
+ * "No row" is the only pending signal: a sample with ANY `waveforms` row — succeeded
+ * (`format != 0`) or a recorded failed decode (`format = 0`, the same distinction
+ * `querySamples`'s `peaksFailed` column reads, added for Task 7 review round 1) — already has
+ * an answer and is excluded either way. Retrying a failed decode is a deliberate future action
+ * (Task 10's), never an accidental side effect of calling this again. `missing` samples are
+ * excluded too — there is no file left to decode.
+ */
+export function pendingPeakIds(catalog: Catalog): number[] {
+  return catalog.db
+    .prepare<[], PendingPeakIdRow>(
+      `SELECT s.id AS id
+       FROM samples s
+       LEFT JOIN waveforms w ON w.sample_id = s.id
+       WHERE s.missing = 0 AND w.sample_id IS NULL
+       ORDER BY s.id`,
+    )
+    .all()
+    .map((r) => r.id);
+}
