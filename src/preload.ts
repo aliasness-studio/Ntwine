@@ -45,4 +45,11 @@ const api: NtwineApi = {
   coverUrl: (packId: number) => `cover://p/${packId}`,
 };
 
+// E2E flag (e2e spec §3.1): main appends `--ntwine-e2e` to webPreferences.additionalArguments
+// only when armed; a sandboxed preload sees it in process.argv. The production `ntwine` bridge
+// is untouched — this is a second, boolean-only exposure.
+if (process.argv.includes('--ntwine-e2e')) {
+  contextBridge.exposeInMainWorld('ntwineE2E', true);
+}
+
 contextBridge.exposeInMainWorld('ntwine', api);

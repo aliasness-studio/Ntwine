@@ -6,6 +6,7 @@
  * To learn more about the differences between the "main" and the "renderer" context in Electron,
  * visit: https://electronjs.org/docs/tutorial/process-model
  */
+import { toJS } from 'mobx';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ThemeProvider } from 'styled-components';
@@ -14,6 +15,7 @@ import { createPreviewPlayer } from './renderer/audio/previewPlayer';
 import { App } from './renderer/components/App';
 import { StoreContext, type Stores } from './renderer/components/StoreContext';
 import { theme } from './renderer/components/theme';
+import { installE2ESnapshot, wrapPlayPort } from './renderer/e2eSnapshot';
 import { api } from './renderer/stores/api';
 import { ImportStore } from './renderer/stores/ImportStore';
 import { LibraryStore } from './renderer/stores/LibraryStore';
@@ -34,17 +36,32 @@ const fetchBytes = (url: string): Promise<ArrayBuffer> =>
     return r.arrayBuffer();
   });
 
-const playPort = createPreviewPlayer({
+const e2eArmed = window.ntwineE2E === true;
+const basePort = createPreviewPlayer({
   fetchBytes,
   decodeFallback: api.decodePreviewPcm,
   sampleUrl: api.sampleUrl,
 });
+const { port: playPort, counters } = wrapPlayPort(basePort, e2eArmed);
 
 const stores: Stores = {
   library: new LibraryStore(api),
   player: new PlayerStore(playPort),
   importStore: new ImportStore(api),
 };
+
+// Synchronous, before any async work — the harness waits on typeof === 'function'.
+installE2ESnapshot(window, e2eArmed, () => ({
+  rows: stores.library.rows.length,
+  resultCount: stores.library.resultCount,
+  selectedId: stores.player.selectedId,
+  volume: stores.player.volume,
+  filters: toJS(stores.library.filters) as Record<string, unknown>,
+  importPhase: stores.importStore.phase,
+  running: stores.importStore.running,
+  peaksCached: stores.library.peaksCache.size,
+  ...counters(),
+}));
 
 const container = document.getElementById('app');
 if (!container) {

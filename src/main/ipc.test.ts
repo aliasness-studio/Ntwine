@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openCatalog } from './catalog/db';
 import {
+  currentLibraryRoot,
   decodePreviewPcm,
   PREVIEW_MAX_BYTES,
   PREVIEW_MAX_SECONDS,
@@ -224,5 +225,29 @@ describe('runWaveformsInBackground', () => {
     expect(sendProgress).toHaveBeenCalledWith({ phase: 'waveforms', done: 1, total: 1 });
     expect(sendProgress).toHaveBeenCalledWith({ phase: 'done', done: 1, total: 1 });
     expect(kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('currentLibraryRoot', () => {
+  // Precedence pin (Task 1, e2e spec §3.1): a persisted `library_root` must keep winning over an
+  // E2E `defaultLibraryRoot` override — the SAME precedence production already had over the spec
+  // default, now generalized to a second argument rather than a hardcoded constant. Getting this
+  // backwards would mean an E2E run's NTWINE_LIBRARY_ROOT silently overrides a library the user
+  // already picked via pickLibraryRoot in that same E2E userData dir.
+  it('falls back to the spec default (~/Splice) when nothing is persisted and no override is given', () => {
+    const catalog = openCatalog(join(tmp(), 'catalog.db'));
+    expect(currentLibraryRoot(catalog)).toBe(join(homedir(), 'Splice'));
+  });
+
+  it('uses the supplied default when nothing is persisted', () => {
+    const catalog = openCatalog(join(tmp(), 'catalog.db'));
+    expect(currentLibraryRoot(catalog, '/x')).toBe('/x');
+  });
+
+  it('a persisted library_root wins over BOTH the spec default and a supplied default', () => {
+    const catalog = openCatalog(join(tmp(), 'catalog.db'));
+    catalog.setMeta('library_root', '/persisted');
+    expect(currentLibraryRoot(catalog)).toBe('/persisted');
+    expect(currentLibraryRoot(catalog, '/x')).toBe('/persisted');
   });
 });
