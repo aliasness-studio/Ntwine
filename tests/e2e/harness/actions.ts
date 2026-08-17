@@ -2,7 +2,7 @@
 // strategy here is transcribed verbatim from the brief — accessible-name/role/testid based, never
 // a CSS class or a `waitForTimeout`. `waitForWaveform`/`isRealWaveform` are added to this file by
 // Task 7.
-import type { Locator, Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import type { E2ESnapshot } from '../../../src/shared/e2eTypes';
 
 /** MDN's standard escape: every regex metacharacter gets a backslash, so a fixture-supplied name
@@ -93,3 +93,26 @@ export function rowByFilename(page: Page, filename: string): Locator {
 export async function openSettings(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Settings' }).click();
 }
+
+/** Real peaks draw accent-coloured bars away from the centre line; the null placeholder draws only a
+ * thin centre line. Count non-background pixels in the top and bottom thirds (WaveformThumb.tsx). */
+export async function isRealWaveform(canvas: Locator): Promise<boolean> {
+  return canvas.evaluate((c: HTMLCanvasElement) => {
+    const ctx = c.getContext('2d')!;
+    const { width, height } = c;
+    const d = ctx.getImageData(0, 0, width, height).data;
+    const bg = [d[0], d[1], d[2], d[3]];
+    let hits = 0;
+    const third = Math.floor(height / 3);
+    for (let y = 0; y < height; y++) {
+      if (y >= third && y < height - third) continue;
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        if (d[i] !== bg[0] || d[i + 1] !== bg[1] || d[i + 2] !== bg[2] || d[i + 3] !== bg[3]) hits++;
+      }
+    }
+    return hits > 20;
+  });
+}
+export const waitForWaveform = (canvas: Locator, real: boolean) =>
+  expect.poll(() => isRealWaveform(canvas), { timeout: 30_000 }).toBe(real);
