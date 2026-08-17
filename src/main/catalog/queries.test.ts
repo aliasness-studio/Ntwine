@@ -139,6 +139,7 @@ describe('querySamples', () => {
       missing: false,
       tags: ['drums', 'loop'],
       hasPeaks: false,
+      peaksFailed: false,
     });
   });
 
@@ -161,16 +162,26 @@ describe('querySamples', () => {
     expect(tom?.missing).toBe(true);
   });
 
-  it('hasPeaks is true only for a sample with a waveforms row', () => {
+  it('hasPeaks/peaksFailed distinguish succeeded, failed (format=0), and no row at all', () => {
     const { catalog } = setUp();
-    catalog.db
-      .prepare('INSERT INTO waveforms (sample_id, peaks, bucket_count, format) VALUES (?, ?, ?, ?)')
-      .run(idOf(catalog, 'h-loop'), Buffer.alloc(400), 200, 1);
+    const insertWaveform = catalog.db.prepare(
+      'INSERT INTO waveforms (sample_id, peaks, bucket_count, format) VALUES (?, ?, ?, ?)',
+    );
+    // loop.wav: a real decode succeeded — format 1 (spec §6's default/current format).
+    insertWaveform.run(idOf(catalog, 'h-loop'), Buffer.alloc(400), 200, 1);
+    // kick.wav: Task 10 writes format 0 for a decode that failed — a row exists, but it must
+    // NOT read as "has peaks". This is the case a bare `sample_id IS NULL` check gets wrong.
+    insertWaveform.run(idOf(catalog, 'h-kick'), Buffer.alloc(400), 200, 0);
+    // bass.wav: no waveforms row at all — still pending, neither succeeded nor failed.
 
     const rows = querySamples(catalog, {});
+    const loop = rows.find((r) => r.filename === 'loop.wav');
+    const kick = rows.find((r) => r.filename === 'kick.wav');
+    const bass = rows.find((r) => r.filename === 'bass.wav');
 
-    expect(rows.find((r) => r.filename === 'loop.wav')?.hasPeaks).toBe(true);
-    expect(rows.find((r) => r.filename === 'kick.wav')?.hasPeaks).toBe(false);
+    expect(loop).toMatchObject({ hasPeaks: true, peaksFailed: false });
+    expect(kick).toMatchObject({ hasPeaks: false, peaksFailed: true });
+    expect(bass).toMatchObject({ hasPeaks: false, peaksFailed: false });
   });
 
   it('a search with zero matches returns [] without throwing (the empty-IN() guard)', () => {

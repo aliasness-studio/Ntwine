@@ -21,6 +21,7 @@ interface SampleQueryRow {
   durationMs: number | null;
   missing: number;
   hasPeaks: number;
+  peaksFailed: number;
 }
 
 interface TagLinkRow {
@@ -32,14 +33,19 @@ type Bound = string | number;
 
 /**
  * Runs the samples list query used by browse + search (spec §7): composes `f`'s filters with
- * AND, and returns rows shaped for the UI (`missing`/`hasPeaks` coerced to real booleans, `tags`
- * gathered into an array) rather than raw driver output.
+ * AND, and returns rows shaped for the UI (`missing`/`hasPeaks`/`peaksFailed` coerced to real
+ * booleans, `tags` gathered into an array) rather than raw driver output.
  *
- * Two queries, not one: the row query (LEFT JOIN packs for `packName`, LEFT JOIN waveforms only
- * to test `sample_id IS NULL` for `hasPeaks`) can't also carry tags without a sample_tags/tags
- * join fanning every multi-tag sample out into duplicate rows. So tags are fetched separately —
- * `sample_id, name` for exactly the ids the first query already returned — and grouped onto each
- * row in JS.
+ * Two queries, not one: the row query (LEFT JOIN packs for `packName`, LEFT JOIN waveforms for
+ * `hasPeaks`/`peaksFailed`) can't also carry tags without a sample_tags/tags join fanning every
+ * multi-tag sample out into duplicate rows. So tags are fetched separately — `sample_id, name`
+ * for exactly the ids the first query already returned — and grouped onto each row in JS.
+ *
+ * `hasPeaks`/`peaksFailed` read `waveforms.format`, not just row presence: Task 10 writes a
+ * `format = 0` row for a failed decode specifically so "failed" is distinguishable from
+ * "pending, no row yet" (spec §8's corrupt-file badge needs the distinction) — a bare
+ * `sample_id IS NULL` check would have shown a failed decode as succeeded, since a `format = 0`
+ * row still has a `sample_id`.
  *
  * BPM/key filters exclude unknown values for free: `s.bpm >= ?` (etc.) is SQL, and SQL's
  * three-valued logic means a NULL `bpm` makes the comparison NULL, not TRUE — WHERE only keeps
@@ -115,12 +121,13 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
               p.name AS packName, s.sample_type AS sampleType, s.bpm AS bpm,
               s.audio_key AS audioKey, s.chord_type AS chordType, s.duration_ms AS durationMs,
               s.missing AS missing,
-              CASE WHEN w.sample_id IS NULL THEN 0 ELSE 1 END AS hasPeaks
+              CASE WHEN w.sample_id IS NOT NULL AND w.format != 0 THEN 1 ELSE 0 END AS hasPeaks,
+              CASE WHEN w.sample_id IS NOT NULL AND w.format = 0 THEN 1 ELSE 0 END AS peaksFailed
        FROM samples s
        LEFT JOIN packs p ON p.id = s.pack_id
        LEFT JOIN waveforms w ON w.sample_id = s.id
        ${whereSql}
-       ORDER BY p.name, s.filename`,
+       ORDER BY p.name, s.filename, s.id`,
     )
     .all(...params);
 
@@ -157,6 +164,7 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     missing: r.missing === 1,
     tags: tagsBySample.get(r.id) ?? [],
     hasPeaks: r.hasPeaks === 1,
+    peaksFailed: r.peaksFailed === 1,
   }));
 }
 
@@ -175,7 +183,7 @@ export function listPacks(catalog: Catalog): PackRow[] {
        FROM packs p
        JOIN samples s ON s.pack_id = p.id AND s.missing = 0
        GROUP BY p.id
-       ORDER BY p.name`,
+       ORDER BY p.name, p.id`,
     )
     .all();
 }
