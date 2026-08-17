@@ -162,6 +162,18 @@ describe('ImportStore', () => {
 
     expect(store.phase).toBeNull();
     expect(channel.unsubscribe).toHaveBeenCalledTimes(1);
+
+    // Review round 2 regression (from round 1's re-entrancy fix): `onProgress`'s terminal-phase
+    // branch is the ONLY other place `running` resets to false — and it never runs here, since
+    // runImport rejected without ever emitting a progress event at all. Before this was fixed,
+    // `running` stayed `true` forever, and `run()`'s own re-entrancy guard then silently no-op'd
+    // every future call (`Promise.resolve()`, `runImport` never re-invoked) — bricking the import
+    // flow until an app restart, strictly worse than the pre-round-1 predicate this replaced
+    // (which correctly read "not importing" in this exact case).
+    expect(store.running).toBe(false);
+
+    await expect(store.run()).resolves.toBeUndefined();
+    expect(runImport).toHaveBeenCalledTimes(2);
   });
 
   // Review round 1, Finding 3 (controller-elevated, binding): a fast double-click before the

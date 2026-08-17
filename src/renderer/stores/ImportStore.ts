@@ -100,6 +100,16 @@ export class ImportStore {
       // Defensive, not just belt-and-suspenders for the documented contract above: even if a
       // future/alternate runImport rejected WITHOUT a prior terminal progress event, the
       // subscription still must not leak.
+      //
+      // `running = false` HERE too (Review round 2 regression, from round 1's re-entrancy fix):
+      // `onProgress`'s terminal-phase branch is the ONLY other place `running` resets, and it
+      // never runs when runImport rejects without ever emitting a progress event — so `running`
+      // stayed `true` forever, and `run()`'s own guard then silently no-op'd every future call,
+      // bricking the import flow until an app restart. Deliberately in `catch`, not `finally`: a
+      // SUCCESSFUL settle must leave `running` true through the background waveform phase —
+      // `finally` runs on that path too, and resetting there would reopen the double-click race
+      // round 1 fixed, just relocated to right after `runImport()` resolves.
+      this.running = false;
       this.endSubscription();
     } finally {
       this.inFlightRun = null;
