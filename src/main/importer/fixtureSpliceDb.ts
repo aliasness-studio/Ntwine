@@ -50,7 +50,7 @@ export interface FixtureSampleRow {
   audio_key?: string | null;
   bpm?: number;
   chord_type?: string | null;
-  duration?: number;
+  duration?: number | null;
   sas_id?: string | null;
   filename?: string | null;
   genre?: number | null;
@@ -78,7 +78,8 @@ type FixtureSampleParams = Required<Omit<FixtureSampleRow, 'table'>>;
  * they will against a real file. Columns a row's caller doesn't set fall back to the "none"
  * sentinel spec §2.2 documents for that column where one exists (bpm 0, audio_key/chord_type/
  * tags '') or plain NULL otherwise — never `undefined` (better-sqlite3 rejects that as a bind
- * value).
+ * value). `duration` follows the same explicit-null rule as `audio_key`/`chord_type`: an omitted
+ * field falls back to the `0` sentinel, an explicit `null` inserts a real SQL NULL.
  *
  * `PRAGMA foreign_keys = OFF`: confirmed empirically (better-sqlite3 13.0.3 / SQLite 3.53.4,
  * this repo's installed versions) that a fresh connection defaults `foreign_keys` ON, unlike
@@ -135,7 +136,7 @@ export function buildFixtureSpliceDb(dbPath: string, rows: FixtureRow[]): void {
             audio_key: row.audio_key === undefined ? '' : row.audio_key,
             bpm: row.bpm ?? 0,
             chord_type: row.chord_type === undefined ? '' : row.chord_type,
-            duration: row.duration ?? 0,
+            duration: row.duration === undefined ? 0 : row.duration,
             file_hash: row.file_hash,
             sas_id: row.sas_id ?? null,
             filename: row.filename ?? null,
