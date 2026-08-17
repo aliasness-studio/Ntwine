@@ -1,6 +1,7 @@
 import type { Catalog } from '../catalog/db';
 import type { SplicePack, SpliceSample } from './spliceDb';
 import { normalizeSample } from './transform';
+import { rebuildSearch } from '../catalog/search';
 
 interface IdRow {
   id: number;
@@ -138,7 +139,7 @@ export function buildCatalog(
       }
     }
 
-    // Task 7: rebuildSearch(catalog) called here
+    rebuildSearch(catalog);
   });
 
   run(data);
