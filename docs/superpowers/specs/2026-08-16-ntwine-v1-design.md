@@ -299,9 +299,14 @@ implementation, not specified here.
   exists via `files: []` (future-proof for multi-select).
 - **Audio serving**: register scheme before ready via
   `protocol.registerSchemesAsPrivileged([{scheme:'sample', privileges:{standard,
-  secure, supportFetchAPI, stream: true}}])`, then `protocol.handle('sample', req =>
+  secure, supportFetchAPI, corsEnabled, stream: true}}])`, then `protocol.handle('sample', req =>
   net.fetch(pathToFileURL(...)))`. The old `registerFileProtocol` family is
-  deprecated.
+  deprecated. `corsEnabled` was added by Task 14's hand-QA: the renderer's origin
+  (dev server / packaged file://) is cross-origin to the scheme, and Electron 43's
+  CORS enforcement (CVE-2026-70604 hardening) blocks `fetch()` on a non-CORS scheme.
+  It is scheme-wide, so it is safe ONLY while the app loads zero remote content —
+  enforced by `setWindowOpenHandler` all-deny + a `will-navigate` origin allowlist
+  in main.ts, with a trip-wire comment beside the flag in protocol.ts.
 - **Known Electron bug** (open, electron#38749): media served via `protocol.handle`
   does not honor `Range` requests automatically → seeking/scrubbing snaps to 0. v1
   preview is play-from-start so this doesn't block, but the handler must implement
