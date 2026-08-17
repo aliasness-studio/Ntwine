@@ -407,4 +407,24 @@ describe('getPeaks', () => {
     const result = getPeaks(catalog, [kickId, idOf(catalog, 'h-bass')]);
     expect(Object.keys(result)).toEqual([String(kickId)]);
   });
+
+  // Review round 1, Finding 1: a `format = 0` row (writePeaksFailed) still has a `sample_id`, and
+  // the unfiltered SQL used to hand its 400-zero-byte placeholder back exactly like a real decode.
+  // A stale renderer snapshot (`row.peaksFailed` from the last `querySamples()`, not refreshed
+  // until the next re-query) would then draw that placeholder as a thin, quiet-but-normal
+  // waveform — silently misrepresenting a corrupt file as a real sample, with no corrupt badge.
+  // Fixed at the root so this is enforced once regardless of renderer staleness: `getPeaks` must
+  // never return an entry for a failed id at all, the same "omitted, not a zeroed placeholder"
+  // contract the no-row-yet case above already has.
+  it('omits an id whose decode failed (format = 0) — never hands back the zeroed placeholder blob', () => {
+    const { catalog } = setUp();
+    const kickId = idOf(catalog, 'h-kick');
+    const loopId = idOf(catalog, 'h-loop');
+    writePeaks(catalog, kickId, new Int8Array(400).fill(7));
+    writePeaksFailed(catalog, loopId);
+
+    const result = getPeaks(catalog, [kickId, loopId]);
+
+    expect(Object.keys(result)).toEqual([String(kickId)]);
+  });
 });

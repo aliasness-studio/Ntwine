@@ -321,12 +321,20 @@ interface PeaksRow {
 }
 
 /**
- * Raw peak bytes for the given sample ids, keyed by id — whatever `waveforms.peaks` currently
- * holds, `format` unfiltered (a failed decode's zeroed placeholder comes back too, same as a
- * real one). Filtering by success is `hasPeaks`/`peaksFailed`'s job (`querySamples`), not this
- * function's: a caller that already has those flags knows which ids are worth asking for, and a
- * `Record` has no clean way to say "excluded" apart from "absent" — which would collide with
- * "not decoded yet" if this function silently dropped failed rows too.
+ * Raw peak bytes for the given sample ids, keyed by id — `format = 0` (failed decode) rows
+ * excluded, same as "no row yet": both come back simply absent from the result, never a value.
+ *
+ * Review round 1, Finding 1 (previously this function returned a failed decode's zeroed
+ * placeholder unfiltered, on the reasoning that filtering by success was `querySamples`'s
+ * `hasPeaks`/`peaksFailed` flags' job, not this one's). That reasoning didn't hold up: those
+ * flags are a query-time snapshot the renderer's `LibraryStore.peaksCache` doesn't refresh except
+ * on an explicit re-query, so a sample whose decode fails strictly AFTER its row was last fetched
+ * — the common case for a first-ever import, where every row's `peaksFailed` starts `false`
+ * before the background decode queue has run at all — would sail past the renderer's own
+ * `!row.peaksFailed` guard and get its placeholder cached and drawn as if it were a real, if
+ * quiet, waveform. Filtering here instead of (only) in the renderer means correctness doesn't
+ * depend on the caller's flags being fresh — the same reasoning `querySamples`'s own `hasPeaks`/
+ * `peaksFailed` CASE expressions already apply by keying off `format`, not row presence.
  *
  * `new Uint8Array(row.peaks).buffer` (not `row.peaks.buffer` directly): better-sqlite3 hands
  * back a Node `Buffer`, whose own `.buffer` may be a slice of a larger pooled ArrayBuffer (Node's
@@ -337,7 +345,8 @@ export function getPeaks(catalog: Catalog, sampleIds: number[]): Record<number, 
   if (sampleIds.length === 0) return {};
   const rows = catalog.db
     .prepare<number[], PeaksRow>(
-      `SELECT sample_id, peaks FROM waveforms WHERE sample_id IN (${sampleIds.map(() => '?').join(', ')})`,
+      `SELECT sample_id, peaks FROM waveforms
+       WHERE sample_id IN (${sampleIds.map(() => '?').join(', ')}) AND format != 0`,
     )
     .all(...sampleIds);
 
