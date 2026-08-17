@@ -233,8 +233,11 @@ waveforms(sample_id INTEGER PRIMARY KEY REFERENCES samples(id),
           peaks BLOB NOT NULL,            -- §5.1: 200 min/max pairs, Int8
           bucket_count INTEGER NOT NULL,
           format INTEGER NOT NULL DEFAULT 1);  -- bump to invalidate/recompute
--- Search: FTS5 table sample_search(sample_id UNINDEXED, filename, pack_name,
--- tag_text) holding denormalized text, rebuilt TRANSACTIONALLY during import.
+-- Search: FTS5 table sample_search(filename, pack_name, tag_text,
+-- sample_id UNINDEXED) holding denormalized text, rebuilt TRANSACTIONALLY
+-- during import. Column order here matches the implemented DDL (db.ts) —
+-- FTS5 highlight()/snippet() address columns by absolute index, so the DDL
+-- is the one source of truth for order.
 -- No live sync triggers in v1 — the catalog only changes at import time, and
 -- import-time rebuild is where trigger-desync bugs can't exist.
 ```
