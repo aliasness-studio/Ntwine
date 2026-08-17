@@ -2,10 +2,23 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Catalog } from '../catalog/db';
 
-interface PackCoverRow {
+// The single definition of "is this pack a candidate for a cover fetch" (owner's "one question,
+// two gates" rule): a pack needs BOTH `cover_url` (something to fetch) and `splice_uuid`
+// (something stable to name the file after — see downloadCovers's own doc comment). Exported so
+// importer.ts's `countCoverCandidates` (the covers-phase progress total) computes the exact same
+// condition from this fragment instead of maintaining its own hand-written copy — a mismatch
+// between the two would silently desync "how many covers total" from "how many covers
+// downloadCovers actually considers."
+export const COVER_CANDIDATE_WHERE = 'cover_url IS NOT NULL AND splice_uuid IS NOT NULL';
+
+// Narrowed to non-null `splice_uuid`/`cover_url`: every row this query can return already
+// satisfies COVER_CANDIDATE_WHERE, so the two columns it exists to guard are never null here —
+// same "trust what the WHERE clause already enforces" reasoning queries.ts's SampleQueryRow
+// uses for its DB-enforced CHECK-constraint columns.
+interface CoverCandidateRow {
   id: number;
-  splice_uuid: string | null;
-  cover_url: string | null;
+  splice_uuid: string;
+  cover_url: string;
   cover_file: string | null;
 }
 
@@ -23,8 +36,9 @@ interface PackCoverRow {
  * renders a generic tile"): `fetchFn` resolving `{ ok: false }` *or* throwing/rejecting is
  * caught, logged, and counted in `failed` rather than aborting the pass — one broken pack must
  * never block every other pack's cover from downloading. A pack with no `cover_url` (Splice
- * simply didn't supply one) or no `splice_uuid` (nothing stable to name the file after) is
- * silently skipped: there is nothing to fetch, and it is not a failure.
+ * simply didn't supply one) or no `splice_uuid` (nothing stable to name the file after) never
+ * even reaches the loop below: `COVER_CANDIDATE_WHERE` excludes it at the query level, so there
+ * is nothing to fetch and it is not a failure.
  *
  * Skip-existing: a pack whose `cover_file` is already set AND whose file still exists on disk is
  * skipped without calling `fetchFn` at all — re-running the import pipeline must not re-hit the
@@ -41,7 +55,9 @@ export async function downloadCovers(
   mkdirSync(coversDir, { recursive: true });
 
   const packs = db
-    .prepare<[], PackCoverRow>('SELECT id, splice_uuid, cover_url, cover_file FROM packs')
+    .prepare<[], CoverCandidateRow>(
+      `SELECT id, splice_uuid, cover_url, cover_file FROM packs WHERE ${COVER_CANDIDATE_WHERE}`,
+    )
     .all();
   const setCoverFile = db.prepare<[string, number]>('UPDATE packs SET cover_file = ? WHERE id = ?');
 
@@ -49,8 +65,6 @@ export async function downloadCovers(
   let failed = 0;
 
   for (const pack of packs) {
-    if (pack.cover_url === null || pack.splice_uuid === null) continue;
-
     const filename = `${pack.splice_uuid}.jpg`;
     if (pack.cover_file !== null && existsSync(join(coversDir, pack.cover_file))) {
       continue; // skip-existing

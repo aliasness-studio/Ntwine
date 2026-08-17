@@ -6,7 +6,7 @@ import type { SplicePack, SpliceSample } from './spliceDb';
 import { normalizeSample } from './transform';
 import { rebuildSearch } from '../catalog/search';
 import { readSplice, snapshotSpliceDb } from './spliceDb';
-import { downloadCovers } from './covers';
+import { downloadCovers, COVER_CANDIDATE_WHERE } from './covers';
 import { pendingPeakIds } from '../catalog/queries';
 
 interface IdRow {
@@ -228,18 +228,21 @@ interface CoverCandidateCountRow {
 }
 
 /**
- * Count of packs `downloadCovers` might actually call `fetchFn` for — mirrors its own skip
- * condition (`cover_url === null || splice_uuid === null`) exactly, so the covers phase's
+ * Count of packs `downloadCovers` might actually call `fetchFn` for, so the covers phase's
  * reported `total` means "candidates downloadCovers would consider," not just "every pack in
- * the catalog." A skip-existing candidate (already cached on disk) still counts here — this is
- * "how many are worth considering," not "how many will actually hit the network" — which is why
- * the covers-phase completion event below always reports `done === total` regardless of how
- * many of those candidates turned out to be skip-existing.
+ * the catalog." Built from `COVER_CANDIDATE_WHERE` — covers.ts's own exported fragment — rather
+ * than a second hand-written copy of the same condition (owner's "one question, two gates"
+ * rule: this count and `downloadCovers`'s own query must answer "is this pack a candidate" from
+ * ONE shared definition, not two independently-maintained ones that could silently drift). A
+ * skip-existing candidate (already cached on disk) still counts here — this is "how many are
+ * worth considering," not "how many will actually hit the network" — which is why the
+ * covers-phase completion event below always reports `done === total` regardless of how many of
+ * those candidates turned out to be skip-existing.
  */
 function countCoverCandidates(catalog: Catalog): number {
   const row = catalog.db
     .prepare<[], CoverCandidateCountRow>(
-      'SELECT COUNT(*) AS n FROM packs WHERE cover_url IS NOT NULL AND splice_uuid IS NOT NULL',
+      `SELECT COUNT(*) AS n FROM packs WHERE ${COVER_CANDIDATE_WHERE}`,
     )
     .get();
   return row ? row.n : 0;
