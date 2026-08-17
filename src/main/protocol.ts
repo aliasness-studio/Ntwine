@@ -16,14 +16,19 @@ import { relPathToAbs } from './importer/transform';
 // packaged build) INTO this scheme from ordinary CORS enforcement. previewPlayer.ts's
 // `fetch(sampleUrl(id))` is exactly that cross-origin case, and failed with "blocked by CORS
 // policy" against a real running app until this flag was added — confirmed by reproducing the
-// failure and re-testing after this one-line fix, not by documentation alone. No security
-// downside for this app's threat model: the renderer never loads remote/attacker-controlled
-// content, so there is no "other origin" this could leak sample bytes to.
+// failure and re-testing after this one-line fix, not by documentation alone.
 const PRIVILEGES = {
   standard: true,
   secure: true,
   supportFetchAPI: true,
   stream: true,
+  // INVARIANT: corsEnabled is safe ONLY because this app loads zero remote/untrusted content —
+  // no <webview>, no <iframe>, no window.open, no navigation to any origin but the app's own dev
+  // server / packaged index.html. Re-read this comment before adding any of those. Enforced in
+  // main.ts's createWindow: `setWindowOpenHandler` denies every window.open, and the
+  // `will-navigate` handler denies any navigation outside the app's own origin — both exist
+  // specifically to hold this line true. Electron's own advisory guidance is that corsEnabled is
+  // safe only for apps that "do not load untrusted content" — this is that guarantee, made real.
   corsEnabled: true,
 };
 

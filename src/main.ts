@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import started from 'electron-squirrel-startup';
 import { openCatalog } from './main/catalog/db';
 import { registerDragHandler } from './main/drag';
@@ -33,12 +34,39 @@ const createWindow = (): BrowserWindow => {
     },
   });
 
+  const indexPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
+
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     win.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    win.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+    win.loadFile(indexPath);
   }
+
+  // Enforces protocol.ts's `corsEnabled: true` invariant (see the trip-wire comment beside it):
+  // sample://cover:// become fetchable cross-origin by ANY origin this BrowserWindow ever
+  // renders, so this app must never render remote/untrusted content. No popup/new-window feature
+  // exists, so every window.open is denied outright.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // Same invariant, for top-level navigation (a stray external <a href>, a compromised
+  // dependency setting location.href, ...) — denies anything that isn't the app's own single
+  // page. Dev and packaged loads are compared differently on purpose: the Vite dev server is a
+  // real http origin (`URL#origin` is meaningful there), but a packaged file:// load has an
+  // OPAQUE origin per the URL spec (`.origin` is the literal string "null" for every file: URL,
+  // which would make an origin compare wrongly treat ANY local file as "the app") — the packaged
+  // case compares the exact decoded path instead.
+  win.webContents.on('will-navigate', (event) => {
+    // `event.url` (the modern `Event<WebContentsWillNavigateEventParams>` merged-object form),
+    // not the legacy second positional `url` argument electron.d.ts marks `@deprecated`.
+    const target = new URL(event.url);
+    const isAppOrigin = MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? target.origin === new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin
+      : target.protocol === 'file:' && fileURLToPath(target) === indexPath;
+    if (!isAppOrigin) {
+      event.preventDefault();
+    }
+  });
 
   // Open the DevTools.
   win.webContents.openDevTools();
