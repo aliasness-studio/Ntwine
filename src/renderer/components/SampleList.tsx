@@ -9,7 +9,7 @@ import type { SampleRow as SampleRowData, Scope } from '../../shared/ipcTypes';
 import { api } from '../stores/api';
 import { emptyStateText } from '../emptyState';
 import { menuItemsFor, type RowMenuItemId } from '../rowMenu';
-import { isRowFullyVisible } from '../scrollSnap';
+import { doesPopoverFitBelowRow, isRowFullyVisible } from '../scrollSnap';
 import { CollectionPopover } from './CollectionPopover';
 import { RowContextMenu } from './RowContextMenu';
 import { TagsPopover } from './TagsPopover';
@@ -27,6 +27,15 @@ const WAVEFORM_TICK_COALESCE_MS = 300;
 // when the visible range actually has an uncached, not-missing, not-failed row, which is false the
 // overwhelming majority of the time this timer fires.
 const WAVEFORM_POLL_MS = 1500;
+// Task 11 fix round 1 (Important 2): a fixed estimate, not a DOM measurement — mirrors ROW_HEIGHT/
+// SampleRow.tsx's own FILENAME_TRUNCATE_MAX precedent of a fixed budget over pixel-measurement,
+// and lets the below-the-fold check run BEFORE the popover's first paint (measuring the real
+// rendered popover and correcting afterward would risk a visible post-open jump — spec §7's "never
+// jank" bar). Sized roomier than either popover's typical content (a short input plus a handful of
+// chips/suggestions/collection rows) needs, deliberately: a false "doesn't fit" just scrolls a bit
+// further than strictly necessary, while a false "fits" is the actual bug this constant exists to
+// avoid re-introducing.
+const POPOVER_ESTIMATED_HEIGHT = 220;
 
 const Scroller = styled.div`
   grid-area: list;
@@ -287,6 +296,35 @@ export const SampleList = observer(function SampleList() {
   const popoverRow = popoverRowIndex === -1 ? undefined : library.rows[popoverRowIndex];
   const popoverVirtualItem =
     popoverRowIndex === -1 ? undefined : virtualItems.find((vi) => vi.index === popoverRowIndex);
+
+  // Fix round 1 (Important 2, reviewer finding): scroll the anchor row into view when its popover
+  // would otherwise render past the fold. Nothing else here moves the scroll position on open, so
+  // without this a popover for a row near the viewport's bottom edge was invisible the instant it
+  // opened — reachable only by then scrolling manually to go find it. Mirrors the keyboard-nav
+  // snap pattern (`snapSelectionIntoView` below): `scrollToIndex(rowIndex, { align: 'start' })`
+  // puts the anchor row at the TOP of the viewport, giving the popover the most room below it this
+  // viewport can offer — the same alignment `isRowFullyVisible`'s own call site already uses.
+  // `doesPopoverFitBelowRow` (scrollSnap.ts) is the pure decision; when the anchor row already has
+  // room, it returns true and this deliberately does nothing, so opening a popover never moves a
+  // view that didn't need to move. Runs "on openPopover change" specifically (not on every
+  // render): `popoverRowIndex` is derived from `openPopover` on the SAME render that produces it,
+  // so the closure this effect captures on the render where `openPopover` actually changes always
+  // has the matching, up-to-date index.
+  useEffect(() => {
+    if (openPopover === null) return;
+    const scroller = scrollRef.current;
+    if (scroller === null || popoverRowIndex === -1) return;
+    const fits = doesPopoverFitBelowRow(
+      scroller.scrollTop,
+      scroller.clientHeight,
+      popoverRowIndex,
+      ROW_HEIGHT,
+      POPOVER_ESTIMATED_HEIGHT,
+    );
+    if (!fits) {
+      rowVirtualizer.scrollToIndex(popoverRowIndex, { align: 'start' });
+    }
+  }, [openPopover]);
 
   // Auto-focus on mount so arrow keys work immediately without requiring a click first; refocus
   // on any click within the list so keyboard nav keeps working after a mouse selection (a plain

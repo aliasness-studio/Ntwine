@@ -124,8 +124,22 @@ export const CollectionPopover = observer(function CollectionPopover({
   const exactMatch = userLayer.collections.find((c) => normalizeUserName(c.name) === normalizedValue);
   const highlighted = exactMatch ?? filtered[0];
 
-  const addExisting = (collectionId: string): void => {
-    void userLayer.addToCollection(collectionId, sampleId);
+  // Fix round 1 (Important 1, reviewer finding): `addToCollection` has no `{ error }` contract of
+  // its own (unlike `createCollection`) — it just rejects. The ORIGINAL version of this function
+  // fired it with `void` (no await/catch) and unconditionally cleared `value`/`error` right after,
+  // so a rejection (concrete trigger: the target collection is deleted between this popover
+  // resolving it and the add landing — `INSERT OR IGNORE` swallows a UNIQUE violation but NOT a
+  // FOREIGN KEY one) left the popover looking like it worked while the sample was never added,
+  // with nothing telling the user. Now awaited in a try/catch: only a full success clears the
+  // input; a rejection surfaces via the SAME `AlertText` the create-collision path already uses,
+  // and leaves `value` alone so the attempt isn't lost.
+  const addExisting = async (collectionId: string): Promise<void> => {
+    try {
+      await userLayer.addToCollection(collectionId, sampleId);
+    } catch (err) {
+      setError(errorMessage(err));
+      return;
+    }
     setValue('');
     setError(null);
   };
@@ -136,7 +150,16 @@ export const CollectionPopover = observer(function CollectionPopover({
       setError(result.error);
       return;
     }
-    void userLayer.addToCollection(result.id, sampleId);
+    // Same fix, the create-then-add path: the collection now exists either way, so a rejection
+    // here must not be reported as a naming collision (it isn't one) — it gets its own message,
+    // and `value` is left in place rather than cleared, since the create half succeeded but the
+    // add half the user actually asked for did not.
+    try {
+      await userLayer.addToCollection(result.id, sampleId);
+    } catch (err) {
+      setError(errorMessage(err));
+      return;
+    }
     setValue('');
     setError(null);
   };
@@ -145,14 +168,14 @@ export const CollectionPopover = observer(function CollectionPopover({
     e.stopPropagation();
     if (e.key !== 'Enter') return;
     if (exactMatch) {
-      addExisting(exactMatch.id);
+      void addExisting(exactMatch.id);
       return;
     }
     if (e.metaKey || e.ctrlKey) {
       void createAndAdd();
       return;
     }
-    if (highlighted) addExisting(highlighted.id);
+    if (highlighted) void addExisting(highlighted.id);
   };
 
   return (
@@ -177,7 +200,7 @@ export const CollectionPopover = observer(function CollectionPopover({
             key={c.id}
             type="button"
             $highlighted={highlighted?.id === c.id}
-            onClick={() => addExisting(c.id)}
+            onClick={() => void addExisting(c.id)}
           >
             <span>{c.name}</span>
             <span>{c.count}</span>
@@ -187,3 +210,9 @@ export const CollectionPopover = observer(function CollectionPopover({
     </Box>
   );
 });
+
+// Mirrors `UserLayerStore.ts`'s own unexported helper of the same name/shape — that one isn't
+// exported, so this is a local copy rather than a shared import.
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
