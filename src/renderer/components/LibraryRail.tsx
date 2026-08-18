@@ -5,8 +5,9 @@
 // as the first/last <span> per option) so both rails read as one visual system and the e2e
 // nameSpan/countSpan helpers (browse.spec.ts) work unmodified against this listbox too.
 import { observer } from 'mobx-react-lite';
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
+import { consumeDragSource, peekDragSource, type DragSource } from '../dragSource';
 import { useStores } from './StoreContext';
 
 const RailSection = styled.div`
@@ -30,7 +31,11 @@ const List = styled.div`
   gap: 2px;
 `;
 
-const Item = styled.button<{ $active: boolean }>`
+// `$dragOver` (Task 13 / spec §7): "the hovered collection row highlights" — an inset box-shadow
+// rather than an `outline` so the highlight follows the button's own `border-radius` (outline
+// doesn't, in most browsers) and layers legibly over `$active`'s background tint when a row is
+// BOTH the current scope AND a live drop target at once.
+const Item = styled.button<{ $active: boolean; $dragOver: boolean }>`
   display: flex;
   align-items: center;
   gap: 8px;
@@ -43,6 +48,7 @@ const Item = styled.button<{ $active: boolean }>`
   text-align: left;
   cursor: pointer;
   width: 100%;
+  box-shadow: ${(p) => (p.$dragOver ? `inset 0 0 0 2px ${p.theme.color.accent}` : 'none')};
 
   &:hover {
     background: ${(p) => (p.$active ? p.theme.color.bgRowSelected : p.theme.color.bgRowHover)};
@@ -217,6 +223,96 @@ export const LibraryRail = observer(function LibraryRail() {
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
 
+  // Task 13 / spec §7: which drop target (if any) is currently drag-hovered — 'favorites' or
+  // `collection:${id}`, the SAME identifier string threaded through the dev probe below, so hover
+  // state and the debug payload's `targetId` are always one computed value, not two independently
+  // -maintained identities for the same target.
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // Gates the `dragover` dev-probe line to the FIRST over event per hover session — `dragover`
+  // fires continuously while the pointer sits still over a target, and logging every one of those
+  // would flood devtools during the morning hands-on this probe exists for (spec §7's feasibility
+  // note). Reset whenever hover (re)starts on a target via `dragenter`.
+  const loggedOverRef = useRef<string | null>(null);
+
+  // A native OS drag session (`webContents.startDrag`) can end without ever delivering a `drop`
+  // or `dragleave` back to this window — e.g. the app loses focus mid-drag. Window `blur` is the
+  // backstop that guarantees hover styling never gets stuck highlighted (spec §7: "Hover styling
+  // clears on drop, dragleave, window blur, and slot clear, independently of any data write").
+  useEffect(() => {
+    const onBlur = (): void => setDragOverId(null);
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, []);
+
+  // Dev probe (Codex consult B, spec §7): a `console.debug` breadcrumb so the morning hands-on can
+  // see in devtools whether Electron even delivers DOM drag events over a native `startDrag`
+  // session (Ruling R1 — unproven as of this session). Reads `peekDragSource()` rather than taking
+  // a sample id parameter: every call site below is already inside a slot-gated handler, so this
+  // reports the SAME value the gate itself just checked, not a second copy of it.
+  const debugDrag = (phase: 'enter' | 'over' | 'drop', targetId: string): void => {
+    console.debug('[ntwine:drag-in]', phase, {
+      slot: peekDragSource()?.sampleId ?? null,
+      targetId,
+    });
+  };
+
+  // Discrimination rule (spec §7): an empty slot means every file drop is ignored, and not merely
+  // `onDrop` — `dragenter`/`dragover` handling, the hover highlight, and `preventDefault()` are
+  // ALL gated on a non-empty slot together, so an external Finder/Explorer drag over the rail
+  // never shows a copy cursor or leaves a stuck hover state. `e.dataTransfer &&` guards the
+  // `dropEffect` write because a synthetically-dispatched drag event (Playwright's
+  // `dispatchEvent`, Task 15's synthetic seam) carries no real `DataTransfer` at runtime, unlike
+  // what the DOM lib's `DragEvent` typing promises.
+  const handleDragEnter =
+    (targetId: string) =>
+    (e: DragEvent<HTMLButtonElement>): void => {
+      if (peekDragSource() === null) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      loggedOverRef.current = null;
+      debugDrag('enter', targetId);
+      setDragOverId(targetId);
+    };
+
+  const handleDragOver =
+    (targetId: string) =>
+    (e: DragEvent<HTMLButtonElement>): void => {
+      if (peekDragSource() === null) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      if (loggedOverRef.current !== targetId) {
+        loggedOverRef.current = targetId;
+        debugDrag('over', targetId);
+      }
+      setDragOverId(targetId);
+    };
+
+  // Only clears hover if THIS target is the one currently hovered — `dragenter` on a newly
+  // entered target can fire before `dragleave` on the one just left (event order across elements
+  // isn't guaranteed), so an unconditional clear here could wipe out a hover the new target's own
+  // `dragenter` just set.
+  const handleDragLeave = (targetId: string) => (): void => {
+    setDragOverId((current) => (current === targetId ? null : current));
+    if (loggedOverRef.current === targetId) loggedOverRef.current = null;
+  };
+
+  // `onDrop` consumes the slot FIRST (spec §7's own ordering). An empty result — the slot was
+  // already claimed (a fast second drag, or a drop that raced a late `finally`) — clears hover and
+  // bails before `preventDefault`, rather than this handler pretending a drop it can't identify
+  // was ours. Hover clears unconditionally, independent of whether the write actually happens
+  // (spec §7), so a drop that turns out empty never leaves the target looking armed.
+  const handleDrop =
+    (targetId: string, apply: (src: DragSource) => void) =>
+    (e: DragEvent<HTMLButtonElement>): void => {
+      const src = consumeDragSource();
+      setDragOverId(null);
+      loggedOverRef.current = null;
+      if (!src) return;
+      e.preventDefault();
+      debugDrag('drop', targetId);
+      apply(src);
+    };
+
   // `scope === undefined` is the "All Samples" state — `Scope` (ipcTypes.ts) has no explicit
   // 'all' variant; absence IS all (PackRail's own comment, unchanged reasoning — this row is the
   // one that moved here).
@@ -288,6 +384,7 @@ export const LibraryRail = observer(function LibraryRail() {
           role="option"
           aria-selected={allSamplesActive}
           $active={allSamplesActive}
+          $dragOver={false}
           onClick={() => {
             closeMenu();
             library.setScope(null);
@@ -302,10 +399,17 @@ export const LibraryRail = observer(function LibraryRail() {
           role="option"
           aria-selected={favoritesActive}
           $active={favoritesActive}
+          $dragOver={dragOverId === 'favorites'}
           onClick={() => {
             closeMenu();
             library.setScope({ kind: 'favorites' });
           }}
+          onDragEnter={handleDragEnter('favorites')}
+          onDragOver={handleDragOver('favorites')}
+          onDragLeave={handleDragLeave('favorites')}
+          onDrop={handleDrop('favorites', (src) => {
+            void userLayer.setFavorite(src.sampleId, true);
+          })}
         >
           <IconSlot aria-hidden="true">
             <HeartIcon />
@@ -347,6 +451,7 @@ export const LibraryRail = observer(function LibraryRail() {
                 role="option"
                 aria-selected={isActive}
                 $active={isActive}
+                $dragOver={dragOverId === `collection:${c.id}`}
                 onClick={() => {
                   closeMenu();
                   library.setScope({ kind: 'collection', collectionId: c.id });
@@ -355,6 +460,12 @@ export const LibraryRail = observer(function LibraryRail() {
                   e.preventDefault();
                   setMenu({ kind: 'menu', collectionId: c.id });
                 }}
+                onDragEnter={handleDragEnter(`collection:${c.id}`)}
+                onDragOver={handleDragOver(`collection:${c.id}`)}
+                onDragLeave={handleDragLeave(`collection:${c.id}`)}
+                onDrop={handleDrop(`collection:${c.id}`, (src) => {
+                  void userLayer.addToCollection(c.id, src.sampleId);
+                })}
               >
                 <IconSlot aria-hidden="true" />
                 <Name title={c.name}>{c.name}</Name>

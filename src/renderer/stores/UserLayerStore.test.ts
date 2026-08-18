@@ -163,6 +163,34 @@ describe('UserLayerStore', () => {
     });
   });
 
+  // Task 13 / spec §7: the drag-in write path for dropping a row onto the Favorites rail target.
+  // Unlike `toggleFavorite` above, a drop only ever carries the dragged sample's id (the drag
+  // slot has no `SampleRow`, so there's no current `favorite` flag to negate) — this always sets
+  // `on` explicitly, mirroring `api.setFavorite`'s own name/shape 1:1, the same "store method
+  // wraps its api counterpart" pattern every other action here follows.
+  describe('setFavorite', () => {
+    it('calls api.setFavorite with the given id/flag, then refreshes rail + re-runs the library query', async () => {
+      const { api, library } = makeStores();
+      const rerunSpy = vi.spyOn(library, 'rerun');
+      const store = new UserLayerStore(api, library);
+
+      await store.setFavorite(5, true);
+
+      expect(api.setFavorite).toHaveBeenCalledWith(5, true);
+      expect(api.listLibraryRail).toHaveBeenCalledTimes(1);
+      expect(rerunSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('can also set the flag false (not favorite-only) — a straight pass-through, not a toggle', async () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+
+      await store.setFavorite(5, false);
+
+      expect(api.setFavorite).toHaveBeenCalledWith(5, false);
+    });
+  });
+
   describe('setNickname', () => {
     it('writes the nickname then refreshes', async () => {
       const { api, library } = makeStores();

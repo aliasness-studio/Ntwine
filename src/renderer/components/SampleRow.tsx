@@ -15,6 +15,7 @@ import {
 import styled from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
 import type { SampleRow as SampleRowData } from '../../shared/ipcTypes';
+import { armDragSource, clearDragSource } from '../dragSource';
 import { api } from '../stores/api';
 import { WaveformThumb } from './WaveformThumb';
 
@@ -343,6 +344,14 @@ export function SampleRow({
   // pattern — `preventDefault` stops the browser's own drag-and-drop so the NATIVE
   // `webContents.startDrag` can take over instead), then either start the real drag or, for a
   // missing row, refuse and flash the badge instead.
+  //
+  // Task 13 / spec §7: a real drag also arms the renderer-owned drag-source slot BEFORE invoking
+  // `startDrag` — the only way LibraryRail's drop targets can tell this native row drag from an
+  // external Finder/Explorer file drag once `preventDefault` has cancelled our own HTML5 drag
+  // session. `startDrag`'s invoke resolves when the OS drag session ends (immediately under e2e —
+  // drag.ts's own doc comment); the `finally` clears the slot with the SAME token it armed, so a
+  // rejected invoke or a thrown handler can never leave a stale id behind, and a drop that already
+  // consumed the slot (or a fast second drag) is never clobbered by this arriving late.
   const handleDragStart = (e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
     if (row.missing) {
@@ -351,7 +360,14 @@ export function SampleRow({
       flashTimeoutRef.current = setTimeout(() => setBadgeFlash(false), BADGE_FLASH_MS);
       return;
     }
-    void api.startDrag(row.id);
+    const token = armDragSource(row.id);
+    void (async () => {
+      try {
+        await api.startDrag(row.id);
+      } finally {
+        clearDragSource(token);
+      }
+    })();
   };
 
   // Row's own onClick (below) would otherwise select the row on bubble — favoriting must not

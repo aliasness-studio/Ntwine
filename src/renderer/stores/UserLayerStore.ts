@@ -70,6 +70,20 @@ export class UserLayerStore {
     await this.refresh();
   }
 
+  /**
+   * Task 13 / spec §7: the drag-in write path for dropping a row onto the Favorites rail target.
+   * Unlike `toggleFavorite` above, a drop only ever has the dragged sample's id (`DragSource`
+   * carries no `SampleRow`, so there's no current `favorite` flag to negate) — this always sets
+   * `on` explicitly, mirroring `api.setFavorite`'s own name/shape 1:1: the same "store method
+   * named after and wrapping its api counterpart" pattern every other action here follows
+   * (`setNickname`, `addUserTag`, `addToCollection`, …), rather than inventing a favorite-specific
+   * name for what is otherwise identical write-then-refresh plumbing.
+   */
+  async setFavorite(sampleId: number, on: boolean): Promise<void> {
+    await this.api.setFavorite(sampleId, on);
+    await this.refresh();
+  }
+
   async setNickname(sampleId: number, nickname: string | null): Promise<void> {
     await this.api.setNickname(sampleId, nickname);
     await this.refresh();
