@@ -54,7 +54,9 @@ curation must not share blast radius with importer/FTS-rebuild bugs or any futur
 "rebuild catalog" flow, and future sync/backup is "copy one small file". The main process opens
 `catalog.db` as today and `ATTACH`es `user.db` as schema alias `user` on the same connection, so
 queries join across the two cheaply. Schema is created with `CREATE TABLE IF NOT EXISTS` at
-open.
+open, and the attached database's journal mode is set explicitly (`PRAGMA user.journal_mode =
+WAL`, matching catalog.db) — per this spec's own principle, never depend on whichever default a
+platform's SQLite build ships.
 
 Two persistence notes with teeth:
 
@@ -116,7 +118,18 @@ stamp (v1 has no consumer for a collection-modified time; sync-era needs add it 
 break).
 
 Name rules (tags AND collections, identical): names are trimmed; empty-after-trim is rejected;
-uniqueness is on the JS-normalized form (§3.4). For **tags**, adding "Kick " when "kick" exists
+uniqueness is on `normalizeUserName(name)` — **the one named normalizer for every persisted
+`normalized_name` and every user-name comparison**:
+
+```ts
+normalizeUserName(name) = name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()
+```
+
+(NFC first so an NFD "café" and an NFC "café" collide as one name — the library's real
+filenames contain both encodings; internal whitespace collapses; JS `toLowerCase()`, not SQL
+`lower()`, for non-ASCII folding.) Tag/collection uniqueness, user-tag filter matching, the
+merged cloud's dedupe (§3.3), and autocomplete reuse all call this one function. Splice tags
+arrive lowercased from import (transform.ts), so the same normalizer compares them unchanged. For **tags**, adding "Kick " when "kick" exists
 reuses the existing tag (tags are a vocabulary — silent reuse is correct). For **collections**,
 `createCollection`/`renameCollection` into an existing normalized name is an **error**, surfaced
 inline at the editor (collections are containers — two "Drums" is a mistake, and silently
@@ -219,8 +232,9 @@ One EXISTING method changes shape: **`startDrag` is promoted from `ipcRenderer.s
 count is unchanged by this (still 23 total).
 
 All writes resolve `sampleId → file_hash` in the main process (the renderer never sees hashes)
-and are synchronous SQLite under the hood like the rest of ipc.ts (the LibraryStore
-stale-response rule from the V1 review stays satisfied). `sample_state` writes stamp
+and are synchronous SQLite under the hood like the rest of ipc.ts (handlers answering in
+registration order is what keeps LibraryStore's un-sequenced re-queries safe — the same
+property the existing handlers rely on; do not make any user-layer handler internally async). `sample_state` writes stamp
 `updated_at` (§2.3's timestamp discipline). Mutations return after the write; the renderer
 re-queries what it needs (same request/response discipline as filters — no push events added
 in v1).
@@ -245,9 +259,13 @@ love."; collection scope — "Drag samples here, or press C on a selected sample
 
 ### 5.2 Rows
 
-- **Heart**: a small heart button at the row's right edge — always rendered, filled when
-  favorited, hollow-on-hover otherwise; `aria-pressed`; click toggles without changing
-  selection or playback.
+- **Heart**: a small heart button at the row's right edge — rendered on every NON-missing row,
+  filled when favorited, hollow-on-hover otherwise; `aria-pressed`; click toggles without
+  changing selection or playback.
+- **Missing rows are read-only for the user layer** (one rule resolving every affordance):
+  existing user state still *displays* (nickname, user-tag chips) but no edit affordance exists
+  — no heart, no context menu (already the rule), and the keyboard cannot reach them (selection
+  skips missing rows today). Curation on a missing row resumes when the file does.
 - **Nickname**: when set, the filename cell shows the nickname; the real filename remains the
   `title` tooltip (it already is) and reappears dimmed-small after the nickname where width
   allows. Middle-truncation applies to whichever text renders.
@@ -300,7 +318,8 @@ user-fields arrive on `SampleRow` through the existing query path — no second 
 After any user-layer write, the store re-fetches the rail summary, **re-fetches the tag facets
 (`listTags`) when the write touched user tags** (the cloud is a query-time snapshot in
 LibraryStore and would otherwise go stale until relaunch), and asks LibraryStore to re-run the
-current query — counts and row fields refresh through the one existing pipeline.
+current query — counts and row fields refresh through the one existing pipeline. (The cloud is
+an init-time snapshot in LibraryStore today, which is why the explicit re-fetch is needed.)
 
 ## 7. Drag-into-collection
 
@@ -315,19 +334,31 @@ look identical at the drop site):
   is NEW work**: record the dragged sample id in the module-level slot *before* invoking
   `startDrag`.
 - `startDrag` is an invoke (§4) that resolves when the OS drag session ends; **the renderer
-  clears the slot when the invoke resolves.** No push event needed, no reliance on `dragend`
-  (which never fires for the cancelled HTML5 drag).
-- **Discrimination rule: an empty slot means every file drop is ignored.** External drops are
-  ignored in v1 (no import-by-drop), and a drop after a completed drag-out cannot consume a
-  stale slot — the slot is already cleared.
+  clears the slot in a `finally` around the awaited invoke** — a rejected invoke or thrown
+  handler can never leave a stale id behind (unit-pinned). No push event needed, no reliance on
+  `dragend` (which never fires for the cancelled HTML5 drag). A consumed drop also clears the
+  slot immediately.
+- **Discrimination rule: an empty slot means every file drop is ignored** — and not merely the
+  `drop` handler: `dragenter`/`dragover` handling, hover highlight, `preventDefault()`, and
+  `dataTransfer.dropEffect` are ALL gated on a non-empty slot, so an external Finder drag over
+  the rail never shows a copy cursor or stuck hover state (Codex consult, 2026-08-17). Hover
+  styling clears on `drop`, `dragleave`, window blur, and slot clear, independently of any data
+  write.
+- The slot carries a **session token**: `finally` only clears the slot it armed
+  (`if (slot?.token === token)`), so a drop consumed before the invoke resolves — or a fast
+  second drag — is never clobbered by a stale `finally`. `addToCollection` is idempotent
+  (the composite PK; duplicate adds are no-ops).
 
-Feasibility spike (**plan task, ordered before every interaction task that builds on it — must
-be proven on macOS AND Windows**): does a native `startDrag` session deliver DOM drop events
-over the app's own window at all? If not, the fallback is a small per-row grab-handle that
-starts a plain HTML5 in-app drag for collection drops while the row body keeps the native
-drag-out — adopting the fallback changes row hit-areas, so it is a deliberate owner-visible
-decision at plan time, not a silent default. Keyboard (`C`) and context menu cover the same
-action regardless, so the feature never hinges on the gesture.
+Feasibility (**adapted for the overnight run, Codex-consulted**): whether a native `startDrag`
+session delivers DOM drop events over the app's own window cannot be proven headlessly — the
+session needs a real OS mouse. So v1 ships the drag-in **architecture complete but the native
+gesture unproven**: slot + gated drop targets are wired (inert-but-harmless if the OS never
+delivers the events), the e2e synthetic seam exercises the target/slot logic, and **the
+morning hands-on is the spike** — the owner drags a row onto a collection on macOS (Windows on
+his box later); if the OS doesn't deliver, the per-row grab-handle fallback (plain HTML5 in-app
+drag for collection drops, native drag-out kept on the row body) remains an explicit owner
+decision — it changes row hit-areas and is never adopted silently. Keyboard (`C`) and context
+menu cover the same action regardless, so the feature never hinges on the gesture.
 
 Drop feedback: the hovered collection row highlights; on drop its count bumps. Dropping onto
 Favorites favorites the sample (same slot mechanism). E2E note: the harness's drag seam skips
@@ -353,6 +384,11 @@ that resolution (the plan owns the exact mechanism).
   `user-layer-reimport.spec` (favorite → Settings re-import → favorite intact: the §2.1
   guarantee, pinned end-to-end).
 - `security.spec` bridge pin (array + title) updates per §4's canonical rule.
+- Known existing-spec fallout, budgeted not discovered: `browse.spec` pins the Packs listbox as
+  exactly `['All Samples', ...packs]` (breaks when All Samples moves to LIBRARY, §5.1), and
+  `filters.spec` asserts the `__ntwineE2E` filters echo clears to `{}` (the §3.1 scope clean
+  break must keep "no scope" serializing to an absent key so that pin stays true — pin it that
+  way deliberately).
 - Fixture: unchanged — user.db starts empty in every test; user state is created through the
   real UI (the honest path). `__ntwineE2E` snapshot may gain a `scope` echo if a spec needs it;
   DOM-first assertions preferred.
