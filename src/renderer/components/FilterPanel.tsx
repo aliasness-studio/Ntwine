@@ -11,12 +11,13 @@ import { useStores } from './StoreContext';
 // `library.tags` IS "top N by count" with no extra sort needed here.
 const TOP_TAG_COUNT = 20;
 
+// No border-top of its own: App.tsx's FilterDock (this panel's only mount point) draws the
+// rail-section divider, and its header row sits between that divider and this panel.
 const Panel = styled.div`
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 12px 8px;
-  border-top: 1px solid ${(p) => p.theme.color.border};
+  padding: 4px 8px 12px;
 `;
 
 const Section = styled.div`
