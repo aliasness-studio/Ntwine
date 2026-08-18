@@ -449,11 +449,28 @@ export const SampleList = observer(
     // be reached via the context menu, since every popover/editor input blanket-`stopPropagation`s
     // its own keydowns before they could ever reach this component's own keyboard dispatch above —
     // Task 11.)
+    //
+    // Fix round 1 (reviewer finding): TagsPopover/CollectionPopover's own click-away listener
+    // (document-level, capture-phase `mousedown`) never calls `preventDefault()`, so a click
+    // OUTSIDE the popover — e.g. into TopBar's search input — still lets the browser run its
+    // default mousedown focus behavior on the clicked element FIRST, before this effect's
+    // `openPopover -> null` transition is even processed. Refocusing unconditionally here then
+    // yanked focus straight back off that just-clicked element (concretely: popover open -> click
+    // into search to type -> focus lands in search -> this effect snaps it back to the list -> the
+    // next keystroke opens a popover instead of typing). The guard below only refocuses when
+    // NOTHING else has already claimed focus: an Esc/Enter-driven close removes the focused input
+    // without anything else being clicked, so `document.activeElement` falls back to `<body>` (the
+    // documented DOM behavior when the focused element is removed) and this still refocuses the
+    // list exactly as before; a click-driven close leaves `document.activeElement` pointing at
+    // whatever the click actually focused, so this correctly stands down and leaves it alone.
     const editSurfaceWasOpenRef = useRef(false);
     useEffect(() => {
       const isOpenNow = userLayer.openPopover !== null || userLayer.nicknameEditId !== null;
       if (editSurfaceWasOpenRef.current && !isOpenNow) {
-        scrollRef.current?.focus();
+        const active = document.activeElement;
+        if (active === null || active === document.body) {
+          scrollRef.current?.focus();
+        }
       }
       editSurfaceWasOpenRef.current = isOpenNow;
     }, [userLayer.openPopover, userLayer.nicknameEditId]);
