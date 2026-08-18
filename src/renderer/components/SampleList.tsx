@@ -166,7 +166,10 @@ export const SampleList = observer(function SampleList() {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       player.moveSelection(-1, visibleIds);
-    } else if (e.key === ' ' || e.code === 'Space') {
+    } else if (e.key === 'ArrowLeft' || e.key === ' ' || e.code === 'Space') {
+      // ArrowLeft = Splice muscle memory for "retrigger the current sample": same action Space
+      // already had — previewPlayer's per-voice gain ramp silences the sounding voice and
+      // restarts from the top. Selection never moves.
       e.preventDefault();
       player.replay();
     }

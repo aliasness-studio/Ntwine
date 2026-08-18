@@ -98,6 +98,18 @@ test('click-to-preview and the keyboard walk go through the protocol/pcm seams, 
   protocolEvents = await seam.drain<ProtocolEvent>('ntwine:e2e:protocol');
   expect(protocolEvents.filter((e) => e.scheme === 'sample')).toEqual([]);
 
+  // --- ArrowLeft is the same retrigger (QoL round 1, Splice muscle memory): playCount grows,
+  // selection and lastPlayedId stay put, and — like Space — the replay comes from the buffer
+  // cache, so no new sample:// fetch. Same drain-then-filter discipline as the Space block. ---
+  await seam.drain('ntwine:e2e:protocol');
+  await page.keyboard.press('ArrowLeft');
+
+  await expect.poll(async () => (await snapshot(page)).playCount).toBe(4);
+  await expect.poll(async () => (await snapshot(page)).lastPlayedId).toBe(id2);
+  await expect(secondRow).toHaveAttribute('aria-selected', 'true'); // ArrowLeft never moves selection
+  protocolEvents = await seam.drain<ProtocolEvent>('ntwine:e2e:protocol');
+  expect(protocolEvents.filter((e) => e.scheme === 'sample')).toEqual([]);
+
   // --- AIFF fallback: the wav-path WebAudio decode fails, the app falls back to the PCM worker ---
   await rowByFilename(page, 'BK_Pluck.aiff').click();
   const id3 = await currentSelectedId(page);
