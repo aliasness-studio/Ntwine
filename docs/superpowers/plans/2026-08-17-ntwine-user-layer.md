@@ -17,7 +17,8 @@
 - MobX pin: `mobx ^6.15` + `mobx-react-lite ^4` — never 7.x. TS strict; `yarn typecheck` and `yarn lint` clean per task.
 - TDD per task: failing test → red → implement → green → commit. Unit gate per task: `yarn test`. Full `yarn e2e` (repackages) at the three milestones marked below — REQUIRED because `src/` changes.
 - Every user-layer row keys on `sample_file_hash` (Splice-supplied `samples.file_hash`). The renderer never sees hashes; main resolves `sampleId → file_hash`.
-- `normalizeUserName(name) = name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()` — the ONE normalizer for every persisted `normalized_name` and user-name comparison.
+- `normalizeUserName(name) = name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()` — the ONE normalizer for every persisted `normalized_name` and user-name comparison, in BOTH processes: it lives in `src/shared/userNames.ts` (created Task 1) so the renderer's type-ahead resolution uses the same function as main.
+- **One display-sort comparator everywhere:** user-facing name lists (`listUserTagNames`, per-row `userTags`, autocomplete) sort by JS `localeCompare` in JS — never SQL `ORDER BY` collation. (`localeCompare` orders `bounce` before `Kick`.)
 - Splice metadata (catalog tables) is never mutated by the user layer.
 - Bridge ends at exactly 23 methods; `tests/e2e/security.spec.ts` pin (sorted array AND the "exactly its N methods" title) updates in the same task that grows the bridge (Task 6).
 - Commit author `AliasNess Studio <aliasness.studio@proton.me>`. Commits reference `Refs #6` in the final line before the co-author trailer. Implementers never stash/amend/rebase/push.
@@ -28,7 +29,8 @@
 ### Task 1: userDb module (schema, normalizer, CRUD)
 
 **Files:**
-- Create: `src/main/user/userDb.ts`
+- Create: `src/shared/userNames.ts` (exports `normalizeUserName` — pure, no imports; renderer-safe)
+- Create: `src/main/user/userDb.ts` (re-exports `normalizeUserName` from shared for main-side convenience)
 - Test: `src/main/user/userDb.test.ts`
 
 **Interfaces:**
@@ -49,7 +51,6 @@ export interface UserDb {
   addToCollection(collectionId: string, fileHash: string): void;    // idempotent (INSERT OR IGNORE)
   removeFromCollection(collectionId: string, fileHash: string): void;
   listLibraryRail(): { favorites: number; collections: { id: string; name: string; count: number }[] }; // present-only counts (join samples missing=0)
-  userTextByHash(): Map<string, { nickname: string | null; tags: string[] }>; // for search (Task 4)
 }
 export class UserNameError extends Error { constructor(message: string) { super(message); this.name = 'UserNameError'; } }
 export function openUserDb(catalog: Catalog, userDbPath: string): UserDb;
@@ -124,7 +125,7 @@ describe('user tags', () => {
     user.addUserTag('h2', ' kick ');
     user.addUserTag('h1', 'bounce');
     expect(catalog.db.prepare(`SELECT COUNT(*) AS n FROM user.tags`).get()).toEqual({ n: 2 });
-    expect(user.listUserTagNames()).toEqual(['Kick', 'bounce']); // A-Z by display name, case-sensitive sort is fine — pin actual: localeCompare
+    expect(user.listUserTagNames()).toEqual(['bounce', 'Kick']); // localeCompare display sort (Global Constraints)
     user.removeUserTag('h1', 'KICK'); // removal matches by normalized name too
     expect(catalog.db.prepare(`SELECT COUNT(*) AS n FROM user.sample_tags`).get()).toEqual({ n: 2 });
   });
@@ -168,16 +169,6 @@ describe('listLibraryRail', () => {
   });
 });
 
-describe('userTextByHash', () => {
-  it('returns nickname + tag names per hash', () => {
-    user.setNickname('h1', 'THE snare');
-    user.addUserTag('h1', 'bounce');
-    user.addUserTag('h2', 'kick');
-    const m = user.userTextByHash();
-    expect(m.get('h1')).toEqual({ nickname: 'THE snare', tags: ['bounce'] });
-    expect(m.get('h2')).toEqual({ nickname: null, tags: ['kick'] });
-  });
-});
 ```
 
 - [ ] **Step 2: Run to verify red** — `yarn test src/main/user/userDb.test.ts` → FAIL (module not found).
@@ -209,7 +200,7 @@ export function openUserDb(catalog: Catalog, userDbPath: string): UserDb {
 }
 ```
 
-Implementation notes (binding): `setFavorite`/`setNickname` upsert `sample_state` (`ON CONFLICT(sample_file_hash) DO UPDATE`) stamping `updated_at = nowIso()` and `created_at` on insert. `addUserTag` looks up `user.tags` by `normalized_name`, inserts with `crypto.randomUUID()` if absent (rejecting empty via `UserNameError` BEFORE any write), then `INSERT OR IGNORE` into `user.sample_tags`. `removeUserTag` resolves the tag by normalized name; missing tag → no-op. `createCollection`/`renameCollection` throw `UserNameError` on empty or when a DIFFERENT collection already owns the normalized name (check by SELECT first — do not rely on catching SQLITE_CONSTRAINT, which would also swallow FK errors). `listUserTagNames` sorts by display name via `localeCompare`. `listLibraryRail` favorites count: `SELECT COUNT(*) FROM user.sample_state us JOIN samples s ON s.file_hash = us.sample_file_hash AND s.missing = 0 WHERE us.favorite = 1`; per-collection counts analogous over `collection_items`. `userTextByHash` = one pass over `sample_state` (nickname non-null) + one over `sample_tags JOIN tags`, merged into the Map.
+Implementation notes (binding): `setFavorite`/`setNickname` upsert `sample_state` (`ON CONFLICT(sample_file_hash) DO UPDATE`) stamping `updated_at = nowIso()` and `created_at` on insert. `addUserTag` looks up `user.tags` by `normalized_name`, inserts with `crypto.randomUUID()` if absent (rejecting empty via `UserNameError` BEFORE any write), then `INSERT OR IGNORE` into `user.sample_tags`. `removeUserTag` resolves the tag by normalized name; missing tag → no-op. `createCollection`/`renameCollection` throw `UserNameError` on empty or when a DIFFERENT collection already owns the normalized name (check by SELECT first — do not rely on catching SQLITE_CONSTRAINT, which would also swallow FK errors). `listUserTagNames` sorts by the Global Constraints comparator (`(a, b) => a.localeCompare(b)`). `listLibraryRail` favorites count: `SELECT COUNT(*) FROM user.sample_state us JOIN samples s ON s.file_hash = us.sample_file_hash AND s.missing = 0 WHERE us.favorite = 1`; per-collection counts analogous over `collection_items`. (No `userTextByHash` — Task 4 owns its one search helper inside queries.ts.)
 
 - [ ] **Step 4: Run to green** — `yarn test src/main/user/userDb.test.ts`, then full `yarn test` + `yarn typecheck` + `yarn lint`.
 - [ ] **Step 5: Commit** — `feat(user-layer): userDb sidecar module — schema, normalizer, CRUD` (+ `Refs #6`).
@@ -249,7 +240,7 @@ if (f.scope !== undefined && f.scope.kind === 'pack') {
 }
 ```
 
-(favorites/collection arms land in Task 3 — add `// Task 3` marker-free TODO-free: add the two arms NOW as dead-reachable SQL against `user.` tables ONLY IF Task 1 is merged before this task runs; otherwise leave the union of kinds non-exhaustive with a `default: break`. This plan orders Task 1 first, so **implement all three arms here**, favorites: `s.file_hash IN (SELECT sample_file_hash FROM user.sample_state WHERE favorite = 1)`, collection: `s.file_hash IN (SELECT sample_file_hash FROM user.collection_items WHERE collection_id = ?)` — they are correct SQL whether or not rows exist, but tests for them wait for Task 3's fixture wiring.) LibraryStore: `setPack(id)` becomes `setScope(scope)` calling `patchFilters({ scope: scope ?? undefined })`; PackRail: `library.filters.scope?.kind === 'pack' && library.filters.scope.packId === pack.id` for active; All Samples row active when `filters.scope === undefined`; clicks call `library.setScope({ kind: 'pack', packId: pack.id })` / `library.setScope(null)`.
+The `favorites`/`collection` arms land WHOLLY in Task 3 (guarded on `hasUser`; a favorites/collection scope over a connection that never attached the user schema returns `[]`) — Task 2 implements ONLY the pack arm and the absence-means-all default. LibraryStore: `setPack(id)` becomes `setScope(scope)` calling `patchFilters({ scope: scope ?? undefined })`; PackRail: `library.filters.scope?.kind === 'pack' && library.filters.scope.packId === pack.id` for active; All Samples row active when `filters.scope === undefined`; clicks call `library.setScope({ kind: 'pack', packId: pack.id })` / `library.setScope(null)`.
 - [ ] **Step 4: green** — `yarn test && yarn typecheck && yarn lint`. NOTE: `querySamples` callers pass plain objects over IPC; nested `scope` survives structured clone fine.
 - [ ] **Step 5: Commit** — `feat(user-layer): scope replaces packId in QueryFilters (clean break)`.
 
@@ -262,13 +253,14 @@ if (f.scope !== undefined && f.scope.kind === 'pack') {
 **Files:**
 - Modify: `src/main/catalog/queries.ts`, `src/shared/ipcTypes.ts` (SampleRow)
 - Test: `src/main/catalog/queries.test.ts` (extend; construct catalog + `openUserDb`)
+- Test: `src/renderer/stores/LibraryStore.test.ts` — its typed `const sampleRow: SampleRow = {...}` literal fails typecheck when SampleRow grows; extend the fixture with `favorite: false, nickname: null, userTags: []`
 
 **Interfaces:**
 - Produces: `SampleRow` gains `favorite: boolean; nickname: string | null; userTags: string[]` (display names A-Z). `querySamples` signature UNCHANGED (`(catalog, f)`) — the user tables live on the same connection.
 
-- [ ] **Step 1: failing tests** — with `openUserDb` attached: (a) favorite/nickname flow through rows (`favorite: true`, `nickname: 'THE snare'`, absent state → `favorite: false, nickname: null, userTags: []`); (b) `userTags` sorted A-Z; (c) `{ scope: { kind: 'favorites' } }` returns only favorited-present rows; (d) `{ scope: { kind: 'collection', collectionId } }` returns members; (e) a `pack` scope + favorite field coexist.
+- [ ] **Step 1: failing tests** — with `openUserDb` attached: (a) favorite/nickname flow through rows (`favorite: true`, `nickname: 'THE snare'`, absent state → `favorite: false, nickname: null, userTags: []`); (b) `userTags` sorted by localeCompare (pin `['bounce', 'Kick']`); (c) `{ scope: { kind: 'favorites' } }` returns only favorited-present rows; (d) `{ scope: { kind: 'collection', collectionId } }` returns members; (e) a `pack` scope + favorite field coexist; (f) WITHOUT `openUserDb`: favorites/collection scopes return `[]` and plain queries carry `favorite: false, nickname: null, userTags: []`.
 - [ ] **Step 2: red.**
-- [ ] **Step 3: implement** — row SELECT adds `s.file_hash AS fileHash, us.favorite AS favorite, us.nickname AS nickname` via `LEFT JOIN user.sample_state us ON us.sample_file_hash = s.file_hash` — **BUT only when the user schema is attached**: add one guard `const hasUser = (db.pragma('database_list', { simple: false }) as { name: string }[]).some((d) => d.name === 'user');` and build the join/columns conditionally (`0 AS favorite, NULL AS nickname` otherwise), so `querySamples` keeps working for any caller that never attached (existing tests). userTags: second query `SELECT st.sample_file_hash AS hash, t.name AS name FROM user.sample_tags st JOIN user.tags t ON t.id = st.tag_id WHERE st.sample_file_hash IN (...)` over the returned rows' hashes, grouped in JS (mirror the existing splice-tags second query; ORDER BY t.name). Map into the returned objects (`favorite: r.favorite === 1`).
+- [ ] **Step 3: implement** — row SELECT adds `s.file_hash AS fileHash, us.favorite AS favorite, us.nickname AS nickname` via `LEFT JOIN user.sample_state us ON us.sample_file_hash = s.file_hash` — **BUT only when the user schema is attached**: add one guard `const hasUser = (db.pragma('database_list', { simple: false }) as { name: string }[]).some((d) => d.name === 'user');` and build the join/columns conditionally (`0 AS favorite, NULL AS nickname` otherwise), so `querySamples` keeps working for any caller that never attached (existing tests). userTags: second query `SELECT st.sample_file_hash AS hash, t.name AS name FROM user.sample_tags st JOIN user.tags t ON t.id = st.tag_id WHERE st.sample_file_hash IN (...)` over the returned rows' hashes, grouped THEN sorted in JS with the Global Constraints `localeCompare` comparator (never SQL collation). Map into the returned objects (`favorite: r.favorite === 1`). Also implement the two scope arms here, inside the `hasUser` guard (favorites: `s.file_hash IN (SELECT sample_file_hash FROM user.sample_state WHERE favorite = 1)`; collection: `s.file_hash IN (SELECT sample_file_hash FROM user.collection_items WHERE collection_id = ?)`); when `!hasUser`, a favorites/collection scope short-circuits to `[]`.
 - [ ] **Step 4: green** — full unit wall + typecheck + lint.
 - [ ] **Step 5: Commit** — `feat(user-layer): querySamples carries favorite/nickname/userTags + user scopes`.
 
@@ -308,7 +300,7 @@ if (f.search !== undefined && f.search.trim() !== '') {
 }
 ```
 
-with helpers in queries.ts (or a small `userSearch.ts`): `readUserTextWithIds(db)` = one SQL join `samples.file_hash → user.sample_state/user.sample_tags` producing per-`samples.id` normalized text fragments (`normalizeUserName(nickname)`, each tag's `normalized_name`); `wordPrefixMatch(text, tokenNorm)` = `text.startsWith(tokenNorm) || text.includes(' ' + tokenNorm)` after normalization (word boundary = start or post-space, matching FTS's prefix-token feel; normalized text already collapsed whitespace). `normalizeUserName` imported from `../user/userDb`.
+with helpers in queries.ts (or a small `userSearch.ts`): `readUserTextWithIds(db)` = one SQL join `samples.file_hash → user.sample_state/user.sample_tags` producing per-`samples.id` normalized text fragments (`normalizeUserName(nickname)`, each tag's `normalized_name`); `wordPrefixMatch(text, tokenNorm)` = `text.startsWith(tokenNorm) || text.includes(' ' + tokenNorm)` after normalization (word boundary = start or post-space, matching FTS's prefix-token feel; normalized text already collapsed whitespace). `normalizeUserName` imported from `../../shared/userNames`.
 - [ ] **Step 4: green** — full wall.
 - [ ] **Step 5: Commit** — `feat(user-layer): per-token search union over FTS + nickname + user tags`.
 
@@ -363,9 +355,9 @@ export function registerDragHandler(resolvePath: (sampleId: number) => string | 
 }
 ```
 
-- [ ] **Step 1: failing tests** — ipc.test.ts already stubs `ipcMain`; extend its harness: registering exposes the 11 new channels; `ntwine:setFavorite` resolves id→hash through the catalog row then calls `userDb.setFavorite` (insert a sample row, invoke the captured handler, read user.db state); `ntwine:createCollection` maps `UserNameError` to a rejected invoke whose `message` contains the reason (renderer shows it inline); `ntwine:listLibraryRail` returns the Task-1 shape.
+- [ ] **Step 1: failing tests** — **no `registerIpc` harness exists today** (`ipc.test.ts` tests only the injectable helpers, `git grep "vi.mock('electron'"` finds nothing, and under the ELECTRON_RUN_AS_NODE runner a bare `import { ipcMain } from 'electron'` is undefined — calling `registerIpc` in a unit test today throws). CREATE the harness: a top-of-file `vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() }, app: { getPath: vi.fn(() => '/tmp') }, dialog: { showOpenDialog: vi.fn() }, net: { fetch: vi.fn() }, utilityProcess: { fork: vi.fn() } }))`, then collect `(ipcMain.handle as Mock).mock.calls` into a `Map<channel, handler>` after calling `registerIpc({...real catalog+userDb, sendProgress: vi.fn()})`. Cases: the 11 new channels are registered; `ntwine:setFavorite` resolves id→hash through a real catalog row then writes user.db state; unknown id → resolves without writing; `ntwine:createCollection` rejects with a message containing the `UserNameError` reason (renderer shows it inline); `ntwine:listLibraryRail` returns the Task-1 shape. Put these in ipc.test.ts alongside the existing helper tests (one file, two harness styles is fine — the mock is hoisted and the existing tests never import electron).
 - [ ] **Step 2: red.**
-- [ ] **Step 3: implement** — main.ts whenReady: `const userDb = openUserDb(catalog, path.join(dataDir, 'user.db'));` then pass into `registerIpc({ ..., userDb })`. ipc.ts: one `ipcMain.handle` per method; id→hash helper `const hashOf = (sampleId: number): string | null => (catalog.db.prepare('SELECT file_hash AS h FROM samples WHERE id = ?').get(sampleId) as { h: string } | undefined)?.h ?? null;` — unknown id → handler returns without writing (never throws for a stale renderer id). preload.ts: 11 `ipcRenderer.invoke` lines + `startDrag: (sampleId) => ipcRenderer.invoke('ntwine:drag-start', sampleId)`; update its exceptions comment. ipcTypes.ts NtwineApi verbatim from spec §4. security.spec: sorted 23-array + title `exactly its 23 methods`.
+- [ ] **Step 3: implement** — main.ts whenReady: `const userDb = openUserDb(catalog, path.join(dataDir, 'user.db'));` then pass into `registerIpc({ ..., userDb })`. ipc.ts: one `ipcMain.handle` per method; id→hash helper `const hashOf = (sampleId: number): string | null => (catalog.db.prepare('SELECT file_hash AS h FROM samples WHERE id = ?').get(sampleId) as { h: string } | undefined)?.h ?? null;` — unknown id → handler returns without writing (never throws for a stale renderer id). preload.ts: 11 `ipcRenderer.invoke` lines + `startDrag: (sampleId) => ipcRenderer.invoke('ntwine:drag-start', sampleId)`; update its exceptions comment. ipcTypes.ts NtwineApi verbatim from spec §4. security.spec: sorted 23-array + title `exactly its 23 methods`. SampleRow.tsx's existing `api.startDrag(row.id)` call gains a `void ` prefix in THIS task (invoke now returns a promise; Task 13 replaces the call with the slot wrapper).
 - [ ] **Step 4: green + MILESTONE** — `yarn test && yarn typecheck && yarn lint`, then **full `yarn e2e`** (drag.spec/preview.spec/security.spec must all pass — drag.spec drives the same seam; the invoke arm resolves immediately under e2e).
 - [ ] **Step 5: Commit** — `feat(user-layer): 23-method bridge, user IPC handlers, startDrag promoted to invoke`.
 
@@ -385,12 +377,14 @@ export function registerDragHandler(resolvePath: (sampleId: number) => string | 
 export class UserLayerStore {
   favoritesCount = 0;
   collections: { id: string; name: string; count: number }[] = [];
+  userTagNames: string[] = [];                        // autocomplete source (spec §5.3); loaded on init and on popover open
+  async loadUserTags(): Promise<void>;                // this.userTagNames = await api.listUserTags()
   constructor(api: NtwineApi, library: LibraryStore) // same DI pattern; makeAutoObservable(this, { api: false, library: false })
   async init(): Promise<void>;                        // fetch rail
   async toggleFavorite(row: SampleRow): Promise<void>; // setFavorite(!row.favorite) → refresh()
   async setNickname(sampleId: number, nickname: string | null): Promise<void>;
-  async addTag(sampleId: number, name: string): Promise<void>;      // then refreshTags too
-  async removeTag(sampleId: number, name: string): Promise<void>;   // then refreshTags too
+  async addTag(sampleId: number, name: string): Promise<void>;      // then refreshTags + loadUserTags too
+  async removeTag(sampleId: number, name: string): Promise<void>;   // then refreshTags + loadUserTags too
   async createCollection(name: string): Promise<{ id: string } | { error: string }>;
   async renameCollection(id: string, name: string): Promise<{ error: string } | null>;
   async deleteCollection(id: string): Promise<void>;  // if current scope is this collection → library.setScope(null) FIRST
@@ -419,7 +413,7 @@ export class UserLayerStore {
 
 - [ ] Step 1: `src/renderer/emptyState.test.ts` — favorites scope → "No favorites yet — press F on a sample you love."; collection scope → "Drag samples here, or press C on a selected sample."; otherwise → "No samples match the current filters". Red → implement → green.
 - [ ] Step 2: build LibraryRail + App/PackRail changes; `yarn typecheck && yarn lint && yarn test`.
-- [ ] Step 3: update `browse.spec.ts` pins (do NOT run e2e yet — milestone comes at Task 13; but keep the spec edit in this commit so the suite is coherent at the milestone).
+- [ ] Step 3: update `browse.spec.ts` pins — three edits, not one: (a) `expectedNames` becomes `fixture.packs` (no All Samples in the Packs listbox); (b) the `countSpan(options.nth(0))` assertion pinning All Samples' PRESENT count (11) moves to the Library listbox's All Samples row — **the LIBRARY All Samples row KEEPS its present-only count** (`userLayer` has no total; render `library`-derived present count the same way PackRail did via the rail summary: `listLibraryRail` does not carry it, so LibraryRail computes it as `packs.reduce((s, p) => s + p.sampleCount, 0)` from `library.packs` — the exact expression PackRail deletes); (c) the uncovered-pack `options.nth(...)` indices shift by one. (Do NOT run e2e yet — milestone at Task 13; keep the spec edits in this commit so the suite is coherent there.)
 - [ ] Step 4: Commit — `feat(user-layer): LIBRARY rail section (All Samples, Favorites, collections)`.
 
 ---
@@ -430,7 +424,7 @@ export class UserLayerStore {
 - Modify: `src/renderer/components/SampleRow.tsx`, `src/renderer/components/SampleList.tsx` (pass `onToggleFavorite`)
 - Test: typecheck/lint (+e2e Task 14)
 
-Row changes (spec §5.2): heart `<button aria-pressed={row.favorite} aria-label="Favorite">` rendered only when `!row.missing`, click `e.stopPropagation()` + `onToggleFavorite()` (SampleList passes `() => userLayer.toggleFavorite(row)`); filename cell shows `row.nickname ?? middleTruncate(row.filename)` — when nicknamed, render nickname + `<DimmedReal>{middleTruncate(row.filename, 24)}</DimmedReal>`, `title` stays `row.filename`; user chips render after splice chips within the same `MAX_INLINE_TAGS` budget (`[...row.tags.map(splice), ...row.userTags.map(user)]` sliced together; user chips get `$user` accent-outline styling and `data-testid="user-tag-chip"`).
+Row changes (spec §5.2): heart `<button aria-pressed={row.favorite} aria-label="Favorite">` rendered only when `!row.missing`, click `e.stopPropagation()` + `onToggleFavorite()` (SampleList passes `() => userLayer.toggleFavorite(row)`); filename cell shows `middleTruncate(row.nickname ?? row.filename)` (spec §5.2: truncation applies to whichever text renders) — when nicknamed, render the truncated nickname + `<DimmedReal>{middleTruncate(row.filename, 24)}</DimmedReal>`, `title` stays `row.filename`; user chips render after splice chips within the same `MAX_INLINE_TAGS` budget (`[...row.tags.map(splice), ...row.userTags.map(user)]` sliced together; user chips get `$user` accent-outline styling and `data-testid="user-tag-chip"`).
 
 - [ ] Implement → `yarn test && yarn typecheck && yarn lint` → Commit `feat(user-layer): row heart, nickname display, user tag chips`.
 
@@ -443,7 +437,7 @@ Row changes (spec §5.2): heart `<button aria-pressed={row.favorite} aria-label=
 - Modify: `src/renderer/components/SampleList.tsx` (onContextMenu on rows → open at cursor for that row), `src/renderer/components/App.tsx` if a portal root is needed (prefer plain absolute positioning inside Scroller's nearest positioned ancestor — use `position: fixed` at the mouse point; no portal needed)
 - Test: e2e (Task 14/15); pure `menuItemsFor(row, scope)` helper unit test
 
-**Interfaces:** `menuItemsFor(row: SampleRow, scope: Scope | undefined): { id: 'favorite'|'nickname'|'tags'|'addto'|'removefrom'; label: string }[]` — pure, in `src/renderer/rowMenu.ts`: favorite label flips (`Favorite`/`Unfavorite`), `removefrom` present only when `scope?.kind === 'collection'`, and **missing rows return []** (no menu — spec §5.2). The component renders `role="menu"` items `role="menuitem"`, closes on Esc/click-away/action; `addto` opens the Task-11 collection popover; `nickname` starts the Task-11 inline edit; `tags` opens the tags popover.
+**Interfaces:** `menuItemsFor(row: SampleRow, scope: Scope | undefined): { id: 'favorite'|'nickname'|'tags'|'addto'|'removefrom'; label: string }[]` — pure, in `src/renderer/rowMenu.ts`: favorite label flips (`Favorite`/`Unfavorite`), `removefrom` present only when `scope?.kind === 'collection'`, and **missing rows return []** (no menu — spec §5.2). The component renders `role="menu"` items `role="menuitem"`, closes on Esc/click-away/action; `addto` opens the Task-11 collection popover; `nickname` starts the Task-11 inline edit; `tags` opens the tags popover. **Deliberate deviation from spec §5.2 (owner may veto in the morning): the "Add to collection ▸" submenu is folded into the C popover — same actions (collection list + create-new), one surface instead of two.**
 
 - [ ] Step 1: `rowMenu.test.ts` (all four branches + missing → []) red → green.
 - [ ] Step 2: component + wiring; gates; Commit `feat(user-layer): in-app row context menu`.
@@ -457,7 +451,7 @@ Row changes (spec §5.2): heart `<button aria-pressed={row.favorite} aria-label=
 - Modify: `src/renderer/components/SampleRow.tsx` (inline nickname editor state), `src/renderer/components/SampleList.tsx` (popover anchoring: open for SELECTED row at its virtual position), `src/renderer/stores/UserLayerStore.ts` (popover open-state: `openPopover: { kind: 'tags'|'collection'; sampleId: number } | null`, `nicknameEditId: number | null`)
 - Test: store-level unit (open/close transitions); e2e Task 14/15
 
-Behaviors (spec §5.3): TagsPopover — input `aria-label="Add tag"` with autocomplete list from `listUserTags()` filtered by prefix; Enter adds (`userLayer.addTag`); existing user tags of the row listed as chips with `✕` remove buttons; splice tags shown read-only (muted, no ✕); Esc closes. CollectionPopover — input `aria-label="Add to collection"`; type-ahead resolves existing names (normalized compare in the component via simple `toLowerCase().trim()` against fetched names is NOT the persisted normalizer — instead match by `name.trim().toLowerCase()` for UX and let main be authoritative); Enter adds to highlighted; Cmd/Ctrl+Enter with a non-matching name → `createCollection` then add ("create and add in one gesture"); rejected create shows the returned `{ error }` inline. Nickname editor — `nicknameEditId` renders an `<input aria-label="Nickname">` in place of the filename cell for that row; Enter commits (`setNickname`, `''`→null), Esc cancels.
+Behaviors (spec §5.3): TagsPopover — input `aria-label="Add tag"` with autocomplete over `userLayer.userTagNames` (loaded via `loadUserTags()` on popover open) filtered by prefix; Enter adds (`userLayer.addTag`); existing user tags of the row listed as chips with `✕` remove buttons; splice tags shown read-only (muted, no ✕); Esc closes. CollectionPopover — input `aria-label="Add to collection"`; type-ahead resolves existing names by `normalizeUserName` from `src/shared/userNames.ts` — THE one normalizer (spec §2.3); an existing name always resolves before any create fires; Enter adds to highlighted; Cmd/Ctrl+Enter with a non-matching name → `createCollection` then add ("create and add in one gesture"); rejected create shows the returned `{ error }` inline. Nickname editor — `nicknameEditId` renders an `<input aria-label="Nickname">` in place of the filename cell for that row; Enter commits (`setNickname`, `''`→null), Esc cancels.
 
 - [ ] Implement with store transitions unit-tested; gates; Commit `feat(user-layer): tags/collection popovers + nickname inline edit`.
 
@@ -470,7 +464,23 @@ Behaviors (spec §5.3): TagsPopover — input `aria-label="Add tag"` with autoco
 - Create: `src/renderer/keymap.ts` — pure `listKeyAction(e: { key, metaKey, ctrlKey }, ctx: { hasSelection, scopeKind }): Action | null`
 - Test: `src/renderer/keymap.test.ts`
 
-Rules (spec §5.4): `F` toggle favorite (no-op without selection), `T`/`C`/`N` open the matching popover/editor for the selected row, `Delete`/`Backspace` only when `scopeKind === 'collection'` → removeFromCollection + selection moves next (§3.1 — implement in SampleList: capture the selected index in `visibleIds` before the write; after re-query, select `visibleIds[min(i, len-1)]` with `{autoplay:false}`; same helper used by unfavorite-under-Favorites via UserLayerStore calling back). Cmd/Ctrl+F at window level → focus search input (App `useEffect` keydown listener; TopBar exposes focus via a forwarded ref or a `focusSearch` callback registered on mount). Esc in search: non-empty → `setSearch('')`; empty → `blur()` + focus the list container.
+Rules (spec §5.4): `F` toggle favorite (no-op without selection), `T`/`C`/`N` open the matching popover/editor for the selected row, `Delete`/`Backspace` only when `scopeKind === 'collection'` → removeFromCollection + selection follows (§3.1). **Selection-follow lives entirely in SampleList** (every trigger — `F` key, `Delete` key, and the heart click's `onToggleFavorite` closure — already originates there; no store→component callback):
+
+```ts
+// SampleList — wraps any user-layer write that can remove the selected row from the CURRENT scope
+const withSelectionFollow = async (write: () => Promise<void>): Promise<void> => {
+  const before = visibleIds.indexOf(player.selectedId ?? -1); // index in PRE-write non-missing ids
+  await write();                                              // UserLayerStore action; ends with library.rerun()
+  const after = library.rows.filter((r) => !r.missing).map((r) => r.id); // POST-query ids — never the stale list
+  if (after.length === 0) { player.clearSelection(); return; }
+  const landing = after[Math.min(Math.max(before, 0), after.length - 1)];
+  if (player.selectedId === null || !after.includes(player.selectedId)) {
+    player.select(landing, { autoplay: false });
+  }
+};
+```
+
+Used when (a) `Delete` under a collection scope, (b) `F`/heart-click while `scope.kind === 'favorites'`. `PlayerStore` gains `clearSelection(): void { this.selectedId = null; }` (unit-tested: no play call). Unit tests for the landing math run against ≥3-row cases: remove middle → next row selected; remove last → previous; remove sole → cleared. Cmd/Ctrl+F at window level → focus search input (App `useEffect` keydown listener; TopBar exposes focus via a forwarded ref or a `focusSearch` callback registered on mount). Esc in search: non-empty → `setSearch('')`; empty → `blur()` + focus the list container.
 
 - [ ] Step 1: keymap.test.ts (every row of the table incl. no-selection no-ops and non-collection Delete → null) red → green.
 - [ ] Step 2: wire; gates; Commit `feat(user-layer): keyboard map (F/T/C/N/Delete, Cmd+F, search Esc)`.
@@ -524,9 +534,9 @@ LibraryRail targets: `onDragEnter/onDragOver` — `if (peekDragSource() === null
 - Modify: `tests/e2e/harness/actions.ts` (add `rowHeart(page, filename)`, `openTagsPopover`, `contextMenuOn(page, filename)` helpers as needed)
 
 Test content (spec §8; use existing patterns — `importAndWait`, `rowByFilename`, `expect.poll(readCount)`, relaunch via `launchNtwine` + try/finally):
-- favorites.spec: click heart on `AD_Kick_01.wav` → `aria-pressed=true`; rail Favorites count 1; click Favorites scope → count 1 row; press `F` (list focused, selection on it via click) → unfavorites → §3.1: EmptyState shows favorites empty-string; relaunch same profile → favorite persisted (re-favorite first), rail count restored.
-- nickname.spec: `N` on selected row → input; type `THE snare` Enter → cell text shows nickname, `title` still filename; `search('snare kick')` → mixed-vocabulary hit (count 1); clear nickname (N, empty, Enter) → filename text restored.
-- user-tags.spec: `T` popover on a row → add `bounce`; chip (`data-testid=user-tag-chip`) appears; tag cloud gains `bounce 1` chip; toggling it filters to 1; search `bounce` finds it; remove via popover ✕ → chip gone, cloud updated (facet refresh pin).
+- favorites.spec: click heart on `AD_Kick_01.wav` → `aria-pressed=true`; rail Favorites count 1; **selection-follow with 3 rows**: favorite three rows, enter Favorites scope, select the MIDDLE one, press `F` → it unfavorites AND selection lands on the (post-query) next row, not the removed one; unfavorite the rest → EmptyState shows the favorites empty-string; relaunch same profile → a re-made favorite persists, rail count restored.
+- nickname.spec: `N` on selected row → input; type `THE snare` Enter → cell text shows nickname, `title` still filename; `search('snare kick')` → **count 2** (`AD_Snare_02.wav` matches via FTS alone — the fixture's kickAndSnare row — plus the nicknamed `AD_Kick_01.wav`; additionally assert `rowByFilename(page, 'AD_Kick_01.wav')` is visible, which is the mixed-vocabulary evidence); clear nickname (N, empty, Enter) → filename text restored.
+- user-tags.spec: `T` popover on a row → add `bounce`; chip (`data-testid=user-tag-chip`) appears; tag cloud gains `bounce 1` chip; toggling it filters to 1; search `bounce` finds it; **autocomplete reuse**: open `T` on a SECOND row, type `bo` → suggestion `bounce` listed; Enter reuses it (cloud shows `bounce 2`, `user.tags` stays one tag by construction); remove via popover ✕ → chip gone, cloud updated (facet refresh pin).
 - [ ] Write specs → `yarn e2e:only` against the Task-13 packaged build IF unchanged since (assertProductionArtifact enforces freshness — if any `src/` fix was needed, full `yarn e2e`); iterate to green. Commit `test(user-layer): favorites/nickname/user-tags e2e`.
 
 ---
