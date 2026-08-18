@@ -85,6 +85,19 @@ export class PlayerStore {
     this.playPort.play(nextId);
   }
 
+  /**
+   * Selection-follow's (design spec §3.1) terminal case: the write that just ran emptied the
+   * current scope entirely, so there's no "next row" for `landingIdAfterRemoval` (keymap.ts) to
+   * land on. Deliberately doesn't call `playPort.stop()` — same posture as every other method on
+   * this class doc comment already states: nothing here ever silences a sounding voice itself,
+   * a NEW selection's own `play()` is what does that (Task 14's per-voice gain-ramp retrigger).
+   * Clearing the selection with nothing left selected has no "new" landing to play through, so
+   * there is nothing here that should sound anything at all.
+   */
+  clearSelection(): void {
+    this.selectedId = null;
+  }
+
   /** No-op when nothing is selected — Space is safe to bind unconditionally in the UI. */
   replay(): void {
     if (this.selectedId === null) return;
