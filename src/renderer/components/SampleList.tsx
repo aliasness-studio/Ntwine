@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
 import { api } from '../stores/api';
+import { isRowFullyVisible } from '../scrollSnap';
 import { useStores } from './StoreContext';
 import { ROW_HEIGHT, SampleRow } from './SampleRow';
 
@@ -159,13 +160,32 @@ export const SampleList = observer(function SampleList() {
     [library.rows],
   );
 
+  // Snap scroll (QoL round 1): after an arrow key moves the selection, a landing row that isn't
+  // fully inside the viewport becomes the TOP row (align 'start' — the Splice paging feel, in
+  // both directions), instead of staying off-screen while the audio walks on without you. Runs
+  // only on keyboard moves — mouse scrolling and clicks never fight the user. `moveSelection`
+  // writes `selectedId` synchronously, so reading it right back here is the post-move value; the
+  // index is looked up in the FULL `library.rows` (missing rows included) because that is the
+  // coordinate space the virtualizer's offsets are in.
+  const snapSelectionIntoView = (): void => {
+    const el = scrollRef.current;
+    if (el === null || player.selectedId === null) return;
+    const index = library.rows.findIndex((r) => r.id === player.selectedId);
+    if (index === -1) return;
+    if (!isRowFullyVisible(el.scrollTop, el.clientHeight, index, ROW_HEIGHT)) {
+      rowVirtualizer.scrollToIndex(index, { align: 'start' });
+    }
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       player.moveSelection(1, visibleIds);
+      snapSelectionIntoView();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       player.moveSelection(-1, visibleIds);
+      snapSelectionIntoView();
     } else if (e.key === 'ArrowLeft' || e.key === ' ' || e.code === 'Space') {
       // ArrowLeft = Splice muscle memory for "retrigger the current sample": same action Space
       // already had — previewPlayer's per-voice gain ramp silences the sounding voice and
