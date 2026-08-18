@@ -383,6 +383,105 @@ describe('UserLayerStore', () => {
     });
   });
 
+  // Task 11 (design spec §5.3): open-state transitions for the tags/collection popovers and the
+  // inline nickname editor. Pure synchronous UI state (no `api` call involved) — these tests pin
+  // the FIELD transitions only; `TagsPopover`'s own `loadUserTags()`-on-mount and the
+  // component-level rendering/interaction are this task's component files, not this store, per
+  // the brief's "store-level unit (open/close transitions); e2e Task 14/15" split.
+  describe('popover / nickname-edit open-state', () => {
+    it('starts with both closed', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+
+      expect(store.openPopover).toBeNull();
+      expect(store.nicknameEditId).toBeNull();
+    });
+
+    it('openTagsPopover sets openPopover to the tags kind for the given sample', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+
+      store.openTagsPopover(7);
+
+      expect(store.openPopover).toEqual({ kind: 'tags', sampleId: 7 });
+    });
+
+    it('openCollectionPopover sets openPopover to the collection kind for the given sample', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+
+      store.openCollectionPopover(9);
+
+      expect(store.openPopover).toEqual({ kind: 'collection', sampleId: 9 });
+    });
+
+    it('opening one kind REPLACES an already-open popover of the other kind, never both at once', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+
+      store.openTagsPopover(7);
+      store.openCollectionPopover(9);
+
+      expect(store.openPopover).toEqual({ kind: 'collection', sampleId: 9 });
+    });
+
+    it('closePopover nulls openPopover', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+      store.openTagsPopover(7);
+
+      store.closePopover();
+
+      expect(store.openPopover).toBeNull();
+    });
+
+    it('startNicknameEdit sets nicknameEditId to the given sample', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+
+      store.startNicknameEdit(3);
+
+      expect(store.nicknameEditId).toBe(3);
+    });
+
+    it('stopNicknameEdit nulls nicknameEditId', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+      store.startNicknameEdit(3);
+
+      store.stopNicknameEdit();
+
+      expect(store.nicknameEditId).toBeNull();
+    });
+
+    // Only one editing surface live at a time (brief: "only one popover open at a time — the
+    // store field enforces it"), extended here to cover the nickname editor too: without this
+    // cross-clear, a popover left open on one row while a context-menu action starts a nickname
+    // edit elsewhere would leave two uncoordinated edit affordances open, and Esc (which "unwinds
+    // one layer" per spec §5.4) would only ever reach whichever one's listener catches it first.
+    it('opening a popover (either kind) closes an in-progress nickname edit', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+      store.startNicknameEdit(3);
+
+      store.openTagsPopover(7);
+
+      expect(store.nicknameEditId).toBeNull();
+      expect(store.openPopover).toEqual({ kind: 'tags', sampleId: 7 });
+    });
+
+    it('starting a nickname edit closes an already-open popover', () => {
+      const { api, library } = makeStores();
+      const store = new UserLayerStore(api, library);
+      store.openCollectionPopover(9);
+
+      store.startNicknameEdit(3);
+
+      expect(store.openPopover).toBeNull();
+      expect(store.nicknameEditId).toBe(3);
+    });
+  });
+
   // Plain reads of observable fields are untracked (LibraryStore.test.ts's own note on this
   // applies identically here) — only a live `autorun` actually exercises `enforceActions:
   // 'observed'` across this store's async init/write/refresh paths.

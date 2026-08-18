@@ -10,7 +10,9 @@ import { api } from '../stores/api';
 import { emptyStateText } from '../emptyState';
 import { menuItemsFor, type RowMenuItemId } from '../rowMenu';
 import { isRowFullyVisible } from '../scrollSnap';
+import { CollectionPopover } from './CollectionPopover';
 import { RowContextMenu } from './RowContextMenu';
+import { TagsPopover } from './TagsPopover';
 import { useStores } from './StoreContext';
 import { ROW_HEIGHT, SampleRow } from './SampleRow';
 
@@ -240,10 +242,11 @@ export const SampleList = observer(function SampleList() {
 
   // The dispatcher RowContextMenu's `onAction` calls into. `favorite`/`removefrom` are immediate
   // actions against already-wired, already-tested `UserLayerStore` methods — the exact "fire the
-  // write, let refresh() re-sync" posture that store documents for itself — so both are fully
-  // wired now, same as the brief's explicit `favorite` instruction. `nickname`/`tags`/`addto`
-  // need Task 11's popovers/inline edit (not this task's file scope) to mean anything yet, so
-  // they're deliberately inert here — each a clearly-named no-op Task 11 replaces.
+  // write, let refresh() re-sync" posture that store documents for itself. `nickname`/`tags`/
+  // `addto` (Task 11) set the store's popover/nickname-edit open-state FOR THE MENU'S ROW —
+  // `row.id` here is "whatever row the action targeted" (brief's binding decision on the
+  // ambiguity), which today is always the row the context menu opened on; Task 12 additionally
+  // reaches these same store actions from the selected row via keyboard.
   const handleRowMenuAction = (id: RowMenuItemId): void => {
     if (!contextMenu) return;
     const { row, scope } = contextMenu;
@@ -260,17 +263,30 @@ export const SampleList = observer(function SampleList() {
         }
         break;
       case 'nickname':
-        // Task 11 replaces this with the inline nickname editor (design spec §5.3).
+        userLayer.startNicknameEdit(row.id);
         break;
       case 'tags':
-        // Task 11 replaces this with the tags popover (design spec §5.3).
+        userLayer.openTagsPopover(row.id);
         break;
       case 'addto':
-        // Task 11 replaces this with the add-to-collection popover (design spec §5.3; Ledger
-        // Ruling R2 folds the spec's "Add to collection ▸" submenu into that one popover).
+        // Ledger Ruling R2 folds the spec's "Add to collection ▸" submenu into this one popover.
+        userLayer.openCollectionPopover(row.id);
         break;
     }
   };
+
+  // Task 11 (design spec §5.3): resolves the currently-open tags/collection popover's anchor row
+  // and virtual position fresh on every render — no cached index, so a re-query (e.g. after
+  // addTag's own refresh()) that shifts row order never anchors against a stale one. `undefined`
+  // for either half — row no longer present, or scrolled outside the rendered+overscan range —
+  // means "don't render" below, the same defensive posture `handleContextMenu` already takes for
+  // a not-found row.
+  const openPopover = userLayer.openPopover;
+  const popoverRowIndex =
+    openPopover === null ? -1 : library.rows.findIndex((r) => r.id === openPopover.sampleId);
+  const popoverRow = popoverRowIndex === -1 ? undefined : library.rows[popoverRowIndex];
+  const popoverVirtualItem =
+    popoverRowIndex === -1 ? undefined : virtualItems.find((vi) => vi.index === popoverRowIndex);
 
   // Auto-focus on mount so arrow keys work immediately without requiring a click first; refocus
   // on any click within the list so keyboard nav keeps working after a mouse selection (a plain
@@ -308,9 +324,31 @@ export const SampleList = observer(function SampleList() {
                 if (!row.missing) player.select(row.id);
               }}
               onToggleFavorite={() => void userLayer.toggleFavorite(row)}
+              editingNickname={userLayer.nicknameEditId === row.id}
+              onCommitNickname={(nickname) => {
+                void userLayer.setNickname(row.id, nickname);
+                userLayer.stopNicknameEdit();
+              }}
+              onCancelNicknameEdit={() => userLayer.stopNicknameEdit()}
             />
           );
         })}
+        {openPopover && popoverRow && popoverVirtualItem && openPopover.kind === 'tags' && (
+          <TagsPopover
+            key={openPopover.sampleId}
+            row={popoverRow}
+            top={popoverVirtualItem.start + ROW_HEIGHT}
+            onClose={() => userLayer.closePopover()}
+          />
+        )}
+        {openPopover && popoverRow && popoverVirtualItem && openPopover.kind === 'collection' && (
+          <CollectionPopover
+            key={openPopover.sampleId}
+            sampleId={openPopover.sampleId}
+            top={popoverVirtualItem.start + ROW_HEIGHT}
+            onClose={() => userLayer.closePopover()}
+          />
+        )}
       </Inner>
       {contextMenu && (
         <RowContextMenu

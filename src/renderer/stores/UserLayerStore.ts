@@ -24,6 +24,14 @@ export class UserLayerStore {
   // exposes `loadUserTags()` for it to call).
   userTagNames: string[] = [];
 
+  // Task 11 (design spec §5.3): open-state for the tags/collection popovers and the inline
+  // nickname editor — SampleList reads these to decide what (if anything) to render and where to
+  // anchor it; SampleRow reads `nicknameEditId === row.id` (pre-resolved by SampleList, same
+  // shape as its existing `selected` prop) to swap its filename cell for an input. `null` is
+  // closed/not-editing in both.
+  openPopover: { kind: 'tags' | 'collection'; sampleId: number } | null = null;
+  nicknameEditId: number | null = null;
+
   // Plain (not `private`) fields, assigned in the constructor body — see LibraryStore.ts's `api`
   // field for why: a `makeAutoObservable` overrides-typing limitation (empirically confirmed
   // there) means neither a parameter-property nor a `private`-marked manual field is visible to
@@ -131,6 +139,40 @@ export class UserLayerStore {
   async removeFromCollection(collectionId: string, sampleId: number): Promise<void> {
     await this.api.removeFromCollection(collectionId, sampleId);
     await this.refresh();
+  }
+
+  // Task 11 (design spec §5.3): open-state transitions for the tags/collection popovers and the
+  // inline nickname editor. Pure synchronous UI state — no `api` call, unlike every write action
+  // above — so these five are plain fields-only actions. Opening either popover kind or starting
+  // a nickname edit clears the OTHER surface's open-state, so at most one editing affordance is
+  // ever live at once: without that, a popover left open on one row while a context-menu action
+  // starts a nickname edit on another (or the same) row would show two uncoordinated edit
+  // surfaces at once, and Esc — which "unwinds one layer" per spec §5.4 — would only ever reach
+  // whichever one's own listener happens to catch it first. `TagsPopover`'s own `loadUserTags()`
+  // call on mount is what spec §5.3's "loaded via loadUserTags() on popover open" describes (see
+  // `userTagNames`'s own field comment above) — deliberately not reproduced here, so this stays a
+  // plain, synchronously-testable state transition like the other four.
+  openTagsPopover(sampleId: number): void {
+    this.nicknameEditId = null;
+    this.openPopover = { kind: 'tags', sampleId };
+  }
+
+  openCollectionPopover(sampleId: number): void {
+    this.nicknameEditId = null;
+    this.openPopover = { kind: 'collection', sampleId };
+  }
+
+  closePopover(): void {
+    this.openPopover = null;
+  }
+
+  startNicknameEdit(sampleId: number): void {
+    this.openPopover = null;
+    this.nicknameEditId = sampleId;
+  }
+
+  stopNicknameEdit(): void {
+    this.nicknameEditId = null;
   }
 
   private async fetchRail(): Promise<void> {

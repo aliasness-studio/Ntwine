@@ -4,7 +4,14 @@
 // `observer`, no store reads) — SampleList (itself an `observer`) already resolves `row`/
 // `selected`/`peaks` from the stores before they reach here, so a plain re-render on new props is
 // enough; wrapping this in `observer` too would just be inert overhead.
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
 import styled from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
 import type { SampleRow as SampleRowData } from '../../shared/ipcTypes';
@@ -103,6 +110,36 @@ const DimmedReal = styled.span`
   margin-left: 6px;
   color: ${(p) => p.theme.color.textFaint};
   font-size: 11px;
+`;
+
+// Nickname inline editor (Task 11 brief / design spec §5.3) — replaces `Filename` in place when
+// `editingNickname` is true. `flex: 2; min-width: 0;` mirrors `Filename`'s own sizing so swapping
+// between display/edit never shifts the row's other columns. Colors match `LibraryRail`'s own
+// `TextInput` (its rename/create editors) for one consistent "editing" look app-wide.
+//
+// Drag-hazard guards: this input sits INSIDE `Row`, which is `draggable` and arms its native HTML5
+// drag on mousedown+move — a path separate from `click`/`keydown` (the same hazard `HeartButton`
+// above documents and guards against). `-webkit-user-drag: none` here plus `draggable={false}` and
+// `onMouseDown` stopPropagation in the JSX usage below are that same three-layer pattern. A FOURTH
+// guard beyond `HeartButton`'s three: `onClick` stopPropagation, so a click landing inside the
+// input to place the caret doesn't bubble to `Row`'s own `onClick` and re-trigger `onSelect`
+// (HeartButton never needed this — its own `onClick` already calls `stopPropagation` as part of
+// toggling favorite; a text input has no such handler of its own to piggyback on). `onKeyDown`
+// also stops propagation unconditionally, not just for Enter/Escape: the list container (out of
+// this file's scope) binds ArrowLeft to `player.replay()` and ArrowUp/ArrowDown to selection
+// movement, so moving the text cursor while editing would otherwise retrigger preview playback or
+// walk the selection out from under the edit — the same "editing never re-triggers row
+// selection/preview" contract the click guard exists for, extended to keyboard bubbling.
+const NicknameInput = styled.input`
+  flex: 2;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: ${(p) => p.theme.radius.sm};
+  border: 1px solid ${(p) => p.theme.color.accent};
+  background: ${(p) => p.theme.color.bgPanel};
+  color: ${(p) => p.theme.color.text};
+  font-size: 13px;
+  -webkit-user-drag: none;
 `;
 
 const PackName = styled.span`
@@ -246,6 +283,18 @@ export interface SampleRowProps {
    * only renders the button and forwards the click — same "no store reads" posture as `onSelect`
    * above. SampleList supplies `() => userLayer.toggleFavorite(row)`. */
   onToggleFavorite: () => void;
+  /** Task 11 (design spec §5.3): true when this row is mid-nickname-edit
+   * (`userLayer.nicknameEditId === row.id`) — pre-resolved by the caller into a boolean, the same
+   * shape `selected` above already takes, rather than handing this component the raw id to
+   * compare itself. */
+  editingNickname: boolean;
+  /** Enter in the nickname input calls this with the trimmed value, or `null` for an empty
+   * (post-trim) input — design spec §5.3: "empty clears the nickname." SampleList wires this to
+   * `userLayer.setNickname(row.id, nickname)` followed by `userLayer.stopNicknameEdit()`. */
+  onCommitNickname: (nickname: string | null) => void;
+  /** Esc in the nickname input calls this. SampleList wires this to
+   * `userLayer.stopNicknameEdit()`. */
+  onCancelNicknameEdit: () => void;
 }
 
 export function SampleRow({
@@ -255,6 +304,9 @@ export function SampleRow({
   top,
   onSelect,
   onToggleFavorite,
+  editingNickname,
+  onCommitNickname,
+  onCancelNicknameEdit,
 }: SampleRowProps) {
   const drawablePeaks = row.missing || row.peaksFailed ? null : peaks;
 
@@ -309,6 +361,23 @@ export function SampleRow({
     onToggleFavorite();
   };
 
+  // Nickname editor commit/cancel (Task 11, design spec §5.3). Uncontrolled input
+  // (`defaultValue`, read via `e.currentTarget.value` on Enter) rather than React-controlled
+  // state: the input only exists in the tree while `editingNickname` is true (conditional
+  // rendering below swaps it in for `Filename`), so it always mounts fresh with the row's CURRENT
+  // nickname as its starting value — no separate effect needed to reset a controlled draft when
+  // editing starts. `e.stopPropagation()` unconditionally, see `NicknameInput`'s own doc comment
+  // above for why this covers more than just Enter/Escape.
+  const handleNicknameKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      const trimmed = e.currentTarget.value.trim();
+      onCommitNickname(trimmed === '' ? null : trimmed);
+    } else if (e.key === 'Escape') {
+      onCancelNicknameEdit();
+    }
+  };
+
   return (
     <Row
       $top={top}
@@ -324,10 +393,22 @@ export function SampleRow({
         <WaveformThumb peaks={drawablePeaks} width={THUMB_WIDTH} height={THUMB_HEIGHT} />
         {!row.missing && row.peaksFailed && <CorruptBadge title="couldn't decode">!</CorruptBadge>}
       </ThumbWrap>
-      <Filename title={row.filename}>
-        {middleTruncate(row.nickname ?? row.filename)}
-        {row.nickname !== null && <DimmedReal>{middleTruncate(row.filename, 24)}</DimmedReal>}
-      </Filename>
+      {editingNickname ? (
+        <NicknameInput
+          aria-label="Nickname"
+          autoFocus
+          defaultValue={row.nickname ?? ''}
+          draggable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={handleNicknameKeyDown}
+        />
+      ) : (
+        <Filename title={row.filename}>
+          {middleTruncate(row.nickname ?? row.filename)}
+          {row.nickname !== null && <DimmedReal>{middleTruncate(row.filename, 24)}</DimmedReal>}
+        </Filename>
+      )}
       <PackName title={row.packName ?? undefined}>{row.packName ?? '—'}</PackName>
       <KeyCell>{formatKey(row.audioKey, row.chordType)}</KeyCell>
       <BpmCell>{row.bpm ?? '—'}</BpmCell>
