@@ -3,11 +3,14 @@
 // 4,197 in the real library) — that bound is what makes "never jank" (spec §7) achievable at all.
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import styled from 'styled-components';
+import type { SampleRow as SampleRowData, Scope } from '../../shared/ipcTypes';
 import { api } from '../stores/api';
 import { emptyStateText } from '../emptyState';
+import { menuItemsFor, type RowMenuItemId } from '../rowMenu';
 import { isRowFullyVisible } from '../scrollSnap';
+import { RowContextMenu } from './RowContextMenu';
 import { useStores } from './StoreContext';
 import { ROW_HEIGHT, SampleRow } from './SampleRow';
 
@@ -52,6 +55,16 @@ const EmptyState = styled.div`
 export const SampleList = observer(function SampleList() {
   const { library, player, userLayer } = useStores();
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Task 10 (design spec §5.2): the row context menu's open/closed state — which row, the scope
+  // that was active when it opened (so `removefrom`'s dispatch target can't drift if something
+  // changed it mid-open), and the cursor point the menu renders at. `null` is closed; SampleList
+  // is the sole owner (RowContextMenu is presentational — see that file's own doc comment).
+  const [contextMenu, setContextMenu] = useState<{
+    row: SampleRowData;
+    scope: Scope | undefined;
+    point: { x: number; y: number };
+  } | null>(null);
 
   const rowVirtualizer = useVirtualizer({
     count: library.rows.length,
@@ -196,6 +209,69 @@ export const SampleList = observer(function SampleList() {
     }
   };
 
+  // Task 10 brief / design spec §5.2: right-click opens the in-app row menu at the cursor.
+  // `SampleRow` (out of this task's file scope) exposes no per-row DOM identifier for an
+  // event-target lookup, so row identity is resolved from the click's Y position instead:
+  // `virtualItems` gives every currently-rendered row's fixed `ROW_HEIGHT`-tall band relative to
+  // `Inner`'s top, and `scrollRef`'s own bounding rect + `scrollTop` converts the click's
+  // viewport-space Y into that same coordinate space — the same `rowIndex * rowHeight` reasoning
+  // `scrollSnap.ts` already uses for this fixed-size list. `menuItemsFor` is checked here (not
+  // only inside RowContextMenu) so an empty result never opens state at all — no menu, and the
+  // native context menu (nothing currently wires one — main has no `context-menu` handler) is
+  // left alone. Opening the menu never moves selection or playback: the spec is silent on this
+  // for the context menu specifically, so the heart's own "click toggles without changing
+  // selection" is the least-surprise precedent to follow.
+  const handleContextMenu = (e: MouseEvent<HTMLDivElement>): void => {
+    const scroller = scrollRef.current;
+    if (scroller === null) return;
+    const relativeY = e.clientY - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const target = virtualItems.find(
+      (vi) => relativeY >= vi.start && relativeY < vi.start + ROW_HEIGHT,
+    );
+    const row = target ? library.rows[target.index] : undefined;
+    if (!row) return;
+    const scope = library.filters.scope;
+    if (menuItemsFor(row, scope).length === 0) return;
+    e.preventDefault();
+    setContextMenu({ row, scope, point: { x: e.clientX, y: e.clientY } });
+  };
+
+  const closeContextMenu = (): void => setContextMenu(null);
+
+  // The dispatcher RowContextMenu's `onAction` calls into. `favorite`/`removefrom` are immediate
+  // actions against already-wired, already-tested `UserLayerStore` methods — the exact "fire the
+  // write, let refresh() re-sync" posture that store documents for itself — so both are fully
+  // wired now, same as the brief's explicit `favorite` instruction. `nickname`/`tags`/`addto`
+  // need Task 11's popovers/inline edit (not this task's file scope) to mean anything yet, so
+  // they're deliberately inert here — each a clearly-named no-op Task 11 replaces.
+  const handleRowMenuAction = (id: RowMenuItemId): void => {
+    if (!contextMenu) return;
+    const { row, scope } = contextMenu;
+    switch (id) {
+      case 'favorite':
+        void userLayer.toggleFavorite(row);
+        break;
+      case 'removefrom':
+        // Only ever present in the menu when `scope?.kind === 'collection'` (menuItemsFor's own
+        // gate), but narrowed again here rather than trusting that invariant across the
+        // open-menu/click gap.
+        if (scope?.kind === 'collection') {
+          void userLayer.removeFromCollection(scope.collectionId, row.id);
+        }
+        break;
+      case 'nickname':
+        // Task 11 replaces this with the inline nickname editor (design spec §5.3).
+        break;
+      case 'tags':
+        // Task 11 replaces this with the tags popover (design spec §5.3).
+        break;
+      case 'addto':
+        // Task 11 replaces this with the add-to-collection popover (design spec §5.3; Ledger
+        // Ruling R2 folds the spec's "Add to collection ▸" submenu into that one popover).
+        break;
+    }
+  };
+
   // Auto-focus on mount so arrow keys work immediately without requiring a click first; refocus
   // on any click within the list so keyboard nav keeps working after a mouse selection (a plain
   // row `<div>` isn't itself focusable, so a click doesn't otherwise return focus to this
@@ -212,6 +288,7 @@ export const SampleList = observer(function SampleList() {
       aria-label="Sample list"
       onKeyDown={handleKeyDown}
       onMouseDown={() => scrollRef.current?.focus()}
+      onContextMenu={handleContextMenu}
     >
       {library.rows.length === 0 && !library.loading && (
         <EmptyState>{emptyStateText(library.filters.scope)}</EmptyState>
@@ -235,6 +312,16 @@ export const SampleList = observer(function SampleList() {
           );
         })}
       </Inner>
+      {contextMenu && (
+        <RowContextMenu
+          key={contextMenu.row.id}
+          row={contextMenu.row}
+          scope={contextMenu.scope}
+          point={contextMenu.point}
+          onAction={handleRowMenuAction}
+          onClose={closeContextMenu}
+        />
+      )}
     </Scroller>
   );
 });
