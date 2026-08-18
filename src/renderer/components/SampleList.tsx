@@ -217,8 +217,17 @@ export const SampleList = observer(
     // live stores like this one can only be exercised end-to-end (Task 13's milestone), but the
     // pure index math underneath it needed, and now has, a real unit test.
     const withSelectionFollow = async (write: () => Promise<void>): Promise<void> => {
+      const hadSelection = player.selectedId !== null;
       const before = visibleIds.indexOf(player.selectedId ?? -1);
       await write();
+      // Fix round 2 (Minor, final review): nothing was selected before this write — spec §5.2's
+      // "the heart toggles without changing selection" still applies with none to begin with, but
+      // `landingIdAfterRemoval`'s -1-clamps-to-0 arithmetic (built for "the selected row vanished,
+      // land on whatever shifted into its place") would otherwise select row 0 out of nothing.
+      // Skip the whole landing/reselect branch below; selection stays null. Covers both call
+      // sites that reach this helper unselected: the heart click and the context-menu favorite on
+      // a row that isn't the current selection.
+      if (!hadSelection) return;
       const after = library.rows.filter((r) => !r.missing).map((r) => r.id);
       const landing = landingIdAfterRemoval(before, after);
       if (landing === null) {

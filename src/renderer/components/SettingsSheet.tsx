@@ -93,7 +93,7 @@ export interface SettingsSheetProps {
 }
 
 export const SettingsSheet = observer(function SettingsSheet({ onClose }: SettingsSheetProps) {
-  const { library, importStore } = useStores();
+  const { library, importStore, userLayer } = useStores();
   const [root, setRoot] = useState<string | null>(null);
   const [loadingRoot, setLoadingRoot] = useState(true);
   const [repicking, setRepicking] = useState(false);
@@ -123,6 +123,11 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
       if (newRoot !== null) {
         setRoot(newRoot);
         await library.init(); // refresh rows/packs against the just-updated `missing` flags.
+        // Final review wave (Important): library.init() alone never refreshed the LIBRARY rail's
+        // favorites/collection counts, which went stale (present but wrong) the moment a re-pick
+        // changed what's missing/found. userLayer.init() is fetchRail + loadUserTags — no
+        // duplicate row query, since that's library.init()'s job above.
+        await userLayer.init();
       }
     } catch (err) {
       console.error('SettingsSheet: pickLibraryRoot failed', err);
@@ -136,6 +141,10 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
     if (importStore.phase !== 'error') {
       try {
         await library.init(); // refresh rows/packs/tags against whatever the re-import changed.
+        // Final review wave (Important): same rail-staleness gap as handleRepick above — a
+        // re-import can add/remove favorited or collected samples, which library.init() alone
+        // never reflects in the rail's counts.
+        await userLayer.init();
       } catch (err) {
         console.error('SettingsSheet: refreshing the library after re-import failed', err);
       }

@@ -18,6 +18,21 @@ import styled from 'styled-components';
 import type { SampleRow, Scope } from '../../shared/ipcTypes';
 import { menuItemsFor, type RowMenuItemId } from '../rowMenu';
 
+// Fix round 2 (Promoted minor, final review): viewport-clamp constants for the fixed-position
+// menu — a right-click near the window's bottom/right edge previously rendered items off-screen,
+// since `point.x`/`point.y` place the box's TOP-LEFT corner unconditionally. No DOM measurement
+// (same "fixed estimate over pixel-measurement" call `POPOVER_ESTIMATED_HEIGHT` makes in
+// SampleList.tsx, for the same reason: correcting after the real box paints would risk a visible
+// post-open jump). Width is a flat estimate — every label is short and one line, and the longest
+// ("Remove from this collection") never comes close to wrapping at this font-size, so item count
+// doesn't move it. Height is computed FROM the actual item count instead of a flat worst-case
+// estimate: unlike the popover case, this box's real height is already knowable here
+// (`items.length` is in hand before the first paint), and a flat max-item estimate would clamp a
+// short (2-item) menu away from an edge it doesn't actually overhang.
+const MENU_ESTIMATED_WIDTH = 220;
+const MENU_ITEM_HEIGHT = 28; // one item's content box plus the `gap: 2px` before the next item
+const MENU_PADDING = 10; // MenuBox's own 4px padding (top+bottom) + 1px border (top+bottom)
+
 const MenuBox = styled.div<{ $x: number; $y: number }>`
   position: fixed;
   top: ${(p) => p.$y}px;
@@ -90,8 +105,14 @@ export function RowContextMenu({ row, scope, point, onAction, onClose }: RowCont
   // no-click rule, already enforced once inside `menuItemsFor` itself).
   if (items.length === 0) return null;
 
+  // See the constants' own comment above for why width is a flat estimate and height is computed
+  // from the real item count.
+  const estimatedHeight = items.length * MENU_ITEM_HEIGHT + MENU_PADDING;
+  const x = Math.max(0, Math.min(point.x, window.innerWidth - MENU_ESTIMATED_WIDTH));
+  const y = Math.max(0, Math.min(point.y, window.innerHeight - estimatedHeight));
+
   return (
-    <MenuBox ref={menuRef} role="menu" aria-label="Row actions" $x={point.x} $y={point.y}>
+    <MenuBox ref={menuRef} role="menu" aria-label="Row actions" $x={x} $y={y}>
       {items.map((item) => (
         <MenuItemButton
           key={item.id}

@@ -34,4 +34,13 @@ describe('ipcErrorMessage', () => {
     const err = new Error(`Error invoking remote method 'ntwine:someHandler': TypeError: boom`);
     expect(ipcErrorMessage(err)).toBe('TypeError: boom');
   });
+
+  it('final review wave, reviewer-supplied falsifier: both prefixes are anchored to the START of the message, not wherever the substring appears — an unanchored strip would find "Error invoking remote method \'x\': " and "UserNameError: " mid-string and corrupt this to "Not actually wrapped: gotcha"', () => {
+    const err = new Error(
+      "Not actually wrapped: Error invoking remote method 'x': UserNameError: gotcha",
+    );
+    expect(ipcErrorMessage(err)).toBe(
+      "Not actually wrapped: Error invoking remote method 'x': UserNameError: gotcha",
+    );
+  });
 });
