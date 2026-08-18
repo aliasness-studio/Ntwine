@@ -11,6 +11,7 @@ import { api } from '../stores/api';
 import type { NtwineApi } from '../../shared/ipcTypes';
 import { FilterPanel } from './FilterPanel';
 import { FirstRun } from './FirstRun';
+import { LibraryRail } from './LibraryRail';
 import { PackRail } from './PackRail';
 import { SampleList } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
@@ -235,6 +236,7 @@ export function App() {
     <Grid>
       <Rail>
         <PacksScroll>
+          <LibraryRail />
           <PackRail />
         </PacksScroll>
         <FilterDock>

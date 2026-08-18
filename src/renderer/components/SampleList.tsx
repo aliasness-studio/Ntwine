@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
 import { api } from '../stores/api';
+import { emptyStateText } from '../emptyState';
 import { isRowFullyVisible } from '../scrollSnap';
 import { useStores } from './StoreContext';
 import { ROW_HEIGHT, SampleRow } from './SampleRow';
@@ -213,7 +214,7 @@ export const SampleList = observer(function SampleList() {
       onMouseDown={() => scrollRef.current?.focus()}
     >
       {library.rows.length === 0 && !library.loading && (
-        <EmptyState>No samples match the current filters</EmptyState>
+        <EmptyState>{emptyStateText(library.filters.scope)}</EmptyState>
       )}
       <Inner $height={rowVirtualizer.getTotalSize()}>
         {virtualItems.map((vi) => {
