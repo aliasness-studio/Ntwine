@@ -1,10 +1,11 @@
 import { app, BrowserWindow } from 'electron';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import started from 'electron-squirrel-startup';
 import { openCatalog } from './main/catalog/db';
 import { registerDragHandler } from './main/drag';
+import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, registerIpc } from './main/ipc';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
@@ -22,6 +23,27 @@ if (started) {
 // whenReady() below, alongside everything else.
 registerProtocolSchemes();
 
+// E2E mode (e2e spec §3.1). Read BEFORE whenReady: app.setPath must precede any getPath, and a
+// config error must never reach Electron's "JavaScript error in main process" dialog (a modal
+// that would hang a headless run) — log and exit instead.
+let e2e: E2EConfig | null = null;
+try {
+  e2e = readE2EConfig(process.env);
+  if (e2e) {
+    // app.setPath throws when the directory does not exist (Electron docs) — create first.
+    mkdirSync(e2e.userData, { recursive: true });
+    app.setPath('userData', e2e.userData);
+    if (e2e.appData) {
+      mkdirSync(e2e.appData, { recursive: true });
+      app.setPath('appData', e2e.appData);
+    }
+  }
+} catch (err) {
+  console.error(String(err));
+  app.exit(2);
+}
+const e2eEmit = makeE2EEmitter(app, e2e);
+
 let mainWindow: BrowserWindow | null = null;
 
 const createWindow = (): BrowserWindow => {
@@ -31,6 +53,7 @@ const createWindow = (): BrowserWindow => {
     height: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: e2e ? ['--ntwine-e2e'] : [],
     },
   });
 
@@ -53,11 +76,24 @@ const createWindow = (): BrowserWindow => {
     win.loadFile(indexPath);
   }
 
+  // Fuse-safe packaged boot probe (e2e spec §4 packaged.spec): the packaged binary's fuses disable
+  // the Node inspector Playwright's driver needs, so the probe is "boot, load, write a marker, quit".
+  if (e2e?.bootMarker) {
+    const marker = e2e.bootMarker;
+    win.webContents.once('did-finish-load', () => {
+      writeFileSync(marker, app.getPath('userData'));
+      app.quit();
+    });
+  }
+
   // Enforces protocol.ts's `corsEnabled: true` invariant (see the trip-wire comment beside it):
   // sample://cover:// become fetchable cross-origin by ANY origin this BrowserWindow ever
   // renders, so this app must never render remote/untrusted content. No popup/new-window feature
   // exists, so every window.open is denied outright.
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    e2eEmit?.('ntwine:e2e:window-open-denied', { url });
+    return { action: 'deny' };
+  });
 
   // Same invariant, for top-level navigation (a stray external <a href>, a compromised
   // dependency setting location.href, ...) — denies anything that isn't the app's own single
@@ -75,6 +111,7 @@ const createWindow = (): BrowserWindow => {
       : target.protocol === 'file:' && fileURLToPath(target) === indexPath;
     if (!isAppOrigin) {
       event.preventDefault();
+      e2eEmit?.('ntwine:e2e:nav-denied', { url: event.url });
     }
   });
 
@@ -104,21 +141,23 @@ app.whenReady().then(() => {
   // A getter, not a resolved string: the library root can change at runtime
   // (NtwineApi.pickLibraryRoot), and everything below is wired up once — each consumer re-reads
   // the current value at request time instead of resolving against a startup snapshot.
-  const getLibraryRoot = () => currentLibraryRoot(catalog);
+  const getLibraryRoot = () => currentLibraryRoot(catalog, e2e?.libraryRoot ?? undefined);
 
   mainWindow = createWindow();
 
-  registerProtocols({ catalog, getLibraryRoot, coversDir });
+  registerProtocols({ catalog, getLibraryRoot, coversDir, e2eEmit });
 
   // Re-points Task 2's hardcoded resolvePath at the real catalog lookup (drag.ts's own doc
   // comment has the full rationale) — registerDragHandler itself is not temporary and doesn't
   // change.
-  registerDragHandler((sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId));
+  registerDragHandler((sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId), e2eEmit);
 
   registerIpc({
     catalog,
     snapshotDir,
     coversDir,
+    defaultLibraryRoot: e2e?.libraryRoot ?? undefined,
+    e2eEmit,
     // Guarded, not a bare `mainWindow?.webContents.send(...)`: a still-running background pass
     // (e.g. queue.ts's peaks queue) can deliver a worker reply well after the window is gone —
     // closing the WINDOW on macOS leaves the app (and this callback) alive, and `.webContents` on

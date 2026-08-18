@@ -84,7 +84,11 @@ const Count = styled.span`
 function PackCover({ packId, name }: { packId: number; name: string }) {
   const [broken, setBroken] = useState(false);
   if (broken) {
-    return <CoverFallback aria-hidden="true">{name.slice(0, 1).toUpperCase()}</CoverFallback>;
+    return (
+      <CoverFallback data-testid="cover-fallback" aria-hidden="true">
+        {name.slice(0, 1).toUpperCase()}
+      </CoverFallback>
+    );
   }
   return <Cover src={api.coverUrl(packId)} alt="" onError={() => setBroken(true)} />;
 }

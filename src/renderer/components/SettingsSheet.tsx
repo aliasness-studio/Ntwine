@@ -151,7 +151,9 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
         <Title>Settings</Title>
         <FieldRow>
           <FieldLabel>Library folder</FieldLabel>
-          <FieldValue>{loadingRoot ? 'Loading…' : (root ?? 'Unknown')}</FieldValue>
+          <FieldValue data-testid="settings-library-root">
+            {loadingRoot ? 'Loading…' : (root ?? 'Unknown')}
+          </FieldValue>
         </FieldRow>
         <ButtonRow>
           <Button type="button" disabled={repicking} onClick={() => void handleRepick()}>

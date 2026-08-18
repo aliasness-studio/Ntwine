@@ -232,7 +232,11 @@ export function SampleRow({ row, selected, peaks, top, onSelect }: SampleRowProp
         ))}
         {extraTagCount > 0 && <Chip>+{extraTagCount}</Chip>}
       </Tags>
-      {row.missing && <MissingBadge $flash={badgeFlash}>missing</MissingBadge>}
+      {row.missing && (
+        <MissingBadge data-testid="missing-badge" $flash={badgeFlash}>
+          missing
+        </MissingBadge>
+      )}
     </Row>
   );
 }

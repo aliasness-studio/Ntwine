@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Catalog } from './catalog/db';
 import { getPeaks, listPacks, listTags, pendingPeakIds, querySamples } from './catalog/queries';
+import type { E2EEmit } from './e2e';
 import { runImport as runImportPipeline, statPass, type ImportDeps } from './importer/importer';
 import { resolveSpliceDbCandidates } from './paths';
 import { resolveSampleAbsPath } from './protocol';
@@ -15,14 +16,17 @@ import type { ImportProgress, QueryFilters } from '../shared/ipcTypes';
 const DEFAULT_LIBRARY_ROOT = join(homedir(), 'Splice');
 
 /**
- * The current effective library root: whatever's persisted in `meta.library_root`, or the spec's
- * default. Exported so main.ts can build the SAME live getter it hands to `registerProtocols`/
- * `registerDragHandler` — one definition of "what's the current root" (owner's "one question, two
- * gates" rule), not three independently-computed ones that could drift the moment a fourth
- * consumer forgets the default.
+ * The current effective library root: whatever's persisted in `meta.library_root`, or a default —
+ * the spec's `~/Splice` unless a caller supplies its own (Task 1: E2E mode's `NTWINE_LIBRARY_ROOT`
+ * override, main.ts's `e2e?.libraryRoot`). A persisted root always wins over EITHER default — an
+ * E2E run must not silently override a library root the user already picked via pickLibraryRoot
+ * inside that same E2E userData dir. Exported so main.ts can build the SAME live getter it hands
+ * to `registerProtocols`/`registerDragHandler` — one definition of "what's the current root"
+ * (owner's "one question, two gates" rule), not three independently-computed ones that could
+ * drift the moment a fourth consumer forgets the default.
  */
-export function currentLibraryRoot(catalog: Catalog): string {
-  return catalog.getMeta('library_root') ?? DEFAULT_LIBRARY_ROOT;
+export function currentLibraryRoot(catalog: Catalog, defaultRoot: string = DEFAULT_LIBRARY_ROOT): string {
+  return catalog.getMeta('library_root') ?? defaultRoot;
 }
 
 // Splice DB discovery (spec §5 step 1) answered once here and reused by both `getState`'s
@@ -119,6 +123,11 @@ export interface RegisterIpcDeps {
   // `mainWindow.webContents.send('ntwine:import-progress', p)` — kept as an injected callback
   // here so ipc.ts itself never needs to know about BrowserWindow).
   sendProgress: (p: ImportProgress) => void;
+  // Task 1 (E2E mode): overrides currentLibraryRoot's fallback default at every call site below —
+  // main.ts wires this to `e2e?.libraryRoot`, undefined outside E2E mode (production behaviour
+  // unchanged).
+  defaultLibraryRoot?: string;
+  e2eEmit?: E2EEmit | null;
 }
 
 export interface RunWaveformsInBackgroundDeps {
@@ -193,7 +202,7 @@ export function registerIpc(deps: RegisterIpcDeps): void {
   // than duplicated inline at both the runImport handler and the startup-resume block below.
   const waveformDeps = (): RunWaveformsInBackgroundDeps => ({
     catalog,
-    libraryRoot: currentLibraryRoot(catalog),
+    libraryRoot: currentLibraryRoot(catalog, deps.defaultLibraryRoot),
     sendProgress: deps.sendProgress,
     forkWorker: () => utilityProcess.fork(WORKER_PATH),
   });
@@ -209,7 +218,7 @@ export function registerIpc(deps: RegisterIpcDeps): void {
   ipcMain.handle('ntwine:runImport', async () => {
     const importDeps: ImportDeps = {
       catalog,
-      libraryRoot: currentLibraryRoot(catalog),
+      libraryRoot: currentLibraryRoot(catalog, deps.defaultLibraryRoot),
       spliceDbPath: findSpliceDbPath(),
       snapshotDir: deps.snapshotDir,
       coversDir: deps.coversDir,
@@ -241,15 +250,17 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     getPeaks(catalog, sampleIds),
   );
 
-  ipcMain.handle('ntwine:decodePreviewPcm', async (_event, sampleId: number) =>
-    decodePreviewPcm(
+  ipcMain.handle('ntwine:decodePreviewPcm', async (_event, sampleId: number) => {
+    const result = await decodePreviewPcm(
       {
-        resolvePath: (id) => resolveSampleAbsPath(catalog, currentLibraryRoot(catalog), id),
+        resolvePath: (id) => resolveSampleAbsPath(catalog, currentLibraryRoot(catalog, deps.defaultLibraryRoot), id),
         forkWorker: () => utilityProcess.fork(WORKER_PATH),
       },
       sampleId,
-    ),
-  );
+    );
+    deps.e2eEmit?.('ntwine:e2e:preview-pcm', { sampleId, ok: result !== null });
+    return result;
+  });
 
   // Startup resume (spec §5 "resumable"): a quit mid-waveform-pass must not orphan pending
   // placeholder rows forever. Only when an import has actually completed — pre-import there are

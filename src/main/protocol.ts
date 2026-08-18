@@ -2,6 +2,7 @@ import { net, protocol, type CustomScheme } from 'electron';
 import { isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Catalog } from './catalog/db';
+import type { E2EEmit } from './e2e';
 import { relPathToAbs } from './importer/transform';
 
 // Same privileges for both custom schemes (spec §9.1 / §4): `standard` so relative/absolute
@@ -150,6 +151,7 @@ export interface RegisterProtocolsDeps {
   // from whenever `registerProtocols` happened to run.
   getLibraryRoot: () => string;
   coversDir: string;
+  e2eEmit?: E2EEmit | null;
 }
 
 /**
@@ -168,6 +170,15 @@ export function registerProtocols(deps: RegisterProtocolsDeps): void {
       deps.coversDir,
       request.url,
     );
+    if (deps.e2eEmit) {
+      const u = new URL(request.url);
+      const idText = u.pathname.replace(/^\//, '');
+      deps.e2eEmit('ntwine:e2e:protocol', {
+        scheme: u.protocol.slice(0, -1),
+        id: /^\d+$/.test(idText) ? Number(idText) : null,
+        hit: resolved !== null,
+      });
+    }
     if (resolved === null) return new Response(null, { status: 404 });
     // TODO(#38749): manual Range support before any scrub UI.
     return net.fetch(pathToFileURL(resolved).toString());

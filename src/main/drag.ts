@@ -1,5 +1,6 @@
 import { ipcMain, nativeImage, type NativeImage } from 'electron';
 import { existsSync } from 'node:fs';
+import type { E2EEmit } from './e2e';
 
 export function makeDragIcon(): NativeImage {
   const size = 24;
@@ -18,16 +19,30 @@ export function makeDragIcon(): NativeImage {
  * would-escape-the-root row) is a silent no-op — no drag starts, no error surfaces (spec §8:
  * "Drag of missing file -> Drag refused, row flashes its badge"; the flash itself is a renderer
  * concern, not this function's).
+ *
+ * `e2eEmit` (Task 1, e2e spec §3.1): when armed, observes the exact startDrag decision instead of
+ * calling `webContents.startDrag` — an OS drag session blocks the main process until mouse-up,
+ * which no headless run can deliver.
  */
-export function registerDragHandler(resolvePath: (sampleId: number) => string | null): void {
+export function registerDragHandler(
+  resolvePath: (sampleId: number) => string | null,
+  e2eEmit: E2EEmit | null = null,
+): void {
   const icon = makeDragIcon();
   ipcMain.on('ntwine:drag-start', (event, sampleId: number) => {
-    const file = resolvePath(Number(sampleId));
+    const resolved = resolvePath(Number(sampleId));
     // resolvePath only checks the DB row (missing flag) and path containment — not the
     // filesystem itself, so a file deleted since the last statPass (importer.ts) can still
     // resolve here. decodePreviewPcm re-stats before touching the file (ipc.ts); startDrag has no
     // re-stat of its own, so this existsSync is it. A vanished file is a silent no-op, same as
     // any other resolvePath null (spec §8: "Drag of missing file -> Drag refused").
-    if (file && existsSync(file)) event.sender.startDrag({ file, icon });
+    const file = resolved && existsSync(resolved) ? resolved : null;
+    // E2E mode observes the exact startDrag decision and SKIPS the native drag: an OS drag session
+    // blocks until mouse-up, which no headless run can deliver (e2e spec §3.1).
+    if (e2eEmit) {
+      e2eEmit('ntwine:e2e:drag', { sampleId: Number(sampleId), file });
+      return;
+    }
+    if (file) event.sender.startDrag({ file, icon });
   });
 }
