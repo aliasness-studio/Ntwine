@@ -1,12 +1,19 @@
 // LibraryStore (Task 12): the single source of browsing state — packs/tags for the rail and
 // filter chips, the current (already-queried) row set, and the peaks cache the waveform
-// thumbnails read from. Every filter-shaped action (search, pack, type, bpm, key, tag) mutates
+// thumbnails read from. Every filter-shaped action (search, scope, type, bpm, key, tag) mutates
 // `filters` then re-queries; `filters` always mirrors the QueryFilters object the LAST
 // `querySamples` call was actually made with — there is no separate "pending" filter state to
 // reconcile against it.
 import { makeAutoObservable, runInAction, toJS } from 'mobx';
 import './configure';
-import type { NtwineApi, PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
+import type {
+  NtwineApi,
+  PackRow,
+  QueryFilters,
+  SampleRow,
+  Scope,
+  TagFacet,
+} from '../../shared/ipcTypes';
 
 // spec §3.1 item 3 ("instant-as-you-type"): short enough to feel live, long enough that a fast
 // typist's keystrokes collapse into one query instead of one per character.
@@ -79,8 +86,8 @@ export class LibraryStore {
     this.searchDebounceHandle = setTimeout(() => this.applyDebouncedSearch(s), SEARCH_DEBOUNCE_MS);
   }
 
-  setPack(id: number | null): void {
-    this.patchFilters({ packId: id ?? undefined });
+  setScope(scope: Scope | null): void {
+    this.patchFilters({ scope: scope ?? undefined });
   }
 
   toggleType(t: 'oneshot' | 'loop'): void {
@@ -124,7 +131,7 @@ export class LibraryStore {
   }
 
   // Review round 1, Finding 1: a naive `{ ...this.filters, ...patch }` spread leaves a patch's
-  // `undefined`-valued keys (e.g. `{ packId: undefined }` from `setPack(null)`) as stale OWN
+  // `undefined`-valued keys (e.g. `{ scope: undefined }` from `setScope(null)`) as stale OWN
   // properties instead of removing them — `querySamples` itself doesn't care (main-process
   // filters are read with `!== undefined` checks either way), but a future filter-chip/active-
   // count UI reading `Object.keys(store.filters)`/`Object.entries(...)` would show a phantom

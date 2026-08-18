@@ -70,9 +70,13 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   const where: string[] = [];
   const params: Bound[] = [];
 
-  if (f.packId !== undefined) {
+  // Only the `pack` scope produces a WHERE arm today. `favorites`/`collection` are part of the
+  // `Scope` union (ipcTypes.ts) but their arms land in a later task, gated on whether this
+  // connection ever ran `openUserDb` — falling through here rather than throwing on an unhandled
+  // kind is deliberate, since nothing sends those scopes before that task wires the path that can.
+  if (f.scope !== undefined && f.scope.kind === 'pack') {
     where.push('s.pack_id = ?');
-    params.push(f.packId);
+    params.push(f.scope.packId);
   }
   if (f.sampleType !== undefined) {
     where.push('s.sample_type = ?');

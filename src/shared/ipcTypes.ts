@@ -32,8 +32,24 @@ export interface PackRow {
   sampleCount: number;
 }
 
+// `Scope` narrows `querySamples` to a pack, the favorites set, or a named collection. There is no
+// explicit 'all' variant — absence (`QueryFilters.scope === undefined`) IS "All Samples": the
+// spec's §8 fallout note requires "no scope" to serialize to an ABSENT key, the same
+// undefined-deletes-the-key mechanism `LibraryStore.patchFilters` already uses for every other
+// filter dimension, so `setScope(null)` round-trips to `{}` exactly like every other cleared
+// filter does.
+//
+// `querySamples` (src/main/catalog/queries.ts) implements only the `pack` arm so far —
+// `favorites`/`collection` are typed here but their WHERE arms land in a later task, gated on
+// whether the connection ever ran `openUserDb` (src/main/user/userDb.ts). Until wired, both kinds
+// compose to no WHERE arm at all rather than an error.
+export type Scope =
+  | { kind: 'pack'; packId: number }
+  | { kind: 'favorites' }
+  | { kind: 'collection'; collectionId: string };
+
 export interface QueryFilters {
-  packId?: number;
+  scope?: Scope;
   sampleType?: 'oneshot' | 'loop';
   bpmMin?: number;
   bpmMax?: number;

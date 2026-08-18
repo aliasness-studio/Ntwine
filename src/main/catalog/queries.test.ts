@@ -206,6 +206,35 @@ describe('querySamples', () => {
     expect(querySamples(catalog, { search: '   ' })).toEqual(querySamples(catalog, {}));
   });
 
+  it('scope { kind: pack } filters rows down to that pack only', () => {
+    const { catalog } = setUp();
+    const fixturePackId = packIdOf(catalog, 'pack-fixture');
+
+    const result = querySamples(catalog, { scope: { kind: 'pack', packId: fixturePackId } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual([
+      'bass.wav',
+      'kick.wav',
+      'loop.wav',
+      'tom.wav',
+    ]);
+  });
+
+  it('scope { kind: pack } for a DIFFERENT pack returns only that other pack’s sample', () => {
+    const { catalog } = setUp();
+    const ghostPackId = packIdOf(catalog, 'pack-ghost');
+
+    const result = querySamples(catalog, { scope: { kind: 'pack', packId: ghostPackId } });
+
+    expect(result.map((r) => r.filename)).toEqual(['boo.wav']);
+  });
+
+  it('an explicit scope: undefined returns every sample, same as omitting scope entirely', () => {
+    const { catalog } = setUp();
+
+    expect(querySamples(catalog, { scope: undefined })).toEqual(querySamples(catalog, {}));
+  });
+
   it('BPM range filter excludes bpm-null rows (unknown-excluding semantics)', () => {
     const { catalog } = setUp();
 

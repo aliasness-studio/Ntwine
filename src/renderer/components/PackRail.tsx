@@ -96,34 +96,41 @@ function PackCover({ packId, name }: { packId: number; name: string }) {
 export const PackRail = observer(function PackRail() {
   const { library } = useStores();
   const totalSamples = library.packs.reduce((sum, p) => sum + p.sampleCount, 0);
+  // `scope === undefined` is the "All Samples" state — `Scope` (ipcTypes.ts) has no explicit
+  // 'all' variant; absence IS all.
+  const allSamplesActive = library.filters.scope === undefined;
 
   return (
     <List role="listbox" aria-label="Packs">
       <Item
         type="button"
         role="option"
-        aria-selected={library.filters.packId === undefined}
-        $active={library.filters.packId === undefined}
-        onClick={() => library.setPack(null)}
+        aria-selected={allSamplesActive}
+        $active={allSamplesActive}
+        onClick={() => library.setScope(null)}
       >
         <AllSamplesIcon aria-hidden="true" />
         <Name>All Samples</Name>
         <Count>{totalSamples}</Count>
       </Item>
-      {library.packs.map((pack) => (
-        <Item
-          key={pack.id}
-          type="button"
-          role="option"
-          aria-selected={library.filters.packId === pack.id}
-          $active={library.filters.packId === pack.id}
-          onClick={() => library.setPack(pack.id)}
-        >
-          <PackCover packId={pack.id} name={pack.name} />
-          <Name title={pack.name}>{pack.name}</Name>
-          <Count>{pack.sampleCount}</Count>
-        </Item>
-      ))}
+      {library.packs.map((pack) => {
+        const scope = library.filters.scope;
+        const isActive = scope?.kind === 'pack' && scope.packId === pack.id;
+        return (
+          <Item
+            key={pack.id}
+            type="button"
+            role="option"
+            aria-selected={isActive}
+            $active={isActive}
+            onClick={() => library.setScope({ kind: 'pack', packId: pack.id })}
+          >
+            <PackCover packId={pack.id} name={pack.name} />
+            <Name title={pack.name}>{pack.name}</Name>
+            <Count>{pack.sampleCount}</Count>
+          </Item>
+        );
+      })}
     </List>
   );
 });

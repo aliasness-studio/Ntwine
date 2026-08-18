@@ -183,26 +183,30 @@ describe('LibraryStore', () => {
   });
 
   describe('non-search filter actions — no debounce, one query per call', () => {
-    it('setPack(id) triggers exactly one query with the composed filters', () => {
+    it('setScope({kind:pack}) triggers exactly one query with the composed filters', () => {
       const api = makeFakeApi();
       const store = new LibraryStore(api);
 
-      store.setPack(5);
+      store.setScope({ kind: 'pack', packId: 5 });
 
       expect(api.querySamples).toHaveBeenCalledTimes(1);
-      expect(api.querySamples).toHaveBeenCalledWith({ packId: 5 });
-      expect(store.filters).toEqual({ packId: 5 });
+      expect(api.querySamples).toHaveBeenCalledWith({ scope: { kind: 'pack', packId: 5 } });
+      expect(store.filters).toEqual({ scope: { kind: 'pack', packId: 5 } });
     });
 
-    it('setPack(null) clears the pack filter in exactly one more query', () => {
+    it('setScope(null) clears the scope filter in exactly one more query', () => {
       const api = makeFakeApi();
       const store = new LibraryStore(api);
-      store.setPack(5);
+      store.setScope({ kind: 'pack', packId: 5 });
 
-      store.setPack(null);
+      store.setScope(null);
 
       expect(api.querySamples).toHaveBeenCalledTimes(2);
       expect(api.querySamples).toHaveBeenLastCalledWith({});
+      // Not just value-equal to undefined — the KEY itself must be gone (patchFilters deletes
+      // undefined-valued keys), the same mechanism every other filter dimension already relies on
+      // so "no scope" round-trips over IPC as an absent key, not a `scope: undefined` own property.
+      expect('scope' in store.filters).toBe(false);
     });
 
     it('toggleType sets the type filter, and toggling the SAME type again clears it back to "all"', () => {
@@ -288,22 +292,25 @@ describe('LibraryStore', () => {
       expect(api.querySamples).toHaveBeenLastCalledWith({ tags: ['snare'] });
     });
 
-    it('composes filters CUMULATIVELY across different actions (pack + type together)', () => {
+    it('composes filters CUMULATIVELY across different actions (pack scope + type together)', () => {
       const api = makeFakeApi();
       const store = new LibraryStore(api);
 
-      store.setPack(5);
+      store.setScope({ kind: 'pack', packId: 5 });
       store.toggleType('oneshot');
 
       expect(api.querySamples).toHaveBeenCalledTimes(2);
-      expect(api.querySamples).toHaveBeenLastCalledWith({ packId: 5, sampleType: 'oneshot' });
+      expect(api.querySamples).toHaveBeenLastCalledWith({
+        scope: { kind: 'pack', packId: 5 },
+        sampleType: 'oneshot',
+      });
     });
 
     it('a query resolving updates rows and resultCount', async () => {
       const api = makeFakeApi({ querySamples: async () => [sampleRow, sampleRow] });
       const store = new LibraryStore(api);
 
-      store.setPack(1);
+      store.setScope({ kind: 'pack', packId: 1 });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(store.rows).toEqual([sampleRow, sampleRow]);
@@ -349,7 +356,7 @@ describe('LibraryStore', () => {
   });
 
   // Review round 1, Finding 1: `patchFilters` used to spread-merge `undefined`-valued patch
-  // entries (e.g. `{ packId: undefined }` from `setPack(null)`) straight into `this.filters`,
+  // entries (e.g. `{ scope: undefined }` from `setScope(null)`) straight into `this.filters`,
   // leaving a stale OWN key rather than removing it. `toEqual`/`toHaveBeenCalledWith` (used
   // everywhere above) are equality-insensitive to "key present with value undefined" vs "key
   // absent" — that's why none of those 20 tests caught it. `toStrictEqual` (and reading
@@ -367,8 +374,8 @@ describe('LibraryStore', () => {
       const api = makeFakeApi();
       const store = new LibraryStore(api);
 
-      store.setPack(5);
-      store.setPack(null);
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.setScope(null);
 
       store.toggleType('loop');
       store.toggleType('loop'); // toggling the same type again clears it
@@ -396,9 +403,9 @@ describe('LibraryStore', () => {
       const api = makeFakeApi();
       const store = new LibraryStore(api);
 
-      store.setPack(5);
+      store.setScope({ kind: 'pack', packId: 5 });
       store.setKey('c#');
-      store.setPack(null); // clear only the pack
+      store.setScope(null); // clear only the scope
 
       expect(store.filters).toStrictEqual({ audioKey: 'c#' });
     });
