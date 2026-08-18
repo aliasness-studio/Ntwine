@@ -4,10 +4,18 @@
 // `observer`, no store reads) — SampleList (itself an `observer`) already resolves `row`/
 // `selected`/`peaks` from the stores before they reach here, so a plain re-render on new props is
 // enough; wrapping this in `observer` too would just be inert overhead.
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
 import styled from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
 import type { SampleRow as SampleRowData } from '../../shared/ipcTypes';
+import { armDragSource, clearDragSource } from '../dragSource';
 import { api } from '../stores/api';
 import { WaveformThumb } from './WaveformThumb';
 
@@ -95,6 +103,46 @@ const Filename = styled.span`
   font-size: 13px;
 `;
 
+// The real filename, shown dimmed-small after a nickname (design spec §5.2: "reappears
+// dimmed-small after the nickname where width allows"). No separate width-measurement logic
+// needed for the "where width allows" part — Filename's own `overflow: hidden; white-space:
+// nowrap` already clips this trailing inline span exactly when there isn't room.
+const DimmedReal = styled.span`
+  margin-left: 6px;
+  color: ${(p) => p.theme.color.textFaint};
+  font-size: 11px;
+`;
+
+// Nickname inline editor (Task 11 brief / design spec §5.3) — replaces `Filename` in place when
+// `editingNickname` is true. `flex: 2; min-width: 0;` mirrors `Filename`'s own sizing so swapping
+// between display/edit never shifts the row's other columns. Colors match `LibraryRail`'s own
+// `TextInput` (its rename/create editors) for one consistent "editing" look app-wide.
+//
+// Drag-hazard guards: this input sits INSIDE `Row`, which is `draggable` and arms its native HTML5
+// drag on mousedown+move — a path separate from `click`/`keydown` (the same hazard `HeartButton`
+// above documents and guards against). `-webkit-user-drag: none` here plus `draggable={false}` and
+// `onMouseDown` stopPropagation in the JSX usage below are that same three-layer pattern. A FOURTH
+// guard beyond `HeartButton`'s three: `onClick` stopPropagation, so a click landing inside the
+// input to place the caret doesn't bubble to `Row`'s own `onClick` and re-trigger `onSelect`
+// (HeartButton never needed this — its own `onClick` already calls `stopPropagation` as part of
+// toggling favorite; a text input has no such handler of its own to piggyback on). `onKeyDown`
+// also stops propagation unconditionally, not just for Enter/Escape: the list container (out of
+// this file's scope) binds ArrowLeft to `player.replay()` and ArrowUp/ArrowDown to selection
+// movement, so moving the text cursor while editing would otherwise retrigger preview playback or
+// walk the selection out from under the edit — the same "editing never re-triggers row
+// selection/preview" contract the click guard exists for, extended to keyboard bubbling.
+const NicknameInput = styled.input`
+  flex: 2;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: ${(p) => p.theme.radius.sm};
+  border: 1px solid ${(p) => p.theme.color.accent};
+  background: ${(p) => p.theme.color.bgPanel};
+  color: ${(p) => p.theme.color.text};
+  font-size: 13px;
+  -webkit-user-drag: none;
+`;
+
 const PackName = styled.span`
   flex: 1;
   min-width: 0;
@@ -145,6 +193,16 @@ const Chip = styled.span`
   white-space: nowrap;
 `;
 
+// User tags (design spec §5.2: "accent-outlined, after Splice's within the same +N overflow
+// budget") — extends Chip's shape/padding/font-size, only the fill/border differ. Same
+// outline-on-accent idiom FilterPanel's active `TagChip` already uses for "this chip is
+// accent-relevant" (transparent fill, 1px accent border, accentStrong text).
+const UserChip = styled(Chip)`
+  background: transparent;
+  border: 1px solid ${(p) => p.theme.color.accent};
+  color: ${(p) => p.theme.color.accentStrong};
+`;
+
 const MissingBadge = styled.span<{ $flash: boolean }>`
   flex-shrink: 0;
   padding: 1px 6px;
@@ -159,6 +217,59 @@ const MissingBadge = styled.span<{ $flash: boolean }>`
     color 150ms ease;
 `;
 
+// Design spec §5.2: "a small heart button at the row's right edge... rendered on every
+// NON-missing row, filled when favorited, hollow-on-hover otherwise." Occupies the same
+// right-edge slot MissingBadge does — the two are mutually exclusive (`!row.missing` /
+// `row.missing`), which is the visual expression of "missing rows are read-only for the user
+// layer."
+//
+// Drag-hazard fix (review round 1): `Row` is `draggable` with its own `onDragStart` (native HTML5
+// drag, armed on mousedown+move — a SEPARATE event path from `click`). A click on this 20×20
+// button with slight cursor drift can resolve as a drag start on `Row` instead of a click on the
+// button, kicking off a real OS file-drag from what looked like a favorite click; Chromium then
+// typically suppresses the following `click`, so the favorite silently doesn't toggle either.
+// `-webkit-user-drag: none` (Electron = Chromium, so this is safe) stops the button itself from
+// ever seeding a drag; `draggable={false}` and the `onMouseDown` stopPropagation below (JSX)
+// are the other two layers — belt/suspenders since no unit test can drive a native drag gesture.
+const HeartButton = styled.button<{ $favorite: boolean }>`
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: ${(p) => p.theme.radius.sm};
+  background: transparent;
+  color: ${(p) => (p.$favorite ? p.theme.color.accent : p.theme.color.textFaint)};
+  cursor: pointer;
+  -webkit-user-drag: none;
+
+  &:hover {
+    color: ${(p) => p.theme.color.accentStrong};
+  }
+`;
+
+// A local copy of LibraryRail's own HeartIcon, not an import — this task's file scope is
+// SampleRow.tsx/SampleList.tsx only, and LibraryRail's isn't exported. The two also differ in
+// substance, not just packaging: the rail's glyph is always filled/accent (it marks a fixed
+// "Favorites" row), this one toggles filled vs. hollow off `row.favorite` per row. Same
+// inline-SVG reasoning as both (and App.tsx's GearIcon/ChevronIcon): a system-font heart dingbat
+// renders inconsistently across platforms.
+function HeartIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 export interface SampleRowProps {
   row: SampleRowData;
   selected: boolean;
@@ -169,11 +280,49 @@ export interface SampleRowProps {
   peaks: ArrayBuffer | null;
   top: number;
   onSelect: () => void;
+  /** Design spec §5.2: "click toggles without changing selection or playback." This component
+   * only renders the button and forwards the click — same "no store reads" posture as `onSelect`
+   * above. SampleList supplies `() => userLayer.toggleFavorite(row)`. */
+  onToggleFavorite: () => void;
+  /** Task 11 (design spec §5.3): true when this row is mid-nickname-edit
+   * (`userLayer.nicknameEditId === row.id`) — pre-resolved by the caller into a boolean, the same
+   * shape `selected` above already takes, rather than handing this component the raw id to
+   * compare itself. */
+  editingNickname: boolean;
+  /** Enter in the nickname input calls this with the trimmed value, or `null` for an empty
+   * (post-trim) input — design spec §5.3: "empty clears the nickname." SampleList wires this to
+   * `userLayer.setNickname(row.id, nickname)` followed by `userLayer.stopNicknameEdit()`. */
+  onCommitNickname: (nickname: string | null) => void;
+  /** Esc in the nickname input calls this. SampleList wires this to
+   * `userLayer.stopNicknameEdit()`. */
+  onCancelNicknameEdit: () => void;
 }
 
-export function SampleRow({ row, selected, peaks, top, onSelect }: SampleRowProps) {
+export function SampleRow({
+  row,
+  selected,
+  peaks,
+  top,
+  onSelect,
+  onToggleFavorite,
+  editingNickname,
+  onCommitNickname,
+  onCancelNicknameEdit,
+}: SampleRowProps) {
   const drawablePeaks = row.missing || row.peaksFailed ? null : peaks;
-  const extraTagCount = row.tags.length - MAX_INLINE_TAGS;
+
+  // Splice chips first, then user chips, SLICED TOGETHER against one MAX_INLINE_TAGS budget
+  // (design spec §5.2: "after Splice's within the same +N overflow budget") — two independent
+  // slices would let a row with 3 Splice tags AND 3 user tags show 6 chips before ever
+  // overflowing, silently doubling the row's real budget.
+  const spliceChips = row.tags.map((t) => <Chip key={`splice-${t}`}>{t}</Chip>);
+  const userChips = row.userTags.map((t) => (
+    <UserChip key={`user-${t}`} data-testid="user-tag-chip">
+      {t}
+    </UserChip>
+  ));
+  const allChips = [...spliceChips, ...userChips];
+  const extraChipCount = allChips.length - MAX_INLINE_TAGS;
 
   // Local, non-MobX UI state — a transient flash has no business in the stores (per-row,
   // never read by anything else) and doesn't conflict with this component's existing
@@ -195,6 +344,14 @@ export function SampleRow({ row, selected, peaks, top, onSelect }: SampleRowProp
   // pattern — `preventDefault` stops the browser's own drag-and-drop so the NATIVE
   // `webContents.startDrag` can take over instead), then either start the real drag or, for a
   // missing row, refuse and flash the badge instead.
+  //
+  // Task 13 / spec §7: a real drag also arms the renderer-owned drag-source slot BEFORE invoking
+  // `startDrag` — the only way LibraryRail's drop targets can tell this native row drag from an
+  // external Finder/Explorer file drag once `preventDefault` has cancelled our own HTML5 drag
+  // session. `startDrag`'s invoke resolves when the OS drag session ends (immediately under e2e —
+  // drag.ts's own doc comment); the `finally` clears the slot with the SAME token it armed, so a
+  // rejected invoke or a thrown handler can never leave a stale id behind, and a drop that already
+  // consumed the slot (or a fast second drag) is never clobbered by this arriving late.
   const handleDragStart = (e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
     if (row.missing) {
@@ -203,7 +360,38 @@ export function SampleRow({ row, selected, peaks, top, onSelect }: SampleRowProp
       flashTimeoutRef.current = setTimeout(() => setBadgeFlash(false), BADGE_FLASH_MS);
       return;
     }
-    api.startDrag(row.id);
+    const token = armDragSource(row.id);
+    void (async () => {
+      try {
+        await api.startDrag(row.id);
+      } finally {
+        clearDragSource(token);
+      }
+    })();
+  };
+
+  // Row's own onClick (below) would otherwise select the row on bubble — favoriting must not
+  // move the selection or touch playback (design spec §5.2).
+  const handleFavoriteClick = (e: MouseEvent<HTMLButtonElement>): void => {
+    e.stopPropagation();
+    onToggleFavorite();
+  };
+
+  // Nickname editor commit/cancel (Task 11, design spec §5.3). Uncontrolled input
+  // (`defaultValue`, read via `e.currentTarget.value` on Enter) rather than React-controlled
+  // state: the input only exists in the tree while `editingNickname` is true (conditional
+  // rendering below swaps it in for `Filename`), so it always mounts fresh with the row's CURRENT
+  // nickname as its starting value — no separate effect needed to reset a controlled draft when
+  // editing starts. `e.stopPropagation()` unconditionally, see `NicknameInput`'s own doc comment
+  // above for why this covers more than just Enter/Escape.
+  const handleNicknameKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      const trimmed = e.currentTarget.value.trim();
+      onCommitNickname(trimmed === '' ? null : trimmed);
+    } else if (e.key === 'Escape') {
+      onCancelNicknameEdit();
+    }
   };
 
   return (
@@ -221,17 +409,43 @@ export function SampleRow({ row, selected, peaks, top, onSelect }: SampleRowProp
         <WaveformThumb peaks={drawablePeaks} width={THUMB_WIDTH} height={THUMB_HEIGHT} />
         {!row.missing && row.peaksFailed && <CorruptBadge title="couldn't decode">!</CorruptBadge>}
       </ThumbWrap>
-      <Filename title={row.filename}>{middleTruncate(row.filename)}</Filename>
+      {editingNickname ? (
+        <NicknameInput
+          aria-label="Nickname"
+          autoFocus
+          defaultValue={row.nickname ?? ''}
+          draggable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={handleNicknameKeyDown}
+        />
+      ) : (
+        <Filename title={row.filename}>
+          {middleTruncate(row.nickname ?? row.filename)}
+          {row.nickname !== null && <DimmedReal>{middleTruncate(row.filename, 24)}</DimmedReal>}
+        </Filename>
+      )}
       <PackName title={row.packName ?? undefined}>{row.packName ?? '—'}</PackName>
       <KeyCell>{formatKey(row.audioKey, row.chordType)}</KeyCell>
       <BpmCell>{row.bpm ?? '—'}</BpmCell>
       <DurationCell>{formatDuration(row.durationMs)}</DurationCell>
       <Tags>
-        {row.tags.slice(0, MAX_INLINE_TAGS).map((t) => (
-          <Chip key={t}>{t}</Chip>
-        ))}
-        {extraTagCount > 0 && <Chip>+{extraTagCount}</Chip>}
+        {allChips.slice(0, MAX_INLINE_TAGS)}
+        {extraChipCount > 0 && <Chip>+{extraChipCount}</Chip>}
       </Tags>
+      {!row.missing && (
+        <HeartButton
+          type="button"
+          draggable={false}
+          $favorite={row.favorite}
+          aria-pressed={row.favorite}
+          aria-label="Favorite"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={handleFavoriteClick}
+        >
+          <HeartIcon filled={row.favorite} />
+        </HeartButton>
+      )}
       {row.missing && (
         <MissingBadge data-testid="missing-badge" $flash={badgeFlash}>
           missing

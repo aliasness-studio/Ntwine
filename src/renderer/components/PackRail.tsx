@@ -1,15 +1,31 @@
-// Left-rail pack list (Task 13 brief, Step 1 / spec §7): "All Samples" + `library.packs`
-// (already filtered to packs with >=1 present sample, and sorted A-Z, by `listPacks` — Task 7).
+// Left-rail pack list (Task 13 brief, Step 1 / spec §7): `library.packs` (already filtered to
+// packs with >=1 present sample, and sorted A-Z, by `listPacks` — Task 7). The All Samples row
+// that used to lead this list moved into LibraryRail's own listbox (Task 8, design spec §5.1) —
+// this component now renders packs only, under its own small header so the two rails still read
+// as distinct sections inside the shared PacksScroll.
 import { observer } from 'mobx-react-lite';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import styled from 'styled-components';
 import { api } from '../stores/api';
 import { useStores } from './StoreContext';
 
+// A Fragment, not a wrapping styled.div, holds `SectionLabel` + `List` below (Task 8) —
+// sidebar.spec.ts's `packsScrollState` reads the "Packs" listbox's `parentElement` and expects
+// PacksScroll itself (App.tsx's scroll container), not an intermediate section wrapper. LibraryRail
+// has no such pre-existing DOM-parentage contract to preserve, so it wraps freely; this one can't.
+const SectionLabel = styled.div`
+  padding: 8px 10px 4px;
+  border-top: 1px solid ${(p) => p.theme.color.border};
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: ${(p) => p.theme.color.textFaint};
+`;
+
 const List = styled.div`
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  padding: 0 8px 8px;
   gap: 2px;
 `;
 
@@ -56,12 +72,6 @@ const CoverFallback = styled.div`
   flex-shrink: 0;
 `;
 
-const AllSamplesIcon = styled.div`
-  width: ${CoverSize};
-  height: ${CoverSize};
-  flex-shrink: 0;
-`;
-
 const Name = styled.span`
   flex: 1;
   min-width: 0;
@@ -95,35 +105,30 @@ function PackCover({ packId, name }: { packId: number; name: string }) {
 
 export const PackRail = observer(function PackRail() {
   const { library } = useStores();
-  const totalSamples = library.packs.reduce((sum, p) => sum + p.sampleCount, 0);
 
   return (
-    <List role="listbox" aria-label="Packs">
-      <Item
-        type="button"
-        role="option"
-        aria-selected={library.filters.packId === undefined}
-        $active={library.filters.packId === undefined}
-        onClick={() => library.setPack(null)}
-      >
-        <AllSamplesIcon aria-hidden="true" />
-        <Name>All Samples</Name>
-        <Count>{totalSamples}</Count>
-      </Item>
-      {library.packs.map((pack) => (
-        <Item
-          key={pack.id}
-          type="button"
-          role="option"
-          aria-selected={library.filters.packId === pack.id}
-          $active={library.filters.packId === pack.id}
-          onClick={() => library.setPack(pack.id)}
-        >
-          <PackCover packId={pack.id} name={pack.name} />
-          <Name title={pack.name}>{pack.name}</Name>
-          <Count>{pack.sampleCount}</Count>
-        </Item>
-      ))}
-    </List>
+    <Fragment>
+      <SectionLabel>Packs</SectionLabel>
+      <List role="listbox" aria-label="Packs">
+        {library.packs.map((pack) => {
+          const scope = library.filters.scope;
+          const isActive = scope?.kind === 'pack' && scope.packId === pack.id;
+          return (
+            <Item
+              key={pack.id}
+              type="button"
+              role="option"
+              aria-selected={isActive}
+              $active={isActive}
+              onClick={() => library.setScope({ kind: 'pack', packId: pack.id })}
+            >
+              <PackCover packId={pack.id} name={pack.name} />
+              <Name title={pack.name}>{pack.name}</Name>
+              <Count>{pack.sampleCount}</Count>
+            </Item>
+          );
+        })}
+      </List>
+    </Fragment>
   );
 });

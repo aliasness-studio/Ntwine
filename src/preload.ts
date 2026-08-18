@@ -4,17 +4,19 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { ImportProgress, NtwineApi, QueryFilters } from './shared/ipcTypes';
 
-// THE typed IPC bridge (Task 11 — grown from the Task 2 spike's bare `startDrag`). Every method
-// but three is a plain `ipcMain.handle`/`ipcRenderer.invoke` round-trip on the `ntwine:<method>`
-// channel ipc.ts registers. The three exceptions:
-//  - `startDrag` stays on the pre-existing `ntwine:drag-start` `ipcRenderer.send` (fire-and-forget,
-//    not invoke) — drag.ts's `ipcMain.on` channel, unchanged since Task 2.
+// THE typed IPC bridge (Task 11 — grown from the Task 2 spike's bare `startDrag`; Task 6 grows it
+// again, 12 -> 23 methods, design spec §4). Every method but two is a plain
+// `ipcMain.handle`/`ipcRenderer.invoke` round-trip on the `ntwine:<method>` channel ipc.ts (or,
+// for `startDrag`, drag.ts) registers. The two exceptions:
 //  - `onImportProgress` wraps `ipcRenderer.on` for the 'ntwine:import-progress' broadcast
 //    (ipc.ts's `sendProgress` -> `webContents.send`) rather than invoke/handle, since main
 //    pushes multiple events over the lifetime of one import, not a single request/response.
 //  - `sampleUrl`/`coverUrl` are pure template-string helpers with no IPC round-trip at all — the
 //    renderer already knows the URL shape (`sample://s/<id>`, `cover://p/<id>`); asking main
 //    would just be a wasted hop for a string it can build here.
+// `startDrag` used to be a third exception (a fire-and-forget `ipcRenderer.send`) until Task 6
+// promoted it to `invoke` on the SAME `ntwine:drag-start` channel — drag.ts's own doc comment has
+// the full rationale (the invoke's resolution is now the drag-end signal).
 const api: NtwineApi = {
   getState: () => ipcRenderer.invoke('ntwine:getState'),
 
@@ -38,11 +40,37 @@ const api: NtwineApi = {
 
   decodePreviewPcm: (sampleId: number) => ipcRenderer.invoke('ntwine:decodePreviewPcm', sampleId),
 
-  startDrag: (sampleId: number) => ipcRenderer.send('ntwine:drag-start', sampleId),
+  startDrag: (sampleId: number) => ipcRenderer.invoke('ntwine:drag-start', sampleId),
 
   sampleUrl: (sampleId: number) => `sample://s/${sampleId}`,
 
   coverUrl: (packId: number) => `cover://p/${packId}`,
+
+  // User layer (Task 6, design spec §4) — 11 new invokes, bridge 12 -> 23.
+  setFavorite: (sampleId: number, on: boolean) => ipcRenderer.invoke('ntwine:setFavorite', sampleId, on),
+
+  setNickname: (sampleId: number, nickname: string | null) =>
+    ipcRenderer.invoke('ntwine:setNickname', sampleId, nickname),
+
+  listUserTags: () => ipcRenderer.invoke('ntwine:listUserTags'),
+
+  addUserTag: (sampleId: number, name: string) => ipcRenderer.invoke('ntwine:addUserTag', sampleId, name),
+
+  removeUserTag: (sampleId: number, name: string) => ipcRenderer.invoke('ntwine:removeUserTag', sampleId, name),
+
+  listLibraryRail: () => ipcRenderer.invoke('ntwine:listLibraryRail'),
+
+  createCollection: (name: string) => ipcRenderer.invoke('ntwine:createCollection', name),
+
+  renameCollection: (id: string, name: string) => ipcRenderer.invoke('ntwine:renameCollection', id, name),
+
+  deleteCollection: (id: string) => ipcRenderer.invoke('ntwine:deleteCollection', id),
+
+  addToCollection: (collectionId: string, sampleId: number) =>
+    ipcRenderer.invoke('ntwine:addToCollection', collectionId, sampleId),
+
+  removeFromCollection: (collectionId: string, sampleId: number) =>
+    ipcRenderer.invoke('ntwine:removeFromCollection', collectionId, sampleId),
 };
 
 // E2E flag (e2e spec §3.1): main appends `--ntwine-e2e` to webPreferences.additionalArguments

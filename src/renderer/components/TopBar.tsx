@@ -1,6 +1,7 @@
 // Search box + result count + volume (Task 13 brief, Step 1 / spec §7). `library.setSearch`
 // already owns the 50ms debounce (Task 12) — this component just forwards every keystroke.
 import { observer } from 'mobx-react-lite';
+import { forwardRef, useImperativeHandle, useRef, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
 import { useStores } from './StoreContext';
 
@@ -53,31 +54,64 @@ const VolumeSlider = styled.input`
   accent-color: ${(p) => p.theme.color.accent};
 `;
 
-export const TopBar = observer(function TopBar() {
-  const { library, player } = useStores();
+export interface TopBarHandle {
+  /** App.tsx's window-level Cmd/Ctrl+F listener (design spec §5.4) calls this. */
+  focusSearch: () => void;
+}
 
-  return (
-    <Bar>
-      <SearchInput
-        type="text"
-        placeholder="Search filename, tags, pack…"
-        aria-label="Search samples"
-        value={library.searchText}
-        onChange={(e) => library.setSearch(e.target.value)}
-      />
-      <ResultCount data-testid="result-count">{library.resultCount} samples</ResultCount>
-      <VolumeRow>
-        <VolumeIcon aria-hidden="true">Vol</VolumeIcon>
-        <VolumeSlider
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          aria-label="Volume"
-          value={player.volume}
-          onChange={(e) => player.setVolume(Number(e.target.value))}
+export interface TopBarProps {
+  /** Esc in the search box when it's already empty (design spec §5.4: "else return focus to the
+   * list"). TopBar has no reach to the list container's DOM node on its own — App.tsx wires this
+   * to SampleList's own forwarded `focusList`. */
+  onEscEmpty: () => void;
+}
+
+export const TopBar = observer(
+  forwardRef<TopBarHandle, TopBarProps>(function TopBar({ onEscEmpty }, ref) {
+    const { library, player } = useStores();
+    const searchRef = useRef<HTMLInputElement>(null);
+
+    useImperativeHandle(ref, () => ({ focusSearch: () => searchRef.current?.focus() }), []);
+
+    // Esc (design spec §5.4): lives on the search input itself ("focus is by definition there") —
+    // a non-empty search clears first, same "Esc unwinds one layer" contract every other surface
+    // (RowContextMenu/TagsPopover/CollectionPopover) already follows; an already-empty box blurs
+    // and hands focus back to the list so arrow keys/F/T/C/N work immediately, no click required.
+    const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
+      if (e.key !== 'Escape') return;
+      if (library.searchText !== '') {
+        library.setSearch('');
+        return;
+      }
+      searchRef.current?.blur();
+      onEscEmpty();
+    };
+
+    return (
+      <Bar>
+        <SearchInput
+          ref={searchRef}
+          type="text"
+          placeholder="Search filename, tags, pack…"
+          aria-label="Search samples"
+          value={library.searchText}
+          onChange={(e) => library.setSearch(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
         />
-      </VolumeRow>
-    </Bar>
-  );
-});
+        <ResultCount data-testid="result-count">{library.resultCount} samples</ResultCount>
+        <VolumeRow>
+          <VolumeIcon aria-hidden="true">Vol</VolumeIcon>
+          <VolumeSlider
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            aria-label="Volume"
+            value={player.volume}
+            onChange={(e) => player.setVolume(Number(e.target.value))}
+          />
+        </VolumeRow>
+      </Bar>
+    );
+  }),
+);

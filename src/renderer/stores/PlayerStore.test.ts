@@ -159,6 +159,38 @@ describe('PlayerStore', () => {
     });
   });
 
+  describe('clearSelection', () => {
+    it('clears the selection', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.select(7, { autoplay: false });
+
+      store.clearSelection();
+
+      expect(store.selectedId).toBeNull();
+    });
+
+    it('never calls play — the write emptied the scope, there is nothing left to sound', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.select(7, { autoplay: false });
+
+      store.clearSelection();
+
+      expect(port.play).not.toHaveBeenCalled();
+    });
+
+    it('is a safe no-op when nothing is selected', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+
+      store.clearSelection();
+
+      expect(store.selectedId).toBeNull();
+      expect(port.play).not.toHaveBeenCalled();
+    });
+  });
+
   describe('replay', () => {
     it('re-plays the current selection', () => {
       const port = makeFakePlayPort();
@@ -218,10 +250,11 @@ describe('PlayerStore', () => {
     store.moveSelection(1, [1, 2, 3]);
     store.replay();
     store.setVolume(0.5);
+    store.clearSelection();
 
     stop();
     expect(warnSpy).not.toHaveBeenCalled();
-    expect(seen).toEqual([null, 1, 2]);
+    expect(seen).toEqual([null, 1, 2, null]);
     warnSpy.mockRestore();
   });
 });

@@ -11,11 +11,12 @@ import { api } from '../stores/api';
 import type { NtwineApi } from '../../shared/ipcTypes';
 import { FilterPanel } from './FilterPanel';
 import { FirstRun } from './FirstRun';
+import { LibraryRail } from './LibraryRail';
 import { PackRail } from './PackRail';
-import { SampleList } from './SampleList';
+import { SampleList, type SampleListHandle } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
 import { useStores } from './StoreContext';
-import { TopBar } from './TopBar';
+import { TopBar, type TopBarHandle } from './TopBar';
 
 type GetStateResult = Awaited<ReturnType<NtwineApi['getState']>>;
 type LoadState =
@@ -188,6 +189,11 @@ export function App() {
     () => window.localStorage.getItem(FILTERS_COLLAPSED_KEY) === '1',
   );
   const initedRef = useRef(false);
+  // Cross-component focus orchestration (design spec §5.4): App renders both TopBar and
+  // SampleList, so it's the one place that can reach BOTH forwarded handles — neither sibling has
+  // any other way to reach the other's DOM node.
+  const topBarRef = useRef<TopBarHandle>(null);
+  const sampleListRef = useRef<SampleListHandle>(null);
 
   const toggleFiltersCollapsed = (): void => {
     setFiltersCollapsed((prev) => {
@@ -219,6 +225,26 @@ export function App() {
     }
   }, [load.kind, library]);
 
+  // Cmd/Ctrl+F (Task 12, design spec §5.4 / Task 11 review carry): window-level, CAPTURE phase —
+  // Task 11's popover/nickname-editor inputs blanket-`stopPropagation` every keydown on BUBBLE, so
+  // a bubble-phase (or React-synthetic, which is bubble-delegated) listener would never see this
+  // combo fired from inside one, but spec §5.4 requires Cmd/Ctrl+F to focus search from anywhere,
+  // popovers included. Capture always completes top-down before bubble starts, so a `window`
+  // capture listener sees every keydown regardless of what a descendant does with it afterward.
+  // `topBarRef.current` is null until the library view below actually mounts (the loading/
+  // first-run screens render neither TopBar nor SampleList) — the optional call is then just a
+  // harmless no-op, not a case this needs to guard separately.
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== 'f' && e.key !== 'F') return;
+      e.preventDefault();
+      topBarRef.current?.focusSearch();
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, []);
+
   if (load.kind === 'loading') {
     return <Centered>Loading…</Centered>;
   }
@@ -235,6 +261,7 @@ export function App() {
     <Grid>
       <Rail>
         <PacksScroll>
+          <LibraryRail />
           <PackRail />
         </PacksScroll>
         <FilterDock>
@@ -263,8 +290,8 @@ export function App() {
           </GearButton>
         </RailFooter>
       </Rail>
-      <TopBar />
-      <SampleList />
+      <TopBar ref={topBarRef} onEscEmpty={() => sampleListRef.current?.focusList()} />
+      <SampleList ref={sampleListRef} />
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
     </Grid>
   );

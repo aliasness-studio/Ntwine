@@ -10,6 +10,7 @@ import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, registerIpc } from './main/ipc';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
+import { openUserDb } from './main/user/userDb';
 import type { ImportProgress } from './shared/ipcTypes';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -137,6 +138,11 @@ app.whenReady().then(() => {
   const dataDir = dataDirFrom(app.getPath('userData'));
   mkdirSync(dataDir, { recursive: true });
   const catalog = openCatalog(path.join(dataDir, 'catalog.db'));
+  // Sidecar user.db (design spec §2.2), ATTACHed onto the SAME connection as catalog.db —
+  // precious curation must not share blast radius with importer/FTS-rebuild bugs, and this is
+  // the one call site every render of the user layer (Task 6's IPC handlers) depends on running
+  // before registerIpc below.
+  const userDb = openUserDb(catalog, path.join(dataDir, 'user.db'));
   const snapshotDir = path.join(dataDir, 'splice-snapshot');
   const coversDir = path.join(dataDir, 'covers');
   // A getter, not a resolved string: the library root can change at runtime
@@ -155,6 +161,7 @@ app.whenReady().then(() => {
 
   registerIpc({
     catalog,
+    userDb,
     snapshotDir,
     coversDir,
     defaultLibraryRoot: e2e?.libraryRoot ?? undefined,

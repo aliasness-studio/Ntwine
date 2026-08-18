@@ -1,18 +1,37 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openCatalog } from './catalog/db';
+import { ipcMain } from 'electron';
+import { openCatalog, type Catalog } from './catalog/db';
+import { openUserDb } from './user/userDb';
 import {
   currentLibraryRoot,
   decodePreviewPcm,
   PREVIEW_MAX_BYTES,
   PREVIEW_MAX_SECONDS,
+  registerIpc,
   runWaveformsInBackground,
   type DecodePreviewPcmDeps,
   type RunWaveformsInBackgroundDeps,
 } from './ipc';
 import type { WorkerLike } from './waveforms/queue';
+
+// registerIpc (and drag.ts, transitively through main.ts in production) reaches for `electron`'s
+// main-process singletons at call time. Under this test file's runner (`ELECTRON_RUN_AS_NODE=1`),
+// `require('electron')` resolves to the path of the Electron binary — a plain string — rather than
+// the real API object, so a bare `ipcMain.handle(...)` call throws (`.handle` on a string is
+// undefined). Mocking the module gives `registerIpc` something real to call. The existing
+// `decodePreviewPcm`/`runWaveformsInBackground`/`currentLibraryRoot` tests below never reference
+// `electron` themselves (they operate entirely on injected deps), so this mock is transparent to
+// them — one file, two harness styles.
+vi.mock('electron', () => ({
+  ipcMain: { handle: vi.fn(), on: vi.fn() },
+  app: { getPath: vi.fn(() => '/tmp') },
+  dialog: { showOpenDialog: vi.fn() },
+  net: { fetch: vi.fn() },
+  utilityProcess: { fork: vi.fn() },
+}));
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-ipc-'));
 
@@ -249,5 +268,113 @@ describe('currentLibraryRoot', () => {
     catalog.setMeta('library_root', '/persisted');
     expect(currentLibraryRoot(catalog)).toBe('/persisted');
     expect(currentLibraryRoot(catalog, '/x')).toBe('/persisted');
+  });
+});
+
+// Task 6: the 11 user-layer handlers registerIpc wires onto `deps.userDb`. `IpcHandler` mirrors
+// what every `ipcMain.handle` listener in this codebase actually is — `async (event, ...args) =>
+// ...` — so the harness below can `await`/`.resolves`/`.rejects` a captured handler exactly like
+// Electron itself would invoke it.
+type IpcHandler = (event: unknown, ...args: any[]) => Promise<unknown>;
+
+function insertSample(catalog: Catalog, fileHash: string): number {
+  const r = catalog.db
+    .prepare(
+      `INSERT INTO samples (file_hash, rel_path, filename, sample_type, missing) VALUES (?, ?, ?, 'oneshot', 0)`,
+    )
+    .run(fileHash, `p/${fileHash}.wav`, `${fileHash}.wav`);
+  return Number(r.lastInsertRowid);
+}
+
+// Collects every `ipcMain.handle(channel, listener)` call registerIpc just made into a
+// `Map<channel, handler>` — a `Map` (not the raw call array) is what lets a test address one
+// channel by name without caring about registration order.
+function registeredHandlers(): Map<string, IpcHandler> {
+  const calls = (ipcMain.handle as unknown as Mock).mock.calls as [string, IpcHandler][];
+  return new Map(calls);
+}
+
+function handlerFor(handlers: Map<string, IpcHandler>, channel: string): IpcHandler {
+  const handler = handlers.get(channel);
+  if (!handler) throw new Error(`test setup: no handler registered for ${channel}`);
+  return handler;
+}
+
+// Fresh catalog + userDb + a real registerIpc call per invocation — `mockClear()` first so a
+// test's `registeredHandlers()` reflects only THIS call's registrations, not every prior test's
+// in this same describe block (the mocked `ipcMain` singleton is shared module-wide).
+function setUpUserIpc(): { catalog: Catalog; handlers: Map<string, IpcHandler> } {
+  (ipcMain.handle as unknown as Mock).mockClear();
+  const dir = tmp();
+  const catalog = openCatalog(join(dir, 'catalog.db'));
+  const userDb = openUserDb(catalog, join(dir, 'user.db'));
+  registerIpc({
+    catalog,
+    snapshotDir: join(dir, 'splice-snapshot'),
+    coversDir: join(dir, 'covers'),
+    userDb,
+    sendProgress: vi.fn(),
+  });
+  return { catalog, handlers: registeredHandlers() };
+}
+
+describe('registerIpc — user-layer handlers (Task 6, design spec §4)', () => {
+  const NEW_CHANNELS = [
+    'ntwine:setFavorite',
+    'ntwine:setNickname',
+    'ntwine:listUserTags',
+    'ntwine:addUserTag',
+    'ntwine:removeUserTag',
+    'ntwine:listLibraryRail',
+    'ntwine:createCollection',
+    'ntwine:renameCollection',
+    'ntwine:deleteCollection',
+    'ntwine:addToCollection',
+    'ntwine:removeFromCollection',
+  ];
+
+  it('registers all 11 new ntwine: channels', () => {
+    const { handlers } = setUpUserIpc();
+    for (const channel of NEW_CHANNELS) {
+      expect(handlers.has(channel)).toBe(true);
+    }
+  });
+
+  it('ntwine:setFavorite resolves sampleId -> file_hash through a real catalog row, then writes user.db state', async () => {
+    const { catalog, handlers } = setUpUserIpc();
+    const id = insertSample(catalog, 'hash-a');
+
+    await handlerFor(handlers, 'ntwine:setFavorite')({}, id, true);
+
+    const row = catalog.db
+      .prepare(`SELECT favorite FROM user.sample_state WHERE sample_file_hash = 'hash-a'`)
+      .get() as { favorite: number } | undefined;
+    expect(row).toEqual({ favorite: 1 });
+  });
+
+  it('an unknown sampleId resolves without writing — never throws for a stale renderer id', async () => {
+    const { catalog, handlers } = setUpUserIpc();
+
+    await expect(handlerFor(handlers, 'ntwine:setFavorite')({}, 999999, true)).resolves.toBeUndefined();
+
+    const count = catalog.db.prepare(`SELECT COUNT(*) AS n FROM user.sample_state`).get() as { n: number };
+    expect(count.n).toBe(0);
+  });
+
+  it('ntwine:createCollection rejects with a message carrying the UserNameError reason on a name collision', async () => {
+    const { handlers } = setUpUserIpc();
+    const createCollection = handlerFor(handlers, 'ntwine:createCollection');
+
+    await createCollection({}, 'Drums');
+
+    await expect(createCollection({}, ' drums ')).rejects.toThrow(/already exists/);
+  });
+
+  it('ntwine:listLibraryRail returns the Task-1 shape', async () => {
+    const { handlers } = setUpUserIpc();
+
+    const rail = await handlerFor(handlers, 'ntwine:listLibraryRail')({});
+
+    expect(rail).toEqual({ favorites: 0, collections: [] });
   });
 });

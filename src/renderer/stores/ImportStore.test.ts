@@ -30,9 +30,22 @@ function makeFakeApi(
     decodePreviewPcm: vi.fn(
       async () => null as { sampleRate: number; channels: Float32Array[] } | null,
     ),
-    startDrag: vi.fn(() => {}),
+    startDrag: vi.fn(async () => {}),
     sampleUrl: vi.fn((id: number) => `sample://s/${id}`),
     coverUrl: vi.fn((id: number) => `cover://p/${id}`),
+    // Task 6 (design spec §4): 11 new bridge methods, inert here — ImportStore never calls any
+    // of these (only runImport/onImportProgress, both already overridable above).
+    setFavorite: vi.fn(async () => {}),
+    setNickname: vi.fn(async () => {}),
+    listUserTags: vi.fn(async () => [] as string[]),
+    addUserTag: vi.fn(async () => {}),
+    removeUserTag: vi.fn(async () => {}),
+    listLibraryRail: vi.fn(async () => ({ favorites: 0, collections: [] as { id: string; name: string; count: number }[] })),
+    createCollection: vi.fn(async () => ({ id: 'c1' })),
+    renameCollection: vi.fn(async () => {}),
+    deleteCollection: vi.fn(async () => {}),
+    addToCollection: vi.fn(async () => {}),
+    removeFromCollection: vi.fn(async () => {}),
   };
 }
 

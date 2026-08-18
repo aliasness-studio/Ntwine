@@ -1,6 +1,7 @@
 import type { Catalog } from './db';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
-import { searchIds } from './search';
+import { searchIdsForToken } from './search';
+import { normalizeUserName } from '../../shared/userNames';
 
 // Driver-row shape for querySamples's row SELECT: camelCase output names (`AS`-aliased in the
 // SQL itself) so the only translation left for the JS side is the boolean/tags fixups SQLite has
@@ -22,6 +23,12 @@ interface SampleQueryRow {
   missing: number;
   hasPeaks: number;
   peaksFailed: number;
+  // `fileHash` is `samples.file_hash` itself — always present regardless of `hasUser`, needed to
+  // key the userTags lookup below. `favorite`/`nickname` are `0`/`NULL` on a connection without
+  // the `user` schema attached (see `querySamples`'s `hasUser` gate).
+  fileHash: string;
+  favorite: number;
+  nickname: string | null;
 }
 
 interface TagLinkRow {
@@ -29,7 +36,86 @@ interface TagLinkRow {
   name: string;
 }
 
+// Row shape for the userTags lookup query — same `sample_file_hash`/tag-name join `TagLinkRow`
+// does for catalog tags, keyed by hash instead of id since `user.*` tables key off
+// `sample_file_hash`, not the catalog's integer `samples.id`.
+interface UserTagLinkRow {
+  hash: string;
+  name: string;
+}
+
 type Bound = string | number;
+
+// Row shape for `readUserTextWithIds`'s join — one row per (sample, user-tag) pair, fanned out
+// by `user.sample_tags` exactly like `UserTagLinkRow` above, but keyed by `samples.id` (not
+// `fileHash`) since the search composition below works in the same id-space `searchIdsForToken`
+// returns. `nickname`/`tagNormalizedName` are both nullable: LEFT JOINed so a sample with no
+// nickname and/or no user tags still produces a row (nulls) rather than vanishing from the join.
+interface UserTextRow {
+  id: number;
+  nickname: string | null;
+  tagNormalizedName: string | null;
+}
+
+/**
+ * Per-`samples.id` normalized text fragments contributed by the user layer — a sample's nickname
+ * plus each of its user-tag names — for the search composition below (spec §3.4) to word-boundary
+ * match search tokens against, the same way `searchIdsForToken` matches them against FTS text.
+ * Only called when `hasUser` (querySamples's own gate): the `user` schema alias must be ATTACHed
+ * for `user.sample_state`/`user.sample_tags`/`user.tags` to exist at all.
+ *
+ * One SQL join from `samples` through `file_hash` to `user.sample_state` (nickname) and
+ * `user.sample_tags`/`user.tags` (tag names), LEFT JOINed throughout so a sample with neither
+ * still round-trips as a joined row (nulls) instead of disappearing — grouped into one entry per
+ * id in JS afterward, same "separate query, group in JS" shape `querySamples` already uses for
+ * `tags`/`userTags` below. A multiply-tagged sample fans out to one row per tag (same reason
+ * `userTagRows` does); the nickname is simply repeated across those rows, which is harmless here
+ * since every fragment is only ever read with `.some()`, never counted.
+ *
+ * Nicknames are normalized here, at READ time (`normalizeUserName`, `../../shared/userNames`),
+ * not at write time — `setNickname` (userDb.ts) stores the trimmed string exactly as typed, the
+ * same "store raw, fold at query time" split `sample_search`'s FTS columns already use. Tag
+ * fragments are already normalized on disk (`user.tags.normalized_name`, userDb.ts's own SCHEMA)
+ * and are used as-is.
+ */
+function readUserTextWithIds(db: Catalog['db']): Map<number, { text: string[] }> {
+  const rows = db
+    .prepare<[], UserTextRow>(
+      `SELECT s.id AS id, us.nickname AS nickname, t.normalized_name AS tagNormalizedName
+       FROM samples s
+       LEFT JOIN user.sample_state us ON us.sample_file_hash = s.file_hash
+       LEFT JOIN user.sample_tags st ON st.sample_file_hash = s.file_hash
+       LEFT JOIN user.tags t ON t.id = st.tag_id`,
+    )
+    .all();
+
+  const result = new Map<number, { text: string[] }>();
+  for (const row of rows) {
+    if (row.nickname === null && row.tagNormalizedName === null) continue;
+    let entry = result.get(row.id);
+    if (!entry) {
+      entry = { text: [] };
+      result.set(row.id, entry);
+    }
+    if (row.nickname !== null) entry.text.push(normalizeUserName(row.nickname));
+    if (row.tagNormalizedName !== null) entry.text.push(row.tagNormalizedName);
+  }
+  return result;
+}
+
+/**
+ * Word-boundary prefix test (spec §3.4) between one normalized search token and one normalized
+ * user-text fragment (a nickname or a user-tag name): true when the token starts the fragment, or
+ * starts a word inside it. `' ' + tokenNorm` rather than a regex `\b` is enough because both sides
+ * are already `normalizeUserName`d — internal whitespace is already collapsed to single spaces, so
+ * the only word boundaries that can exist are "start of string" and "right after one of those
+ * single spaces." This gives a nickname/tag hit the same "narrows as you type more words" prefix
+ * feel `searchIdsForToken`'s FTS5 `"tok"*` already gives filename/pack/tag hits (spec §7) — so a
+ * search box user can't tell which source answered their query from the matching behavior alone.
+ */
+function wordPrefixMatch(text: string, tokenNorm: string): boolean {
+  return text.startsWith(tokenNorm) || text.includes(` ${tokenNorm}`);
+}
 
 /**
  * Runs the samples list query used by browse + search (spec §7): composes `f`'s filters with
@@ -52,27 +138,99 @@ type Bound = string | number;
  * TRUE rows, so an unknown-bpm/-key row silently drops out of the result the moment either
  * filter is actually active (spec §3.1). No explicit `IS NOT NULL` is added, so as not to imply
  * the exclusion needs help it doesn't.
+ *
+ * User layer (Task 3, gated on `hasUser` — whether this connection ever ran `openUserDb`,
+ * src/main/user/userDb.ts): `favorite`/`nickname` are a 1:1 LEFT JOIN inlined into the row query
+ * (`user.sample_state`'s PK is `sample_file_hash`, so unlike tags it can never fan a row out).
+ * `userTags` gets its own third query for the same fan-out reason `tags` does, over exactly the
+ * hashes the row query returned, then grouped and sorted with `localeCompare` in JS — never SQL
+ * `ORDER BY`, which would sort by BINARY collation instead (Global Constraints). Without
+ * `hasUser`, every row reads its zero value (`favorite: false`, `nickname: null`,
+ * `userTags: []`) and a `favorites`/`collection` scope short-circuits to `[]` before any SQL
+ * referencing the `user` schema alias would run.
  */
 export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   const { db } = catalog;
 
+  // Whether this connection ever ran `openUserDb` (src/main/user/userDb.ts) — computed once per
+  // call, not cached on `Catalog`, since ATTACH could in principle happen after a `Catalog` is
+  // already held elsewhere and a cached answer would go stale silently. Gates the
+  // favorite/nickname/userTags columns below AND the favorites/collection scope arms: neither can
+  // run against a connection that never ATTACHed the `user` schema alias.
+  const hasUser = (db.pragma('database_list', { simple: false }) as { name: string }[]).some(
+    (d) => d.name === 'user',
+  );
+
+  // A favorites/collection scope is meaningless without the user schema attached — short-circuit
+  // to [] rather than let the SQL below reference `user.sample_state`/`user.collection_items` and
+  // throw "no such table" on a connection that only ever ran `openCatalog`. Nothing sends these
+  // scopes before a caller has actually opened the user db, so an unattached connection seeing
+  // one is "asked for a view onto data that was never opened," not "asked for an existing empty
+  // result" — but the practical contract callers get is the same either way: `[]`.
+  if (
+    f.scope !== undefined &&
+    (f.scope.kind === 'favorites' || f.scope.kind === 'collection') &&
+    !hasUser
+  ) {
+    return [];
+  }
+
   // A blank/whitespace-only search is treated as "no search filter" rather than forwarded to
-  // searchIds, which throws on exactly that input (its contract: "callers guard"). Once a real
-  // query string IS present, a zero-match result must short-circuit here — a literal `id IN ()`
-  // is a SQLite syntax error, not an empty result set — so the rest of the WHERE clause is never
-  // even built, let alone run, for a search with no hits.
+  // searchIdsForToken, which throws on exactly that input (its contract: "callers guard"). Once a
+  // real query string IS present, a zero-match result must short-circuit here — a literal
+  // `id IN ()` is a SQLite syntax error, not an empty result set — so the rest of the WHERE clause
+  // is never even built, let alone run, for a search with no hits.
+  //
+  // Per-token search union (spec §3.4): a sample matches when EVERY token prefix-matches, at a
+  // word boundary, at least one of FTS text (searchIdsForToken), its nickname, or one of its
+  // user-tag names — sources union PER token, tokens AND together. `userText` is read once per
+  // call (not once per token): it's the same per-sample fragment set every token gets compared
+  // against, and reading it inside the loop would just re-run the same join once per token for no
+  // benefit.
   let matchedIds: number[] | null = null;
   if (f.search !== undefined && f.search.trim() !== '') {
-    matchedIds = searchIds(catalog, f.search);
+    const tokens = f.search.split(/\s+/).filter((t) => t.length > 0);
+    const userText = hasUser ? readUserTextWithIds(db) : new Map<number, { text: string[] }>();
+    let acc: Set<number> | null = null;
+    for (const token of tokens) {
+      const ftsIds = new Set(searchIdsForToken(catalog, token));
+      const norm = normalizeUserName(token);
+      for (const [id, { text }] of userText) {
+        if (text.some((t) => wordPrefixMatch(t, norm))) ftsIds.add(id);
+      }
+      // `(id: number)` is an explicit type, not a stylistic choice: without it, tsc's inference
+      // for this self-referential `acc = acc === null ? … : new Set([...acc].filter(…))` shape
+      // circularly resolves the callback parameter to `never` (reproduced in isolation outside
+      // this file too) — a real tsc inference limit on this exact "reassign through a ternary
+      // whose else-branch spreads-then-filters the narrowed variable" pattern, not a sign
+      // anything here is actually `never`.
+      acc = acc === null ? ftsIds : new Set([...acc].filter((id: number) => ftsIds.has(id)));
+      if (acc.size === 0) return [];
+    }
+    matchedIds = [...(acc ?? new Set<number>())];
     if (matchedIds.length === 0) return [];
   }
 
   const where: string[] = [];
   const params: Bound[] = [];
 
-  if (f.packId !== undefined) {
-    where.push('s.pack_id = ?');
-    params.push(f.packId);
+  // All three `Scope` kinds (ipcTypes.ts) produce a WHERE arm. `favorites`/`collection` only
+  // reach this point when `hasUser` is true — the `!hasUser` case already returned `[]` above —
+  // so their SQL can reference `user.sample_state`/`user.collection_items` unconditionally.
+  if (f.scope !== undefined) {
+    if (f.scope.kind === 'pack') {
+      where.push('s.pack_id = ?');
+      params.push(f.scope.packId);
+    } else if (f.scope.kind === 'favorites') {
+      where.push(
+        's.file_hash IN (SELECT sample_file_hash FROM user.sample_state WHERE favorite = 1)',
+      );
+    } else if (f.scope.kind === 'collection') {
+      where.push(
+        's.file_hash IN (SELECT sample_file_hash FROM user.collection_items WHERE collection_id = ?)',
+      );
+      params.push(f.scope.collectionId);
+    }
   }
   if (f.sampleType !== undefined) {
     where.push('s.sample_type = ?');
@@ -91,22 +249,34 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     params.push(f.audioKey);
   }
   if (f.tags !== undefined && f.tags.length > 0) {
-    // ALL listed tags, not any: a sample only qualifies if the junction join produces one
-    // matching row per distinct wanted tag name. De-duped so a caller accidentally repeating a
-    // tag name in the filter can't inflate the required count past what a real sample could ever
-    // satisfy.
+    // ALL listed tags, not any — same contract as before the user layer, now extended per name
+    // to either source (spec §3.3): a sample qualifies for one wanted name if EITHER its Splice
+    // tags OR (when `hasUser`) its user tags contain that name, and must qualify for EVERY
+    // wanted name. One parenthesized `EXISTS ... OR EXISTS ...` is pushed per name — ANDed
+    // together by the shared `where.join(' AND ')` below — replacing the old single
+    // HAVING-count subquery, since a plain count can no longer tell "matched, from either
+    // source" apart from "matched twice, once per source" without double-counting a name a
+    // sample carries on both sides. De-duped so a caller accidentally repeating a tag name in
+    // the filter can't push the same clause twice.
     const wanted = [...new Set(f.tags)];
-    const placeholders = wanted.map(() => '?').join(', ');
-    where.push(
-      `s.id IN (
-         SELECT st.sample_id FROM sample_tags st
-         JOIN tags t ON t.id = st.tag_id
-         WHERE t.name IN (${placeholders})
-         GROUP BY st.sample_id
-         HAVING COUNT(DISTINCT t.name) = ?
-       )`,
-    );
-    params.push(...wanted, wanted.length);
+    for (const name of wanted) {
+      // User-side EXISTS compares `ut.normalized_name` against `normalizeUserName(name)` — the
+      // same merge key `mergeTagFacets` unions on below — never the raw `name`, since a user
+      // tag's only guaranteed-unique/comparable column is its normalized one (userDb.ts
+      // SCHEMA); the Splice-side EXISTS compares `t.name` directly, unchanged, since Splice tag
+      // names arrive already-lowercase from import and need no folding.
+      const userClause = hasUser
+        ? `OR EXISTS (SELECT 1 FROM user.sample_tags ust JOIN user.tags ut ON ut.id = ust.tag_id
+                WHERE ust.sample_file_hash = s.file_hash AND ut.normalized_name = ?)`
+        : '';
+      where.push(`(
+        EXISTS (SELECT 1 FROM sample_tags st JOIN tags t ON t.id = st.tag_id
+                WHERE st.sample_id = s.id AND t.name = ?)
+        ${userClause}
+      )`);
+      params.push(name);
+      if (hasUser) params.push(normalizeUserName(name));
+    }
   }
   if (matchedIds !== null) {
     where.push(`s.id IN (${matchedIds.map(() => '?').join(', ')})`);
@@ -115,17 +285,31 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
+  // `COALESCE(us.favorite, 0)` rather than the bare joined column: the LEFT JOIN below leaves
+  // `us.favorite` NULL (not 0) for a sample with no `user.sample_state` row at all, and this
+  // column is declared `number` — same "never a type the column claims it isn't" reasoning
+  // `hasPeaks`/`peaksFailed`'s CASE expressions already apply to their own LEFT JOIN. `nickname`
+  // stays nullable either way, so it needs no such guard.
+  const userColumns = hasUser
+    ? 'COALESCE(us.favorite, 0) AS favorite, us.nickname AS nickname'
+    : '0 AS favorite, NULL AS nickname';
+  const userJoin = hasUser
+    ? 'LEFT JOIN user.sample_state us ON us.sample_file_hash = s.file_hash'
+    : '';
+
   const rows = db
     .prepare<Bound[], SampleQueryRow>(
       `SELECT s.id AS id, s.filename AS filename, s.rel_path AS relPath, s.pack_id AS packId,
               p.name AS packName, s.sample_type AS sampleType, s.bpm AS bpm,
               s.audio_key AS audioKey, s.chord_type AS chordType, s.duration_ms AS durationMs,
-              s.missing AS missing,
+              s.missing AS missing, s.file_hash AS fileHash,
               CASE WHEN w.sample_id IS NOT NULL AND w.format != 0 THEN 1 ELSE 0 END AS hasPeaks,
-              CASE WHEN w.sample_id IS NOT NULL AND w.format = 0 THEN 1 ELSE 0 END AS peaksFailed
+              CASE WHEN w.sample_id IS NOT NULL AND w.format = 0 THEN 1 ELSE 0 END AS peaksFailed,
+              ${userColumns}
        FROM samples s
        LEFT JOIN packs p ON p.id = s.pack_id
        LEFT JOIN waveforms w ON w.sample_id = s.id
+       ${userJoin}
        ${whereSql}
        ORDER BY p.name, s.filename, s.id`,
     )
@@ -150,6 +334,32 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     }
   }
 
+  // userTags: same "separate query, grouped in JS" shape as tags above, and for the same reason
+  // (a sample_tags/tags join would fan a multi-tag sample out into duplicate rows) — keyed by
+  // `fileHash` since `user.sample_tags` keys off `sample_file_hash`, not the catalog's integer
+  // `samples.id`. Only run when `hasUser`: without the `user` schema attached this table doesn't
+  // exist, and every row's `userTags` is `[]` regardless (the map stays empty, `?? []` below
+  // supplies it). No `ORDER BY` here — sorted with `localeCompare` in JS after grouping, never
+  // SQL's BINARY collation (Global Constraints).
+  const userTagsByHash = new Map<string, string[]>();
+  if (hasUser && rows.length > 0) {
+    const hashes = rows.map((r) => r.fileHash);
+    const userTagRows = db
+      .prepare<string[], UserTagLinkRow>(
+        `SELECT st.sample_file_hash AS hash, t.name AS name
+         FROM user.sample_tags st
+         JOIN user.tags t ON t.id = st.tag_id
+         WHERE st.sample_file_hash IN (${hashes.map(() => '?').join(', ')})`,
+      )
+      .all(...hashes);
+    for (const tr of userTagRows) {
+      const tags = userTagsByHash.get(tr.hash);
+      if (tags) tags.push(tr.name);
+      else userTagsByHash.set(tr.hash, [tr.name]);
+    }
+    for (const tags of userTagsByHash.values()) tags.sort((a, b) => a.localeCompare(b));
+  }
+
   return rows.map((r) => ({
     id: r.id,
     filename: r.filename,
@@ -165,6 +375,9 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     tags: tagsBySample.get(r.id) ?? [],
     hasPeaks: r.hasPeaks === 1,
     peaksFailed: r.peaksFailed === 1,
+    favorite: r.favorite === 1,
+    nickname: r.nickname,
+    userTags: userTagsByHash.get(r.fileHash) ?? [],
   }));
 }
 
@@ -189,22 +402,111 @@ export function listPacks(catalog: Catalog): PackRow[] {
 }
 
 /**
- * Tag-chip facet (spec §7): every tag name in use, with a count of the non-missing samples
- * carrying it (same "present, not merely imported" reasoning as `listPacks`'s `sampleCount`),
- * highest-count first. Ties break alphabetically so the ordering is fully deterministic rather
- * than falling back to whatever order SQLite happens to visit rows in.
+ * Unions two `(name, sampleId)` tag-link row sets — one from Splice's `tags`, one from the user
+ * layer's `user.tags` — into the merged facet list `listTags` returns once the user schema is
+ * attached (spec §3.3). Merge key is `normalizeUserName(name)`, never the raw name: a user tag's
+ * only guaranteed-unique/comparable column is its `normalized_name` (userDb.ts SCHEMA), and
+ * folding Splice's own already-lowercase names through the same normalizer costs nothing — it's
+ * idempotent on them — while giving both sides one shared comparison rule instead of two.
+ *
+ * Splice rows are folded in FIRST, each planting its own name as that facet's `display` the
+ * first time its key is seen; user rows only ever ADD a sample id to an existing entry, never
+ * overwrite a `display` a Splice row already set. That one-way rule — never reassign `display`
+ * once set — is what makes "the Splice display form wins when both sources carry the name, else
+ * the user display form" fall out of iteration order, with no explicit source-priority check
+ * needed per row.
+ *
+ * `count` is `ids.size`, not two separate counts summed: `ids` is a `Set<sampleId>`, so a sample
+ * carrying the same normalized name from BOTH sources still contributes exactly one id, and
+ * therefore counts once — the "distinct matching samples from either source" contract spec §3.3
+ * and this task's brief both call for, not a sum that would double-count it.
+ *
+ * Sort is JS, not SQL, for the same reason the merge itself is JS: count DESC then name ASC via
+ * `localeCompare` (the Global Constraints' one display-sort comparator) — the same deterministic
+ * tie-break `listTags`'s pre-existing SQL `ORDER BY` already gave the splice-only path, just
+ * computed after the union instead of inside a single-source `GROUP BY`.
+ */
+function mergeTagFacets(spliceRows: TagLinkRow[], userRows: TagLinkRow[]): TagFacet[] {
+  const facets = new Map<string, { display: string; ids: Set<number> }>();
+  for (const row of spliceRows) {
+    const key = normalizeUserName(row.name);
+    let entry = facets.get(key);
+    if (!entry) {
+      entry = { display: row.name, ids: new Set() };
+      facets.set(key, entry);
+    }
+    entry.ids.add(row.sampleId);
+  }
+  for (const row of userRows) {
+    const key = normalizeUserName(row.name);
+    let entry = facets.get(key);
+    if (!entry) {
+      entry = { display: row.name, ids: new Set() };
+      facets.set(key, entry);
+    }
+    entry.ids.add(row.sampleId);
+  }
+  return [...facets.values()]
+    .map((e) => ({ name: e.display, count: e.ids.size }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/**
+ * Tag-chip facet (spec §7 baseline; either-source union spec §3.3): every tag name in use across
+ * BOTH Splice's own tags and — once the user schema is attached — the user layer's tags, with a
+ * count of the DISTINCT non-missing samples carrying it from EITHER source (same "present, not
+ * merely imported" reasoning as `listPacks`'s `sampleCount`), highest-count first, ties broken
+ * alphabetically.
+ *
+ * `!hasUser`: unchanged from before the user layer existed — same single-source SQL, same
+ * `ORDER BY count DESC, t.name ASC`. Nothing to union when there is nothing to union with, so
+ * this path stays byte-identical rather than routing a no-op merge through `mergeTagFacets`.
+ *
+ * `hasUser`: two flat, ungrouped `(name, sampleId)` queries — one per source, both already
+ * filtered to present (`missing = 0`) samples and both resolving `sampleId` to the SAME identity
+ * (the user-side query joins back through `samples.file_hash` to get there), so a sample tagged
+ * from both sources collapses to one id in `mergeTagFacets`'s `Set` — merged and sorted in JS,
+ * since only JS can key two separate SQL result sets by a normalized name neither source table
+ * stores in a directly-joinable form together.
  */
 export function listTags(catalog: Catalog): TagFacet[] {
-  return catalog.db
-    .prepare<[], TagFacet>(
-      `SELECT t.name AS name, COUNT(*) AS count
+  // Same computed-per-call reasoning as `querySamples`'s own `hasUser` gate above: never cached
+  // on `Catalog`, since ATTACH could happen after a `Catalog` is already held elsewhere.
+  const hasUser = (
+    catalog.db.pragma('database_list', { simple: false }) as { name: string }[]
+  ).some((d) => d.name === 'user');
+
+  if (!hasUser) {
+    return catalog.db
+      .prepare<[], TagFacet>(
+        `SELECT t.name AS name, COUNT(*) AS count
+         FROM sample_tags st
+         JOIN tags t ON t.id = st.tag_id
+         JOIN samples s ON s.id = st.sample_id AND s.missing = 0
+         GROUP BY t.id
+         ORDER BY count DESC, t.name ASC`,
+      )
+      .all();
+  }
+
+  const spliceRows = catalog.db
+    .prepare<[], TagLinkRow>(
+      `SELECT t.name AS name, s.id AS sampleId
        FROM sample_tags st
        JOIN tags t ON t.id = st.tag_id
-       JOIN samples s ON s.id = st.sample_id AND s.missing = 0
-       GROUP BY t.id
-       ORDER BY count DESC, t.name ASC`,
+       JOIN samples s ON s.id = st.sample_id AND s.missing = 0`,
     )
     .all();
+  const userRows = catalog.db
+    .prepare<[], TagLinkRow>(
+      `SELECT ut.name AS name, s.id AS sampleId
+       FROM user.sample_tags ust
+       JOIN user.tags ut ON ut.id = ust.tag_id
+       JOIN samples s ON s.file_hash = ust.sample_file_hash AND s.missing = 0`,
+    )
+    .all();
+
+  return mergeTagFacets(spliceRows, userRows);
 }
 
 interface PendingPeakIdRow {

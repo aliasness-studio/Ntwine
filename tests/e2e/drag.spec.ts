@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { importAndWait, rowByFilename } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
-// Mirrors drag.ts's one emit call site (the `ntwine:drag-start` `ipcMain.on` handler) — no shared
+// Mirrors drag.ts's one emit call site (the `ntwine:drag-start` `ipcMain.handle` handler) — no shared
 // exported type to import, so the shape is pinned locally, same convention as preview.spec.ts's
 // ProtocolEvent/PreviewPcmEvent.
 interface DragPayload {

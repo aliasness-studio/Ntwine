@@ -8,6 +8,12 @@
 // `format = 0` for a failed decode specifically so "failed" is distinguishable from "pending, no
 // row yet" — `hasPeaks` alone couldn't carry that distinction once such rows exist.
 
+// `favorite`/`nickname`/`userTags` (Task 3): the same "connection-gated" shape `Scope` documents
+// below — a `querySamples` call on a connection that never ran `openUserDb`
+// (src/main/user/userDb.ts) still returns these three fields, at their zero value
+// (`false`/`null`/`[]`), rather than omitting them. `userTags` is display names, A-Z
+// (`localeCompare`, never SQL collation — Global Constraints), same ordering contract as
+// `UserDb.listUserTagNames`.
 export interface SampleRow {
   id: number;
   filename: string;
@@ -23,6 +29,9 @@ export interface SampleRow {
   tags: string[];
   hasPeaks: boolean;
   peaksFailed: boolean;
+  favorite: boolean;
+  nickname: string | null;
+  userTags: string[];
 }
 
 export interface PackRow {
@@ -32,8 +41,24 @@ export interface PackRow {
   sampleCount: number;
 }
 
+// `Scope` narrows `querySamples` to a pack, the favorites set, or a named collection. There is no
+// explicit 'all' variant — absence (`QueryFilters.scope === undefined`) IS "All Samples": the
+// spec's §8 fallout note requires "no scope" to serialize to an ABSENT key, the same
+// undefined-deletes-the-key mechanism `LibraryStore.patchFilters` already uses for every other
+// filter dimension, so `setScope(null)` round-trips to `{}` exactly like every other cleared
+// filter does.
+//
+// `querySamples` (src/main/catalog/queries.ts) implements all three arms. `favorites`/
+// `collection` are gated on whether the connection ever ran `openUserDb`
+// (src/main/user/userDb.ts): on one that has not, both kinds short-circuit to `[]` rather than
+// let the underlying SQL reference a `user` schema alias that was never ATTACHed.
+export type Scope =
+  | { kind: 'pack'; packId: number }
+  | { kind: 'favorites' }
+  | { kind: 'collection'; collectionId: string };
+
 export interface QueryFilters {
-  packId?: number;
+  scope?: Scope;
   sampleType?: 'oneshot' | 'loop';
   bpmMin?: number;
   bpmMax?: number;
@@ -78,7 +103,30 @@ export interface NtwineApi {
   decodePreviewPcm(
     sampleId: number,
   ): Promise<{ sampleRate: number; channels: Float32Array[] } | null>; // §4's ONE exception — capped + off-main, see below
-  startDrag(sampleId: number): void;
+  // Task 6: promoted from `ipcRenderer.send` to `invoke` (design spec §4) — `webContents.startDrag`
+  // (drag.ts) blocks the main process until the OS drag session ends, so this invoke's resolution
+  // IS the drag-end signal the drag-into-collection slot (spec §7) needs.
+  startDrag(sampleId: number): Promise<void>;
   sampleUrl(sampleId: number): string; // `sample://s/${id}` — pure string helper
   coverUrl(packId: number): string; // `cover://p/${id}`
+
+  // User layer (Task 6, design spec §4): the bridge grows from 12 to 23 methods here — signatures
+  // transcribed verbatim from spec §4. Every write below resolves `sampleId -> file_hash` inside
+  // main (ipc.ts); the renderer never sees a hash. `createCollection`/`renameCollection` reject
+  // (design spec §2.3) on a normalized-name collision with a DIFFERENT collection — surfaced
+  // inline at the editor (spec §5.1/§5.3).
+  setFavorite(sampleId: number, on: boolean): Promise<void>;
+  setNickname(sampleId: number, nickname: string | null): Promise<void>; // null clears; trimmed; '' -> null
+  listUserTags(): Promise<string[]>; // display names A-Z, for autocomplete
+  addUserTag(sampleId: number, name: string): Promise<void>;
+  removeUserTag(sampleId: number, name: string): Promise<void>;
+  listLibraryRail(): Promise<{
+    favorites: number; // present-only count
+    collections: { id: string; name: string; count: number }[]; // A-Z, present-only counts
+  }>;
+  createCollection(name: string): Promise<{ id: string }>; // name-collision -> error (§2.3)
+  renameCollection(id: string, name: string): Promise<void>; // name-collision -> error (§2.3)
+  deleteCollection(id: string): Promise<void>; // items cascade; samples untouched
+  addToCollection(collectionId: string, sampleId: number): Promise<void>;
+  removeFromCollection(collectionId: string, sampleId: number): Promise<void>;
 }

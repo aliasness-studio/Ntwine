@@ -6,7 +6,7 @@ import { openCatalog, type Catalog } from './db';
 import { buildFixtureSpliceDb, type FixtureRow } from '../importer/fixtureSpliceDb';
 import { readSplice } from '../importer/spliceDb';
 import { buildCatalog } from '../importer/importer';
-import { rebuildSearch, searchIds } from './search';
+import { rebuildSearch, searchIdsForToken } from './search';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-search-'));
 const freshCatalog = () => openCatalog(join(tmp(), 'catalog.db'));
@@ -65,17 +65,17 @@ function sampleId(catalog: Catalog, fileHash: string): number {
   return row.id;
 }
 
-describe('searchIds', () => {
+describe('searchIdsForToken', () => {
   it('matches a filename prefix, case-insensitively', () => {
     const { catalog } = setUp();
 
-    expect(searchIds(catalog, 'KIC')).toEqual([sampleId(catalog, 'h-kick')]);
+    expect(searchIdsForToken(catalog, 'KIC')).toEqual([sampleId(catalog, 'h-kick')]);
   });
 
   it('matches a tag prefix', () => {
     const { catalog } = setUp();
 
-    expect(searchIds(catalog, 'amb')).toEqual([sampleId(catalog, 'h-pad')]);
+    expect(searchIdsForToken(catalog, 'amb')).toEqual([sampleId(catalog, 'h-pad')]);
   });
 
   it('matches a pack-name prefix, returning every sample in that pack', () => {
@@ -83,40 +83,38 @@ describe('searchIds', () => {
     const kickId = sampleId(catalog, 'h-kick');
     const padId = sampleId(catalog, 'h-pad');
 
-    const ids = searchIds(catalog, 'ana')
+    const ids = searchIdsForToken(catalog, 'ana')
       .slice()
       .sort((a, b) => a - b);
     expect(ids).toEqual([kickId, padId].sort((a, b) => a - b));
   });
 
-  it('combines multiple tokens with AND — every token must match the same row', () => {
-    const { catalog } = setUp();
-    const kickId = sampleId(catalog, 'h-kick');
+  // Multi-token AND composition (was pinned here against the old whole-query `searchIds`) is now
+  // queries.ts's job — `searchIdsForToken` only ever sees one already-split token, unioned with
+  // nickname/user-tag hits and AND-composed across tokens by `querySamples` itself (Task 4). This
+  // file's own former 'kic ana' (same row, different FTS columns) / 'kic amb' (different rows)
+  // cases are ported verbatim in spirit to queries.test.ts's
+  // "FTS-only tokens still AND together under the new JS-Set composition" test — same shape,
+  // this repo's own fixture strings.
 
-    // "kic" (kick's own filename) + "ana" (the shared pack name) both land on the kick row.
-    expect(searchIds(catalog, 'kic ana')).toEqual([kickId]);
-    // "kic" only hits the kick row; "amb" only hits the pad row — no row has both.
-    expect(searchIds(catalog, 'kic amb')).toEqual([]);
+  it('returns an empty array (not a throw) for a token that matches nothing', () => {
+    const { catalog } = setUp();
+
+    expect(() => searchIdsForToken(catalog, 'zzznotfound')).not.toThrow();
+    expect(searchIdsForToken(catalog, 'zzznotfound')).toEqual([]);
   });
 
-  it('returns an empty array (not a throw) for a query that matches nothing', () => {
+  it('throws on an empty or whitespace-only token', () => {
     const { catalog } = setUp();
 
-    expect(() => searchIds(catalog, 'zzznotfound')).not.toThrow();
-    expect(searchIds(catalog, 'zzznotfound')).toEqual([]);
-  });
-
-  it('throws on an empty or whitespace-only query', () => {
-    const { catalog } = setUp();
-
-    expect(() => searchIds(catalog, '')).toThrow();
-    expect(() => searchIds(catalog, '   ')).toThrow();
+    expect(() => searchIdsForToken(catalog, '')).toThrow();
+    expect(() => searchIdsForToken(catalog, '   ')).toThrow();
   });
 
   it('does not throw on a token containing a double quote (escaping)', () => {
     const { catalog } = setUp();
 
-    expect(() => searchIds(catalog, 'ki"ck')).not.toThrow();
+    expect(() => searchIdsForToken(catalog, 'ki"ck')).not.toThrow();
   });
 
   it('survives rebuildSearch being called twice with no duplicate FTS rows', () => {
@@ -133,6 +131,6 @@ describe('searchIds', () => {
     rebuildSearch(catalog);
 
     expect(countRows()).toBe(countSamples());
-    expect(searchIds(catalog, 'KIC')).toEqual([sampleId(catalog, 'h-kick')]); // still exactly one hit
+    expect(searchIdsForToken(catalog, 'KIC')).toEqual([sampleId(catalog, 'h-kick')]); // still exactly one hit
   });
 });

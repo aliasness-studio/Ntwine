@@ -6,6 +6,7 @@ import { openCatalog, type Catalog } from './db';
 import { buildFixtureSpliceDb, type FixtureRow } from '../importer/fixtureSpliceDb';
 import { readSplice } from '../importer/spliceDb';
 import { buildCatalog } from '../importer/importer';
+import { openUserDb } from '../user/userDb';
 import {
   getPeaks,
   listPacks,
@@ -127,6 +128,15 @@ function markMissing(catalog: Catalog, fileHash: string): void {
   catalog.db.prepare('UPDATE samples SET missing = 1 WHERE file_hash = ?').run(fileHash);
 }
 
+// Same fixture catalog as `setUp`, plus the `user` schema alias ATTACHed (Task 1's `openUserDb`)
+// on the SAME connection — the shape every user-layer test below needs, since `querySamples`
+// detects the attachment on `catalog.db` itself rather than taking a separate handle.
+function setUpWithUser() {
+  const { catalog } = setUp();
+  const user = openUserDb(catalog, join(tmp(), 'user.db'));
+  return { catalog, user };
+}
+
 describe('querySamples', () => {
   it('shapes a row exactly: camelCase fields, coerced booleans, tags array, pack join', () => {
     const { catalog } = setUp();
@@ -148,6 +158,11 @@ describe('querySamples', () => {
       tags: ['drums', 'loop'],
       hasPeaks: false,
       peaksFailed: false,
+      // No `openUserDb` on this connection — the three user-layer fields must still be present,
+      // at their zero value, rather than absent (Task 3).
+      favorite: false,
+      nickname: null,
+      userTags: [],
     });
   });
 
@@ -206,6 +221,35 @@ describe('querySamples', () => {
     expect(querySamples(catalog, { search: '   ' })).toEqual(querySamples(catalog, {}));
   });
 
+  it('scope { kind: pack } filters rows down to that pack only', () => {
+    const { catalog } = setUp();
+    const fixturePackId = packIdOf(catalog, 'pack-fixture');
+
+    const result = querySamples(catalog, { scope: { kind: 'pack', packId: fixturePackId } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual([
+      'bass.wav',
+      'kick.wav',
+      'loop.wav',
+      'tom.wav',
+    ]);
+  });
+
+  it('scope { kind: pack } for a DIFFERENT pack returns only that other pack’s sample', () => {
+    const { catalog } = setUp();
+    const ghostPackId = packIdOf(catalog, 'pack-ghost');
+
+    const result = querySamples(catalog, { scope: { kind: 'pack', packId: ghostPackId } });
+
+    expect(result.map((r) => r.filename)).toEqual(['boo.wav']);
+  });
+
+  it('an explicit scope: undefined returns every sample, same as omitting scope entirely', () => {
+    const { catalog } = setUp();
+
+    expect(querySamples(catalog, { scope: undefined })).toEqual(querySamples(catalog, {}));
+  });
+
   it('BPM range filter excludes bpm-null rows (unknown-excluding semantics)', () => {
     const { catalog } = setUp();
 
@@ -249,6 +293,234 @@ describe('querySamples', () => {
   });
 });
 
+describe('querySamples — user layer (favorite/nickname/userTags, favorites/collection scopes)', () => {
+  it('carries favorite/nickname from user.sample_state onto rows; untouched samples default to false/null/[]', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setFavorite('h-kick', true);
+    user.setNickname('h-kick', 'THE snare');
+
+    const rows = querySamples(catalog, {});
+    const kick = rows.find((r) => r.filename === 'kick.wav');
+    const bass = rows.find((r) => r.filename === 'bass.wav'); // never touched by user.*
+
+    expect(kick).toMatchObject({ favorite: true, nickname: 'THE snare' });
+    expect(bass).toMatchObject({ favorite: false, nickname: null, userTags: [] });
+  });
+
+  it('userTags are grouped per sample and sorted with localeCompare, never SQL collation', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-kick', 'Kick');
+    user.addUserTag('h-kick', 'bounce');
+
+    const kick = querySamples(catalog, {}).find((r) => r.filename === 'kick.wav');
+
+    // Plain SQL BINARY collation would sort 'Kick' before 'bounce' (uppercase < lowercase in
+    // ASCII); localeCompare orders case-insensitively. This pins a regression to `ORDER BY
+    // t.name` in the user-tags query the same way userDb.test.ts pins `listUserTagNames`.
+    expect(kick?.userTags).toEqual(['bounce', 'Kick']);
+  });
+
+  it('scope { kind: favorites } returns only favorited, catalog-present rows', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setFavorite('h-kick', true);
+    user.setFavorite('h-bass', true);
+    user.setFavorite('h-dangling-hash', true); // no matching samples row — must not surface
+
+    const result = querySamples(catalog, { scope: { kind: 'favorites' } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual(['bass.wav', 'kick.wav']);
+  });
+
+  it('scope { kind: collection } returns exactly that collection’s members', () => {
+    const { catalog, user } = setUpWithUser();
+    const { id } = user.createCollection('Drums');
+    user.addToCollection(id, 'h-tom');
+    user.addToCollection(id, 'h-loop');
+
+    const result = querySamples(catalog, { scope: { kind: 'collection', collectionId: id } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual(['loop.wav', 'tom.wav']);
+  });
+
+  it('a pack scope still composes with the favorite field flowing through', () => {
+    const { catalog, user } = setUpWithUser();
+    const fixturePackId = packIdOf(catalog, 'pack-fixture');
+    user.setFavorite('h-kick', true);
+
+    const result = querySamples(catalog, { scope: { kind: 'pack', packId: fixturePackId } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual([
+      'bass.wav',
+      'kick.wav',
+      'loop.wav',
+      'tom.wav',
+    ]);
+    expect(result.find((r) => r.filename === 'kick.wav')?.favorite).toBe(true);
+  });
+
+  it('without openUserDb: favorites/collection scopes short-circuit to [], plain rows carry the three defaults', () => {
+    const { catalog } = setUp(); // user schema never attached on this connection
+
+    expect(querySamples(catalog, { scope: { kind: 'favorites' } })).toEqual([]);
+    expect(
+      querySamples(catalog, { scope: { kind: 'collection', collectionId: 'whatever' } }),
+    ).toEqual([]);
+
+    const rows = querySamples(catalog, {});
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.favorite).toBe(false);
+      expect(r.nickname).toBeNull();
+      expect(r.userTags).toEqual([]);
+    }
+  });
+});
+
+describe('querySamples — per-token search union (FTS + nickname + user tags, spec §3.4)', () => {
+  it('mixed vocabulary: a token matching only via nickname unions with a token matching only via FTS text, AND across tokens', () => {
+    const { catalog, user } = setUpWithUser();
+    // Spec §3.4's own example, adapted to this fixture's "kick.wav" (already an FTS hit for
+    // "kick" via both filename and its 'kick' tag) rather than inventing a new sample: nicknaming
+    // it "THE snare" gives one row reachable by "snare" ONLY through the nickname, and by "kick"
+    // ONLY through FTS — so a match on "snare kick" proves the two sources union per token.
+    user.setNickname('h-kick', 'THE snare');
+
+    const result = querySamples(catalog, { search: 'snare kick' });
+
+    expect(result.map((r) => r.filename)).toEqual(['kick.wav']);
+  });
+
+  it('a user-tag token matches through the tag source, not FTS or nickname', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-bass', 'bounce'); // "bounce" appears nowhere in this fixture's FTS text
+
+    const result = querySamples(catalog, { search: 'bounce' });
+
+    expect(result.map((r) => r.filename)).toEqual(['bass.wav']);
+  });
+
+  // Direct successor to search.test.ts's retired 'kic ana'/'kic amb' cases (search.test.ts:92) —
+  // those pinned FTS5's own internal AND across two quoted phrases in ONE MATCH query; this task
+  // replaced that mechanism with N independent `searchIdsForToken` calls intersected via JS Sets
+  // (queries.ts), so the old test's SCENARIO (two tokens, both purely FTS-sourced) needs its own
+  // proof against the new mechanism, not just an assumption the replacement is equivalent. Plain
+  // `setUp()` (no user db) so `userText` is empty and both tokens can only resolve via
+  // `searchIdsForToken` — this test would not compile a meaningfully different result under the
+  // OLD implementation either (both mechanisms compute the same AND for pure-FTS tokens), but it
+  // DOES falsify a broken JS-Set intersection (e.g. accidentally unioning, or losing one token's
+  // constraint) — the same mutation check applied to the AND-across-sources test above.
+  it('FTS-only tokens still AND together under the new JS-Set composition: same row via different columns matches, different rows empties', () => {
+    const { catalog } = setUp();
+
+    // 'kic' -> kick.wav only (its filename token AND its 'kick' tag). 'fix' -> every Fixture Pack
+    // sample (their shared pack_name "Fixture Pack"). Intersecting narrows the pack-wide 'fix' hit
+    // down to exactly the row 'kic' also hits — proving AND still holds when two FTS-only tokens
+    // land on the SAME row through DIFFERENT indexed columns (filename/tag vs. pack_name).
+    expect(querySamples(catalog, { search: 'kic fix' }).map((r) => r.filename)).toEqual([
+      'kick.wav',
+    ]);
+
+    // 'kic' -> kick.wav (Fixture Pack). 'gho' -> boo.wav (Ghost Pack's pack_name). No row belongs
+    // to both packs, so the AND-intersection is empty.
+    expect(querySamples(catalog, { search: 'kic gho' })).toEqual([]);
+  });
+
+  // Note on this test's RED-phase power: any assertion of an EMPTY result here is structurally
+  // unable to fail against the OLD (pre-Task-4) implementation — old FTS-only matching is a strict
+  // subset of the new union matching (it can only find FEWER rows, never more), so a token that
+  // only matches via nickname/tag returns [] under BOTH old and new code, for different reasons.
+  // This test's real job is a falsifier for a specific bug class the new union logic invites —
+  // unioning ACROSS tokens instead of per-token (turning "tokens AND" into "tokens OR") — verified
+  // by temporarily swapping the intersection for a union in queries.ts during self-review, which
+  // does turn this red.
+  it('tokens AND, not OR, across sources: two tokens each matching a different row (via different sources) match neither', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setNickname('h-kick', 'THE snare'); // 'snare' -> kick.wav, nickname-only
+    user.addUserTag('h-bass', 'bounce'); // 'bounce' -> bass.wav, tag-only
+
+    // Each token alone has a real, non-empty match, but on DIFFERENT rows — a buggy
+    // union-ACROSS-tokens implementation would wrongly return both.
+    expect(querySamples(catalog, { search: 'snare bounce' })).toEqual([]);
+    // The brief's own phrasing of the case (spec §3.4): a garbage second token empties an
+    // otherwise-matching single-token result too.
+    expect(querySamples(catalog, { search: 'snare nosuch' })).toEqual([]);
+  });
+
+  it('an NFD search token matches an NFC-stored nickname (JS normalization); a plain ASCII prefix matches the same row', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setNickname('h-tom', 'Café Hit');
+
+    const nfdQuery = 'café'.normalize('NFD');
+    // Prove this is byte-genuine NFD (5 UTF-16 units: c,a,f,e,COMBINING ACUTE ACCENT U+0301) and
+    // not silently re-composed back to NFC (4 units, one precomposed 'é') by a source-file save —
+    // .normalize('NFD') is called at runtime on a fresh literal specifically so the on-disk
+    // encoding of this test file can never be the thing making the assertion pass.
+    expect(nfdQuery.length).toBe(5);
+    expect(nfdQuery).not.toBe('café');
+
+    expect(querySamples(catalog, { search: nfdQuery }).map((r) => r.filename)).toEqual(['tom.wav']);
+    // Word-boundary prefix, no unicode involved: 'caf' still reaches the same nickname.
+    expect(querySamples(catalog, { search: 'caf' }).map((r) => r.filename)).toEqual(['tom.wav']);
+  });
+
+  it('word-boundary prefix: a token starting a word inside the nickname matches; a token starting mid-word does not', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setNickname('h-kick', 'THE snare');
+
+    expect(querySamples(catalog, { search: 'sna' }).map((r) => r.filename)).toEqual(['kick.wav']);
+    // "nare" is a real suffix of "snare" but starts mid-word — must NOT match.
+    expect(querySamples(catalog, { search: 'nare' })).toEqual([]);
+  });
+
+  it('FTS-only search is unaffected on a connection without openUserDb', () => {
+    const { catalog } = setUp(); // user schema never attached
+
+    const result = querySamples(catalog, { search: 'drums' });
+
+    expect(result.map((r) => r.filename).sort()).toEqual([
+      'bass.wav',
+      'kick.wav',
+      'loop.wav',
+      'tom.wav',
+    ]);
+  });
+});
+
+describe('querySamples — either-source tag filtering (spec §3.3)', () => {
+  it('a selected tag matches a sample carrying it from EITHER source', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-loop', 'kick'); // loop.wav has no splice 'kick' tag
+
+    const result = querySamples(catalog, { tags: ['kick'] });
+
+    // kick.wav via its splice tag, loop.wav via its user tag — neither excludes the other.
+    expect(result.map((r) => r.filename).sort()).toEqual(['kick.wav', 'loop.wav']);
+  });
+
+  it('two selected tags AND across sources: each name may be satisfied by a different source, but both are still required', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-kick', 'bounce'); // kick.wav: splice 'kick' + user tag normalized_name 'bounce'
+    user.addUserTag('h-loop', 'bounce'); // loop.wav: user 'bounce' but no 'kick' from either source
+
+    // Filter with 'BOUNCE' (raw), not 'bounce' — a discriminator for the two `params.push` calls
+    // in the tags-filter arm, not just the either-source behavior. Splice's EXISTS compares the
+    // RAW param (`t.name = ?`) and splice never has a 'BOUNCE'/'bounce' tag anywhere in this
+    // fixture, so 'BOUNCE' can only match through the user-side EXISTS, whose param must be
+    // `normalizeUserName('BOUNCE')` === 'bounce' — the SECOND value pushed for this name. Plain
+    // lowercase 'kick'/'bounce' would still pass even with the two pushes swapped, since
+    // `normalizeUserName` is a no-op on them; 'BOUNCE' forces the second (normalized) param to
+    // carry the right value or the user-side match silently fails. (Verified by temporarily
+    // swapping the two `params.push` calls in queries.ts during self-review: this exact
+    // assertion goes red — `[]` instead of `['kick.wav']` — while reverting restores green.)
+    const result = querySamples(catalog, { tags: ['kick', 'BOUNCE'] });
+
+    // loop.wav satisfies 'BOUNCE' (via its user tag) but not 'kick' from either source, so AND
+    // still excludes it — proving the per-name OR-across-sources didn't loosen the existing
+    // ALL-tags contract.
+    expect(result.map((r) => r.filename)).toEqual(['kick.wav']);
+  });
+});
+
 describe('listPacks', () => {
   it('hides a pack whose only sample is missing, keeps one with some present, counts only present', () => {
     const { catalog } = setUp();
@@ -277,6 +549,74 @@ describe('listTags', () => {
 
     expect(tags).toEqual([
       { name: 'drums', count: 3 }, // kick, loop, bass — tom excluded (missing)
+      { name: 'bass', count: 1 },
+      { name: 'kick', count: 1 },
+      { name: 'loop', count: 1 },
+    ]);
+  });
+});
+
+describe('listTags — user layer union (spec §3.3)', () => {
+  // kick.wav already carries the splice tag 'kick' from the fixture — giving bass.wav a second
+  // splice-side 'kick' link (raw SQL, same idiom this file already uses for waveforms rows) is
+  // what lets a single test prove the union counts DISTINCT samples rather than merely "at least
+  // one common name," since bass.wav below also gets a user-side 'kick'/'KICK' tag.
+  function addSpliceTag(catalog: Catalog, fileHash: string, tagName: string): void {
+    const tag = catalog.db.prepare('SELECT id FROM tags WHERE name = ?').get(tagName) as
+      { id: number } | undefined;
+    if (!tag) throw new Error(`fixture splice tag "${tagName}" not found`);
+    catalog.db
+      .prepare('INSERT OR IGNORE INTO sample_tags (sample_id, tag_id) VALUES (?, ?)')
+      .run(idOf(catalog, fileHash), tag.id);
+  }
+
+  it('merges splice + user tag facets by normalized name: a sample tagged from both sources counts once, display form is the splice one', () => {
+    const { catalog, user } = setUpWithUser();
+    addSpliceTag(catalog, 'h-bass', 'kick'); // splice 'kick' now carried by kick.wav AND bass.wav
+
+    // User-side 'KICK' (different case — merge key is normalizeUserName, not the raw string)
+    // lands on bass.wav (already a splice-side carrier, so this must NOT double-count it) plus
+    // loop.wav (a present sample splice never tagged 'kick' at all).
+    user.addUserTag('h-bass', 'KICK');
+    user.addUserTag('h-loop', 'KICK');
+
+    const kick = listTags(catalog).find((t) => t.name === 'kick');
+
+    // Distinct samples: kick.wav (splice only) + bass.wav (both — counts once) + loop.wav (user
+    // only) = 3. Display form is 'kick' (Splice's own), never 'KICK' (the user's typed case).
+    expect(kick).toEqual({ name: 'kick', count: 3 });
+  });
+
+  it('a user-only tag appears in the merged list, under its own (untouched) display form', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-tom', 'Bounce'); // splice never has a 'bounce' tag anywhere in the fixture
+
+    const bounce = listTags(catalog).find((t) => t.name === 'Bounce');
+
+    expect(bounce).toEqual({ name: 'Bounce', count: 1 });
+  });
+
+  it('missing samples are excluded from a merged facet on both the splice side and the user side', () => {
+    const { catalog, user } = setUpWithUser();
+    addSpliceTag(catalog, 'h-bass', 'kick');
+    user.addUserTag('h-loop', 'kick');
+
+    // Before marking anything missing: 3 distinct present carriers (kick.wav, bass.wav, loop.wav
+    // — same union as the merge test above).
+    expect(listTags(catalog).find((t) => t.name === 'kick')).toEqual({ name: 'kick', count: 3 });
+
+    markMissing(catalog, 'h-bass'); // was a splice-side carrier
+    markMissing(catalog, 'h-loop'); // was the user-side-only carrier
+
+    expect(listTags(catalog).find((t) => t.name === 'kick')).toEqual({ name: 'kick', count: 1 });
+  });
+
+  it('hasUser attached but zero user tags: merged output matches the splice-only computation exactly', () => {
+    const { catalog } = setUpWithUser(); // user schema attached, but no user tags ever added
+    markMissing(catalog, 'h-tom'); // same scenario as the plain listTags test above
+
+    expect(listTags(catalog)).toEqual([
+      { name: 'drums', count: 3 },
       { name: 'bass', count: 1 },
       { name: 'kick', count: 1 },
       { name: 'loop', count: 1 },
