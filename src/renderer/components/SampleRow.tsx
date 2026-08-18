@@ -184,6 +184,15 @@ const MissingBadge = styled.span<{ $flash: boolean }>`
 // right-edge slot MissingBadge does — the two are mutually exclusive (`!row.missing` /
 // `row.missing`), which is the visual expression of "missing rows are read-only for the user
 // layer."
+//
+// Drag-hazard fix (review round 1): `Row` is `draggable` with its own `onDragStart` (native HTML5
+// drag, armed on mousedown+move — a SEPARATE event path from `click`). A click on this 20×20
+// button with slight cursor drift can resolve as a drag start on `Row` instead of a click on the
+// button, kicking off a real OS file-drag from what looked like a favorite click; Chromium then
+// typically suppresses the following `click`, so the favorite silently doesn't toggle either.
+// `-webkit-user-drag: none` (Electron = Chromium, so this is safe) stops the button itself from
+// ever seeding a drag; `draggable={false}` and the `onMouseDown` stopPropagation below (JSX)
+// are the other two layers — belt/suspenders since no unit test can drive a native drag gesture.
 const HeartButton = styled.button<{ $favorite: boolean }>`
   flex-shrink: 0;
   display: flex;
@@ -197,6 +206,7 @@ const HeartButton = styled.button<{ $favorite: boolean }>`
   background: transparent;
   color: ${(p) => (p.$favorite ? p.theme.color.accent : p.theme.color.textFaint)};
   cursor: pointer;
+  -webkit-user-drag: none;
 
   &:hover {
     color: ${(p) => p.theme.color.accentStrong};
@@ -329,9 +339,11 @@ export function SampleRow({
       {!row.missing && (
         <HeartButton
           type="button"
+          draggable={false}
           $favorite={row.favorite}
           aria-pressed={row.favorite}
           aria-label="Favorite"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={handleFavoriteClick}
         >
           <HeartIcon filled={row.favorite} />
