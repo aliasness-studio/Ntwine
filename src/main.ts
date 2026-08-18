@@ -1,9 +1,10 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, screen } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import started from 'electron-squirrel-startup';
 import { openCatalog } from './main/catalog/db';
+import { computeDefaultBounds } from './main/defaultBounds';
 import { registerDragHandler } from './main/drag';
 import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, registerIpc } from './main/ipc';
@@ -47,10 +48,13 @@ const e2eEmit = makeE2EEmitter(app, e2e);
 let mainWindow: BrowserWindow | null = null;
 
 const createWindow = (): BrowserWindow => {
-  // Create the browser window.
+  // 75% of the work area, centered (BrowserWindow centers itself when x/y are omitted). Only
+  // callable after app ready — the `screen` module throws before that, and createWindow's one
+  // call site is inside whenReady() below.
+  const { width, height } = computeDefaultBounds(screen.getPrimaryDisplay().workAreaSize);
   const win = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width,
+    height,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: e2e ? ['--ntwine-e2e'] : [],
