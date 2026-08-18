@@ -290,8 +290,11 @@ export function registerIpc(deps: RegisterIpcDeps): void {
   // sqlite3, via userDb) — no handler here awaits anything internally, the same discipline
   // querySamples/listPacks/listTags above already keep: handlers answering in registration order
   // is what keeps LibraryStore's un-sequenced re-queries safe. `createCollection`/
-  // `renameCollection` deliberately do NOT catch `UserNameError` — an invoke rejection carries
-  // `.message` straight back to the renderer's inline editor error (spec §2.3/§5.1/§5.3).
+  // `renameCollection` deliberately do NOT catch `UserNameError` — the rejection reaches the
+  // renderer wrapped by Electron (`ipcRenderer.invoke` cannot structured-clone a custom `Error`
+  // subclass); the renderer's `ipcErrorMessage` (`src/renderer/ipcError.ts`, Task 15 fix round 1)
+  // strips that decoration back to this message before it reaches the inline editor error
+  // (spec §2.3/§5.1/§5.3).
   ipcMain.handle('ntwine:setFavorite', async (_event, sampleId: number, on: boolean) => {
     const hash = hashOf(sampleId);
     if (hash === null) return;

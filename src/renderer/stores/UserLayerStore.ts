@@ -6,13 +6,15 @@
 // rail from `listLibraryRail()` and re-runs the library's current query so `rows` picks up
 // whatever the write actually changed (a nickname, a tag, a favorite flag, collection
 // membership). `createCollection`/`renameCollection` are the one exception: they catch the
-// invoke rejection (Task 6: a name collision throws `UserNameError` on the main side, which
-// crosses `ipcMain.handle` as a rejected promise carrying `.message`) and hand back `{ error }`
-// for the popover/rail editor to render inline (design spec §2.3/§5.1/§5.3) — every other action
-// here lets a rejection surface to the console, same posture LibraryStore/ImportStore already
-// take on their own IPC calls.
+// invoke rejection (Task 6: a name collision throws `UserNameError` on the main side; Electron
+// decorates the rejection that crosses `ipcMain.handle` with its own wrapper text, which
+// `ipcErrorMessage` — `../ipcError.ts`, Task 15 fix round 1 — strips back to the clean domain
+// message) and hand back `{ error }` for the popover/rail editor to render inline (design spec
+// §2.3/§5.1/§5.3) — every other action here lets a rejection surface to the console, same posture
+// LibraryStore/ImportStore already take on their own IPC calls.
 import { makeAutoObservable, runInAction } from 'mobx';
 import './configure';
+import { ipcErrorMessage } from '../ipcError';
 import type { NtwineApi, SampleRow } from '../../shared/ipcTypes';
 import type { LibraryStore } from './LibraryStore';
 
@@ -113,7 +115,7 @@ export class UserLayerStore {
     try {
       result = await this.api.createCollection(name);
     } catch (err) {
-      return { error: errorMessage(err) };
+      return { error: ipcErrorMessage(err) };
     }
     await this.refresh();
     return result;
@@ -124,7 +126,7 @@ export class UserLayerStore {
     try {
       await this.api.renameCollection(id, name);
     } catch (err) {
-      return { error: errorMessage(err) };
+      return { error: ipcErrorMessage(err) };
     }
     await this.refresh();
     return null;
@@ -214,8 +216,4 @@ export class UserLayerStore {
       await this.library.refreshTags();
     }
   }
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

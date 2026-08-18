@@ -15,6 +15,7 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
+import { ipcErrorMessage } from '../ipcError';
 import { normalizeUserName } from '../../shared/userNames';
 import { useStores } from './StoreContext';
 
@@ -137,7 +138,7 @@ export const CollectionPopover = observer(function CollectionPopover({
     try {
       await userLayer.addToCollection(collectionId, sampleId);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(ipcErrorMessage(err));
       return;
     }
     setValue('');
@@ -157,7 +158,7 @@ export const CollectionPopover = observer(function CollectionPopover({
     try {
       await userLayer.addToCollection(result.id, sampleId);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(ipcErrorMessage(err));
       return;
     }
     setValue('');
@@ -210,9 +211,3 @@ export const CollectionPopover = observer(function CollectionPopover({
     </Box>
   );
 });
-
-// Mirrors `UserLayerStore.ts`'s own unexported helper of the same name/shape — that one isn't
-// exported, so this is a local copy rather than a shared import.
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
