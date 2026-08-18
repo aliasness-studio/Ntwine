@@ -48,7 +48,7 @@ const e2eEmit = makeE2EEmitter(app, e2e);
 let mainWindow: BrowserWindow | null = null;
 
 const createWindow = (): BrowserWindow => {
-  // 75% of the work area, centered (BrowserWindow centers itself when x/y are omitted). Only
+  // 90% of the work area, centered (BrowserWindow centers itself when x/y are omitted). Only
   // callable after app ready — the `screen` module throws before that, and createWindow's one
   // call site is inside whenReady() below.
   const { width, height } = computeDefaultBounds(screen.getPrimaryDisplay().workAreaSize);
@@ -119,11 +119,8 @@ const createWindow = (): BrowserWindow => {
     }
   });
 
-  // Open the DevTools — dev-server loads only. A packaged build has no
-  // MAIN_WINDOW_VITE_DEV_SERVER_URL, so devtools must never auto-open there.
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    win.webContents.openDevTools();
-  }
+  // No devtools auto-open, even on dev-server loads (owner call, 2026-08-17): they ate half the
+  // window on every `yarn start`. Cmd+Option+I / the View menu toggles them on demand.
   return win;
 };
 
