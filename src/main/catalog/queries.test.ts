@@ -432,9 +432,7 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
     expect(nfdQuery.length).toBe(5);
     expect(nfdQuery).not.toBe('café');
 
-    expect(querySamples(catalog, { search: nfdQuery }).map((r) => r.filename)).toEqual([
-      'tom.wav',
-    ]);
+    expect(querySamples(catalog, { search: nfdQuery }).map((r) => r.filename)).toEqual(['tom.wav']);
     // Word-boundary prefix, no unicode involved: 'caf' still reaches the same nickname.
     expect(querySamples(catalog, { search: 'caf' }).map((r) => r.filename)).toEqual(['tom.wav']);
   });
