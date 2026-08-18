@@ -244,6 +244,23 @@ describe('UserLayerStore', () => {
       expect(api.listLibraryRail).not.toHaveBeenCalled();
       expect(rerunSpy).not.toHaveBeenCalled();
     });
+
+    // Fix round 1 (review finding): the catch must be narrow to the invoke — a successful create
+    // whose FOLLOW-UP refresh fails is not a name collision, and must not be reported as one (a
+    // caller retrying the same name on that `{ error }` would then hit a REAL collision on top of
+    // an already-created collection). Pins the fix by asserting the opposite of what the old,
+    // too-broad `try` produced: this failed with `{ error: 'rail fetch failed' }` before the fix.
+    it('a refresh failure AFTER a successful create propagates as a rejection, not { error }', async () => {
+      const { api, library } = makeStores({
+        createCollection: async () => ({ id: 'new-1' }),
+        listLibraryRail: async () => {
+          throw new Error('rail fetch failed');
+        },
+      });
+      const store = new UserLayerStore(api, library);
+
+      await expect(store.createCollection('Drums')).rejects.toThrow('rail fetch failed');
+    });
   });
 
   describe('renameCollection', () => {
@@ -272,6 +289,18 @@ describe('UserLayerStore', () => {
 
       expect(result).toEqual({ error: 'A collection named "Kicks" already exists.' });
       expect(rerunSpy).not.toHaveBeenCalled();
+    });
+
+    // Fix round 1 (review finding) — mirrors createCollection's same-shaped test above.
+    it('a refresh failure AFTER a successful rename propagates as a rejection, not { error }', async () => {
+      const { api, library } = makeStores({
+        listLibraryRail: async () => {
+          throw new Error('rail fetch failed');
+        },
+      });
+      const store = new UserLayerStore(api, library);
+
+      await expect(store.renameCollection('c1', 'Kicks')).rejects.toThrow('rail fetch failed');
     });
   });
 

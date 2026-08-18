@@ -77,24 +77,35 @@ export class UserLayerStore {
     await Promise.all([this.refresh({ tags: true }), this.loadUserTags()]);
   }
 
+  // The `try` covers ONLY the invoke — a name collision (rejected `createCollection`) is the one
+  // failure this method's contract turns into `{ error }` for the popover to render inline. A
+  // successful create whose FOLLOW-UP `refresh()` fails is a different failure entirely (the
+  // collection now exists server-side; nothing about that is a naming problem), so it must not be
+  // reported as `{ error }` — indistinguishable from a collision, it would invite a caller to
+  // retry the same name and hit a REAL collision on top of the write that already succeeded.
+  // `refresh()` runs outside the `try`, same posture as every other action's post-write refresh:
+  // a failure there surfaces uncaught. (Fix round 1 — review finding; regression test:
+  // "a refresh failure AFTER a successful create propagates as a rejection, not { error }".)
   async createCollection(name: string): Promise<{ id: string } | { error: string }> {
+    let result: { id: string };
     try {
-      const result = await this.api.createCollection(name);
-      await this.refresh();
-      return result;
+      result = await this.api.createCollection(name);
     } catch (err) {
       return { error: errorMessage(err) };
     }
+    await this.refresh();
+    return result;
   }
 
+  // Mirrors createCollection's narrowed `try` above — same fix, same reasoning.
   async renameCollection(id: string, name: string): Promise<{ error: string } | null> {
     try {
       await this.api.renameCollection(id, name);
-      await this.refresh();
-      return null;
     } catch (err) {
       return { error: errorMessage(err) };
     }
+    await this.refresh();
+    return null;
   }
 
   /**
