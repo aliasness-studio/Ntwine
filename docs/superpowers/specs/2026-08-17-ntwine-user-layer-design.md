@@ -2,7 +2,8 @@
 
 Date: 2026-08-17 · Repo: `aliasness-studio/Ntwine` · Tracking issue: #6
 Consulted: Codex second-opinion brainstorm (repo-grounded, 2026-08-17) — its identity findings
-and bloat warnings are folded in throughout.
+and bloat warnings are folded in throughout. Panel-reviewed 2026-08-17 (Claude/Codex/agy,
+prompt md5 `8b060e430143a266ad006958a02e0fcd`); all findings applied below.
 
 ## 0. Owner decisions (locked, 2026-08-17)
 
@@ -33,11 +34,15 @@ read-only).
 
 ### 2.1 The durable key is `file_hash`
 
-`samples.file_hash` is `UNIQUE NOT NULL`, already imported, and is the only identity that
-survives all three required events: idempotent re-import (import upserts on it), library
-relocation (path-independent), and machine-to-machine travel (content-derived; internal
-`samples.id` is local-only). **Every user-layer row references `sample_file_hash TEXT`.** No
-sample-level Splice UUID exists in the importer today; nothing in this spec may assume one.
+`samples.file_hash` is `UNIQUE NOT NULL` and is the importer's upsert key
+(`ON CONFLICT(file_hash)`), so it survives the two locally-provable events: idempotent
+re-import and library relocation (it is path-independent; internal `samples.id` is local-only).
+The hash is *supplied by Splice's own sounds.db*, not computed by Ntwine — machine-to-machine
+durability therefore rests on the stated assumption that Splice's DB carries the same hash for
+the same sample on both of the owner's machines (same account; plausible, unverifiable from
+this repo — the first Windows import should confirm it before any sync feature is built).
+**Every user-layer row references `sample_file_hash TEXT`.** No sample-level Splice UUID exists
+in the importer today (only `pack_uuid`); nothing in this spec may assume one.
 
 A user row whose hash currently matches no catalog sample is *dormant, never deleted* — it
 reattaches the moment a matching sample is imported again. No repair UI in v1.
@@ -49,7 +54,20 @@ curation must not share blast radius with importer/FTS-rebuild bugs or any futur
 "rebuild catalog" flow, and future sync/backup is "copy one small file". The main process opens
 `catalog.db` as today and `ATTACH`es `user.db` as schema alias `user` on the same connection, so
 queries join across the two cheaply. Schema is created with `CREATE TABLE IF NOT EXISTS` at
-open. Pre-release rule applies: schema changes are clean breaks, no migration stamps.
+open.
+
+Two persistence notes with teeth:
+
+- **Foreign keys.** The schema's `ON DELETE CASCADE`s are load-bearing (§4
+  `deleteCollection`). better-sqlite3 13 defaults `foreign_keys` ON — confirmed empirically in
+  this repo (see the pragma note in `src/main/importer/fixtureSpliceDb.ts`) — but per that same
+  note's principle (never depend on whichever default a platform's SQLite build ships), the
+  user-db open routine executes `PRAGMA foreign_keys = ON` explicitly, and a unit test pins
+  that deleting a collection actually cascades its items.
+- **Clean breaks cost more here.** The pre-release rule (clean breaks, no migration stamps)
+  applies, but `user.db` is the app's first *unrebuildable* data — catalog.db can always be
+  re-imported; deleted curation is gone. Once real curation exists, a schema clean break on
+  `user.db` is an owner-ask, not a reflex.
 
 ### 2.3 Schema
 
@@ -65,7 +83,7 @@ CREATE TABLE IF NOT EXISTS user.sample_state (
 CREATE TABLE IF NOT EXISTS user.tags (
   id              TEXT PRIMARY KEY,               -- app-generated (crypto.randomUUID)
   name            TEXT NOT NULL,                  -- display form, trimmed
-  normalized_name TEXT NOT NULL UNIQUE,           -- lower(trim(name))
+  normalized_name TEXT NOT NULL UNIQUE,           -- normalized in JS, see §3.4
   created_at      TEXT NOT NULL
 );
 
@@ -91,10 +109,24 @@ CREATE TABLE IF NOT EXISTS user.collection_items (
 );
 ```
 
+Timestamp discipline: `sample_state` rows are mutable and stamp `updated_at` on every write.
+Every other table's rows are insert/delete-only — their timestamp is their `created_at`/
+`added_at` — except `collections.name`, which `renameCollection` updates in place without any
+stamp (v1 has no consumer for a collection-modified time; sync-era needs add it as a clean
+break).
+
+Name rules (tags AND collections, identical): names are trimmed; empty-after-trim is rejected;
+uniqueness is on the JS-normalized form (§3.4). For **tags**, adding "Kick " when "kick" exists
+reuses the existing tag (tags are a vocabulary — silent reuse is correct). For **collections**,
+`createCollection`/`renameCollection` into an existing normalized name is an **error**, surfaced
+inline at the editor (collections are containers — two "Drums" is a mistake, and silently
+merging into an existing container would move samples somewhere the user didn't point). The
+add-to-collection popover's type-ahead resolves existing names to their collection before any
+create fires, so the collision path only arises from explicit creates/renames.
+
 Deliberately absent (YAGNI + the reserved-pool rule — no dead columns waiting for a feature):
 ratings, notes, tag/collection colors, `position` ordering (v1.5 adds it with a clean break),
-saved-searches table (v1.5). Empty tags (post-trim) are rejected; duplicate names collapse via
-`normalized_name` (creating "Kick " when "kick" exists reuses the existing tag).
+saved-searches table (v1.5).
 
 ## 3. Query model
 
@@ -115,6 +147,10 @@ type Scope =
 serialization. Type/key/BPM/tag/search filters compose with every scope exactly as they do with
 packs today.)
 
+When a user-layer write removes the selected row from the current scope (unfavoriting under
+Favorites, `Delete` under a collection), selection moves to the next row, clamping at the end —
+one rule, both sites.
+
 ### 3.2 Rows
 
 `querySamples` LEFT JOINs `user.sample_state` and aggregates `user.sample_tags` by hash.
@@ -129,24 +165,36 @@ userTags: string[];   // display names, sorted A-Z
 ### 3.3 Tag filtering
 
 The filter panel's tag cloud lists the union of Splice tags and user tags by name (counts =
-distinct matching samples from either source, present-only like today). A selected tag chip
-matches a sample if **either** its Splice tags **or** its user tags contain that name. Multiple
-selected tags AND together, exactly as today. No visual distinction in the cloud (v1); a row's
-own user-tag chips are visually accented so you can tell your vocabulary apart in place.
+distinct matching samples from either source, present-only like today). **The union is owned by
+main's existing `listTags` — its semantics grow; no new bridge method** (the renderer cannot
+compose it: `listUserTags` carries no counts). A selected tag chip matches a sample if
+**either** its Splice tags **or** its user tags contain that name. Multiple selected tags AND
+together, exactly as today. No visual distinction in the cloud (v1); a row's own user-tag chips
+are visually accented so you can tell your vocabulary apart in place.
 
 ### 3.4 Search
 
-Search must find what the user named things. A sample matches the search text when (as today)
-the FTS index matches — **or** when every search token prefix-matches the sample's nickname or
-one of its user-tag names (case-insensitive, token semantics mirroring the FTS side). At 4.2k
-samples this is a query-time `LIKE` clause over the attached tables; no second FTS index, no
-rebuild coupling. The top-bar result count reflects it, so the e2e assertion surface is
-unchanged in kind.
+Search must find what the user named things, without breaking mixed-vocabulary queries.
+Semantics are **per-token**: a sample matches the search text when **every** search token
+prefix-matches, at a word boundary, at least one of — its FTS-indexed text (filename, Splice
+tags, pack name — today's index), its nickname, or one of its user-tag names. Tokens AND
+together; sources union per token (so "snare kick" finds the file `AD_Kick_01.wav` nicknamed
+"THE snare").
+
+Nickname/user-tag matching and all name normalization run in **main-process JavaScript**
+(`toLowerCase()` + tokenization there), not SQL — SQLite's `LIKE`/`lower()` fold ASCII only and
+invite `%`/`_` escaping bugs, while the FTS side's tokenizer folds wider; JS keeps the two
+sides' folding honest and handles the library's real unicode filenames. Whether the final
+row-set intersection happens in SQL or JS is the plan's call — at 4.2k samples either is cheap.
+The top-bar result count reflects all of this, so the e2e assertion surface is unchanged in
+kind.
 
 ## 4. IPC surface
 
-New `NtwineApi` methods (bridge grows from 12 to **23** exposed methods — `security.spec`'s
-exact-bridge pin updates in the same task that adds them):
+New `NtwineApi` methods (bridge grows from 12 to **23** exposed methods — `security.spec` pins
+the bridge as BOTH an exact sorted array and the prose test title "exactly its 12 methods";
+both update in the same task that grows the bridge. This sentence is the canonical statement of
+that rule; §8 references it):
 
 ```ts
 setFavorite(sampleId: number, on: boolean): Promise<void>;
@@ -158,34 +206,42 @@ listLibraryRail(): Promise<{
   favorites: number;                                                    // present-only count
   collections: { id: string; name: string; count: number }[];           // A-Z, present-only counts
 }>;
-createCollection(name: string): Promise<{ id: string }>;
-renameCollection(id: string, name: string): Promise<void>;
+createCollection(name: string): Promise<{ id: string }>;                // name-collision -> error (§2.3)
+renameCollection(id: string, name: string): Promise<void>;              // name-collision -> error (§2.3)
 deleteCollection(id: string): Promise<void>;                            // items cascade; samples untouched
 addToCollection(collectionId: string, sampleId: number): Promise<void>;
 removeFromCollection(collectionId: string, sampleId: number): Promise<void>;
 ```
 
-All writes resolve `sampleId → file_hash` in the main process (the renderer never sees hashes),
-stamp `updated_at`, and are synchronous SQLite under the hood like the rest of ipc.ts (the
-LibraryStore stale-response rule from the V1 review stays satisfied). Mutations return after the
-write; the renderer re-queries what it needs (same request/response discipline as filters —
-no push events added in v1).
+One EXISTING method changes shape: **`startDrag` is promoted from `ipcRenderer.send` to
+`invoke`** — `webContents.startDrag` blocks the main process until the OS drag session ends
+(drag.ts's own comment), so the invoke's resolution IS the drag-end signal §7 needs. Method
+count is unchanged by this (still 23 total).
+
+All writes resolve `sampleId → file_hash` in the main process (the renderer never sees hashes)
+and are synchronous SQLite under the hood like the rest of ipc.ts (the LibraryStore
+stale-response rule from the V1 review stays satisfied). `sample_state` writes stamp
+`updated_at` (§2.3's timestamp discipline). Mutations return after the write; the renderer
+re-queries what it needs (same request/response discipline as filters — no push events added
+in v1).
 
 ## 5. UI
 
 ### 5.1 Rail: LIBRARY section
 
 A new **LIBRARY** section sits at the top of the packs scroller (inside the same scroll — the
-dock split from QoL r1 is unchanged): a **Favorites** row (heart glyph + present-only count),
-each collection A-Z (count), and a **"+ New collection"** row (inline name editor on click).
-Below it, the existing PACKS list under its own small header. Clicking Favorites / a collection
-sets the scope (§3.1); All Samples clears it. The active scope row highlights exactly like the
-active pack today.
+dock split from QoL r1 is unchanged): the existing **All Samples** row moves in as its first
+row, then **Favorites** (heart glyph + present-only count), each collection A-Z (count), and a
+**"+ New collection"** row (inline name editor on click; a name collision or empty name shows
+an inline error on that editor, §2.3). Below it, the existing PACKS list under its own small
+header, packs only. Clicking Favorites / a collection sets the scope (§3.1); All Samples clears
+it. The active scope row highlights exactly like the active pack today.
 
-Collection context menu (right-click): **Rename…** (inline edit), **Delete…** (confirm dialog
-in-app; deleting a collection never touches samples). Empty states: Favorites scope — "No
-favorites yet — press F on a sample you love."; collection scope — "Drag samples here, or press
-C on a selected sample."
+Collection context menu (right-click): **Rename…** (inline edit; collision → inline error),
+**Delete…** (confirm dialog in-app; deleting a collection never touches samples). **Deleting
+the collection that is the current scope reverts the scope to All Samples**; renaming it just
+relabels in place. Empty states: Favorites scope — "No favorites yet — press F on a sample you
+love."; collection scope — "Drag samples here, or press C on a selected sample."
 
 ### 5.2 Rows
 
@@ -210,21 +266,26 @@ C on a selected sample."
 - **Nickname editor** (`N` or context menu): inline edit of the filename cell on the selected
   row; Enter commits, Esc cancels, empty clears the nickname.
 - **Add-to-collection popover** (`C` or context menu): anchored to the selected row; type-ahead
-  over collection names; Enter adds to the highlighted collection; typing a new name and
-  Cmd/Ctrl+Enter creates it and adds in one gesture; Esc closes.
+  over collection names (an existing name always resolves to its collection, §2.3); Enter adds
+  to the highlighted collection; typing a new name and Cmd/Ctrl+Enter creates it and adds in one
+  gesture; Esc closes.
 
 ### 5.4 Keyboard map
 
-Registered on the list container (like today's arrows — a focused text input always types
-normally; popovers trap their own keys, Esc unwinds one layer):
+Registration points are split by necessity: `F`/`T`/`C`/`N`/`Delete` live on the list container
+(like today's arrows); `Cmd/Ctrl+F` is window-level (it must work from the rail and popovers);
+the `Esc` search behavior lives on the search input itself (focus is by definition there).
+A focused text input always types normally; popovers trap their own keys, Esc unwinds one
+layer. **Every single-key action is a no-op when nothing is selected** (the existing
+`replay()` no-op pattern).
 
 | Key | Action |
 |---|---|
-| `F` | Toggle favorite on the selected row |
+| `F` | Toggle favorite on the selected row (under Favorites scope, selection then follows §3.1's next-row rule) |
 | `T` | Tags popover for the selected row |
 | `C` | Add-to-collection popover for the selected row |
 | `N` | Nickname inline edit for the selected row |
-| `Delete`/`Backspace` | Under a collection scope only: remove selected row from that collection (selection moves to the next row; never deletes files) |
+| `Delete`/`Backspace` | Under a collection scope only: remove selected row from that collection (§3.1 next-row rule; never deletes files) |
 | `Cmd/Ctrl+F` | Focus search |
 | `Esc` (in search) | Clear search if non-empty, else return focus to the list |
 
@@ -236,40 +297,62 @@ A new `UserLayerStore` (MobX 6, same DI pattern as LibraryStore: takes the typed
 owns rail data (`favoritesCount`, `collections`), popover/menu open-state targets, and the write
 actions; `LibraryStore` keeps query/filter ownership and gains only the `scope` field. Row
 user-fields arrive on `SampleRow` through the existing query path — no second per-row store.
-After any user-layer write, the store re-fetches the rail summary and asks LibraryStore to
-re-run the current query (counts and row fields refresh through the one existing pipeline).
+After any user-layer write, the store re-fetches the rail summary, **re-fetches the tag facets
+(`listTags`) when the write touched user tags** (the cloud is a query-time snapshot in
+LibraryStore and would otherwise go stale until relaunch), and asks LibraryStore to re-run the
+current query — counts and row fields refresh through the one existing pipeline.
 
 ## 7. Drag-into-collection
 
-Native drag-out (`webContents.startDrag`) stays exactly as is — dragging a row still lands
-files in the DAW/Finder. For drag-*in*: rail collection rows are HTML5 drop targets. On
-`dragstart` the renderer already `preventDefault`s and records the dragged sample id in a
-module-level "drag source" slot before invoking the native drag; when a native-drag hover ends
-in a drop over a collection row, the drop handler consumes that slot (files dropped from
-*outside* the app are ignored in v1 — no import-by-drop). If the OS-level native drag proves not
-to deliver DOM drop events over our own window on either platform (**spike task in the plan —
-must be proven on macOS AND Windows before the interaction tasks build on it**), the fallback
-is: rows expose a small grab-handle that starts a plain HTML5 in-app drag for collection drops,
-while the row body keeps the native drag-out. Keyboard (`C`) and context menu cover the same
+Native drag-out (`webContents.startDrag`) stays exactly as is from the user's point of view —
+dragging a row still lands files in the DAW/Finder. For drag-*in*: rail collection rows are
+HTML5 drop targets, discriminated by a renderer-owned **drag-source slot** with an explicit
+lifecycle (after `dragstart`'s `preventDefault` there is no HTML5 drag session, so the slot is
+the ONLY way to tell our own native drag from an external Finder/Explorer file drag — the two
+look identical at the drop site):
+
+- Today's `handleDragStart` already `preventDefault`s and invokes the native drag; **the slot
+  is NEW work**: record the dragged sample id in the module-level slot *before* invoking
+  `startDrag`.
+- `startDrag` is an invoke (§4) that resolves when the OS drag session ends; **the renderer
+  clears the slot when the invoke resolves.** No push event needed, no reliance on `dragend`
+  (which never fires for the cancelled HTML5 drag).
+- **Discrimination rule: an empty slot means every file drop is ignored.** External drops are
+  ignored in v1 (no import-by-drop), and a drop after a completed drag-out cannot consume a
+  stale slot — the slot is already cleared.
+
+Feasibility spike (**plan task, ordered before every interaction task that builds on it — must
+be proven on macOS AND Windows**): does a native `startDrag` session deliver DOM drop events
+over the app's own window at all? If not, the fallback is a small per-row grab-handle that
+starts a plain HTML5 in-app drag for collection drops while the row body keeps the native
+drag-out — adopting the fallback changes row hit-areas, so it is a deliberate owner-visible
+decision at plan time, not a silent default. Keyboard (`C`) and context menu cover the same
 action regardless, so the feature never hinges on the gesture.
 
 Drop feedback: the hovered collection row highlights; on drop its count bumps. Dropping onto
-Favorites favorites the sample (same slot mechanism).
+Favorites favorites the sample (same slot mechanism). E2E note: the harness's drag seam skips
+the real native drag, so the e2e arm's `startDrag` invoke resolves immediately — which clears
+the slot; `collections.spec`'s synthetic drag-in must sequence its synthetic drop before/around
+that resolution (the plan owns the exact mechanism).
 
 ## 8. E2E and testing
 
 - Unit (Vitest): user-db module (schema, favorite/nickname/tag/collection CRUD, normalization
-  collisions, dormant-hash reattach), query composition (scopes × filters × search incl.
-  nickname/user-tag matches), UserLayerStore actions, keyboard-map dispatch decisions.
+  collisions incl. the collection-collision error, **delete-cascade actually fires** (§2.2),
+  dormant-hash reattach), query composition (scopes × filters × search incl. the §3.4 per-token
+  mixed-vocabulary case), UserLayerStore actions (incl. tag-facet refresh), keyboard-map
+  dispatch decisions (incl. empty-selection no-ops).
 - E2E (Playwright, same harness): `favorites.spec` (heart click + `F`, rail count, scope view,
-  survives relaunch — the persistence.spec relaunch pattern), `tags.spec` (T popover add/remove,
-  autocomplete reuse, chip accent, filter-cloud union matching, search-by-user-tag),
-  `nickname.spec` (N edit, display + tooltip, search-by-nickname, clear restores filename),
-  `collections.spec` (create/rename/delete, add via C popover + context menu + drag-in when the
-  spike lands, Delete-key removal, counts, empty states, survives relaunch),
+  §3.1 selection rule on unfavorite-under-scope, survives relaunch — the persistence.spec
+  relaunch pattern), `tags.spec` (T popover add/remove, autocomplete reuse, chip accent,
+  filter-cloud union matching, search-by-user-tag), `nickname.spec` (N edit, display + tooltip,
+  search-by-nickname incl. a mixed-vocabulary query, clear restores filename),
+  `collections.spec` (create/rename/delete incl. collision inline errors and
+  delete-active-scope fallback, add via C popover + context menu + drag-in when the spike
+  lands, Delete-key removal, counts, empty states, survives relaunch),
   `user-layer-reimport.spec` (favorite → Settings re-import → favorite intact: the §2.1
   guarantee, pinned end-to-end).
-- `security.spec` bridge pin updates 12 → 23 in the same task that grows the bridge.
+- `security.spec` bridge pin (array + title) updates per §4's canonical rule.
 - Fixture: unchanged — user.db starts empty in every test; user state is created through the
   real UI (the honest path). `__ntwineE2E` snapshot may gain a `scope` echo if a spec needs it;
   DOM-first assertions preferred.
@@ -283,9 +366,13 @@ tag rename/merge management UI, drag-out of a whole collection.
 
 ## 10. Taste calls made for the owner (veto anytime)
 
-1. LIBRARY section lives at the *top* of the rail, above PACKS, inside the same scroller.
+1. LIBRARY section lives at the *top* of the rail, above PACKS, inside the same scroller — and
+   All Samples moves into it as its first row.
 2. Favorites/collections behave as *scopes* (like packs), not as filter chips.
 3. User-tag chips are accented on rows; the filter cloud shows one merged vocabulary.
 4. Collection views keep the standard sort (manual ordering is v1.5).
 5. In-app context menu rather than native OS menus (stylable + testable).
 6. `Delete` removes from a collection only under that collection's scope — nothing anywhere else.
+7. Duplicate collection names are inline errors (tags silently reuse; collections never merge
+   silently) — the C-popover resolves existing names before creating, so you only hit the error
+   on an explicit create/rename.
