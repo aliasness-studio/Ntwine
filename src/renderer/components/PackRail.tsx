@@ -4,20 +4,18 @@
 // this component now renders packs only, under its own small header so the two rails still read
 // as distinct sections inside the shared PacksScroll.
 import { observer } from 'mobx-react-lite';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import styled from 'styled-components';
 import { api } from '../stores/api';
 import { useStores } from './StoreContext';
 
-const RailSection = styled.div`
-  display: flex;
-  flex-direction: column;
-  padding: 8px 0;
-  border-top: 1px solid ${(p) => p.theme.color.border};
-`;
-
+// A Fragment, not a wrapping styled.div, holds `SectionLabel` + `List` below (Task 8) —
+// sidebar.spec.ts's `packsScrollState` reads the "Packs" listbox's `parentElement` and expects
+// PacksScroll itself (App.tsx's scroll container), not an intermediate section wrapper. LibraryRail
+// has no such pre-existing DOM-parentage contract to preserve, so it wraps freely; this one can't.
 const SectionLabel = styled.div`
-  padding: 0 10px 4px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid ${(p) => p.theme.color.border};
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -27,7 +25,7 @@ const SectionLabel = styled.div`
 const List = styled.div`
   display: flex;
   flex-direction: column;
-  padding: 0 8px;
+  padding: 0 8px 8px;
   gap: 2px;
 `;
 
@@ -109,7 +107,7 @@ export const PackRail = observer(function PackRail() {
   const { library } = useStores();
 
   return (
-    <RailSection>
+    <Fragment>
       <SectionLabel>Packs</SectionLabel>
       <List role="listbox" aria-label="Packs">
         {library.packs.map((pack) => {
@@ -131,6 +129,6 @@ export const PackRail = observer(function PackRail() {
           );
         })}
       </List>
-    </RailSection>
+    </Fragment>
   );
 });
