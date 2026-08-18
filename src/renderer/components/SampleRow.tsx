@@ -203,7 +203,7 @@ export function SampleRow({ row, selected, peaks, top, onSelect }: SampleRowProp
       flashTimeoutRef.current = setTimeout(() => setBadgeFlash(false), BADGE_FLASH_MS);
       return;
     }
-    api.startDrag(row.id);
+    void api.startDrag(row.id);
   };
 
   return (

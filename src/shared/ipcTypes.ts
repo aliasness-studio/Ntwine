@@ -103,7 +103,30 @@ export interface NtwineApi {
   decodePreviewPcm(
     sampleId: number,
   ): Promise<{ sampleRate: number; channels: Float32Array[] } | null>; // §4's ONE exception — capped + off-main, see below
-  startDrag(sampleId: number): void;
+  // Task 6: promoted from `ipcRenderer.send` to `invoke` (design spec §4) — `webContents.startDrag`
+  // (drag.ts) blocks the main process until the OS drag session ends, so this invoke's resolution
+  // IS the drag-end signal the drag-into-collection slot (spec §7) needs.
+  startDrag(sampleId: number): Promise<void>;
   sampleUrl(sampleId: number): string; // `sample://s/${id}` — pure string helper
   coverUrl(packId: number): string; // `cover://p/${id}`
+
+  // User layer (Task 6, design spec §4): the bridge grows from 12 to 23 methods here — signatures
+  // transcribed verbatim from spec §4. Every write below resolves `sampleId -> file_hash` inside
+  // main (ipc.ts); the renderer never sees a hash. `createCollection`/`renameCollection` reject
+  // (design spec §2.3) on a normalized-name collision with a DIFFERENT collection — surfaced
+  // inline at the editor (spec §5.1/§5.3).
+  setFavorite(sampleId: number, on: boolean): Promise<void>;
+  setNickname(sampleId: number, nickname: string | null): Promise<void>; // null clears; trimmed; '' -> null
+  listUserTags(): Promise<string[]>; // display names A-Z, for autocomplete
+  addUserTag(sampleId: number, name: string): Promise<void>;
+  removeUserTag(sampleId: number, name: string): Promise<void>;
+  listLibraryRail(): Promise<{
+    favorites: number; // present-only count
+    collections: { id: string; name: string; count: number }[]; // A-Z, present-only counts
+  }>;
+  createCollection(name: string): Promise<{ id: string }>; // name-collision -> error (§2.3)
+  renameCollection(id: string, name: string): Promise<void>; // name-collision -> error (§2.3)
+  deleteCollection(id: string): Promise<void>; // items cascade; samples untouched
+  addToCollection(collectionId: string, sampleId: number): Promise<void>;
+  removeFromCollection(collectionId: string, sampleId: number): Promise<void>;
 }

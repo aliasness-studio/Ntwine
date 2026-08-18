@@ -8,6 +8,7 @@ import type { E2EEmit } from './e2e';
 import { runImport as runImportPipeline, statPass, type ImportDeps } from './importer/importer';
 import { resolveSpliceDbCandidates } from './paths';
 import { resolveSampleAbsPath } from './protocol';
+import type { UserDb } from './user/userDb';
 import { runPeaksQueue, WORKER_PATH, type WorkerLike } from './waveforms/queue';
 import type { ImportProgress, QueryFilters } from '../shared/ipcTypes';
 
@@ -117,6 +118,10 @@ export async function decodePreviewPcm(
 
 export interface RegisterIpcDeps {
   catalog: Catalog;
+  // Task 6: the user-layer CRUD surface (src/main/user/userDb.ts) — `openUserDb` has already run
+  // by the time this is wired (main.ts's whenReady), so every handler below can call straight
+  // through to it.
+  userDb: UserDb;
   snapshotDir: string;
   coversDir: string;
   // Forwards one ImportProgress event to the renderer (main.ts wires this to
@@ -185,17 +190,23 @@ export function runWaveformsInBackground(
 
 /**
  * Wires one `ipcMain.handle` per `NtwineApi` method (channel names `ntwine:<method>`) onto
- * `deps`. `startDrag` isn't here — it stays on drag.ts's pre-existing `ntwine:drag-start`
- * `ipcMain.on` channel (fire-and-forget, not invoke/handle); `sampleUrl`/`coverUrl` aren't here
- * either — pure template-string helpers built entirely in preload.ts, no IPC round-trip.
+ * `deps`. `startDrag` isn't here — it's wired by drag.ts's own `registerDragHandler`, called
+ * separately from main.ts; as of Task 6 that's ALSO `ipcMain.handle` (promoted from `.on` so
+ * `webContents.startDrag`'s blocking-until-drag-end becomes the invoke's own resolution, design
+ * spec §4), just not registered from this function. `sampleUrl`/`coverUrl` aren't here either —
+ * pure template-string helpers built entirely in preload.ts, no IPC round-trip.
  *
  * Every query-style handler (`querySamples`/`listPacks`/`listTags`/`getPeaks`) is safe to call
  * before any import has ever run: `openCatalog` always creates a valid (if empty) schema, so
  * these just return `[]`/`{}` from ordinary SQL over empty tables — no special-casing needed, and
- * no handler here ever throws for "nothing imported yet."
+ * no handler here ever throws for "nothing imported yet." The Task 6 user-layer handlers below
+ * share that discipline for a different reason: `openUserDb` (main.ts) always creates its own
+ * valid-if-empty schema too, and a sampleId that resolves to no catalog row is a silent no-op
+ * (see `hashOf`), never a throw — a renderer racing a since-changed result set is routine, not an
+ * error.
  */
 export function registerIpc(deps: RegisterIpcDeps): void {
-  const { catalog } = deps;
+  const { catalog, userDb } = deps;
 
   // One definition of "the deps runWaveformsInBackground needs," built fresh at each call site
   // (libraryRoot is re-read live, not cached — see currentLibraryRoot's own doc comment) rather
@@ -260,6 +271,75 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     );
     deps.e2eEmit?.('ntwine:e2e:preview-pcm', { sampleId, ok: result !== null });
     return result;
+  });
+
+  // sampleId -> file_hash for every user-layer write below (design spec §4: "the renderer never
+  // sees hashes"). Deliberately a bare `.prepare()` per call, not a hoisted statement like the
+  // rest of this module's hot paths — these are user-triggered one-at-a-time writes (a heart
+  // click, a tag add), never a per-row query loop. An id with no matching row (stale renderer
+  // state — the row was deleted/re-imported since the id was read) resolves to null; every
+  // handler below treats null as "nothing to do," never a throw.
+  const hashOf = (sampleId: number): string | null =>
+    (
+      catalog.db.prepare('SELECT file_hash AS h FROM samples WHERE id = ?').get(sampleId) as
+        | { h: string }
+        | undefined
+    )?.h ?? null;
+
+  // User layer (Task 6, design spec §4). Synchronous SQLite under the hood throughout (better-
+  // sqlite3, via userDb) — no handler here awaits anything internally, the same discipline
+  // querySamples/listPacks/listTags above already keep: handlers answering in registration order
+  // is what keeps LibraryStore's un-sequenced re-queries safe. `createCollection`/
+  // `renameCollection` deliberately do NOT catch `UserNameError` — an invoke rejection carries
+  // `.message` straight back to the renderer's inline editor error (spec §2.3/§5.1/§5.3).
+  ipcMain.handle('ntwine:setFavorite', async (_event, sampleId: number, on: boolean) => {
+    const hash = hashOf(sampleId);
+    if (hash === null) return;
+    userDb.setFavorite(hash, on);
+  });
+
+  ipcMain.handle('ntwine:setNickname', async (_event, sampleId: number, nickname: string | null) => {
+    const hash = hashOf(sampleId);
+    if (hash === null) return;
+    userDb.setNickname(hash, nickname);
+  });
+
+  ipcMain.handle('ntwine:listUserTags', async () => userDb.listUserTagNames());
+
+  ipcMain.handle('ntwine:addUserTag', async (_event, sampleId: number, name: string) => {
+    const hash = hashOf(sampleId);
+    if (hash === null) return;
+    userDb.addUserTag(hash, name);
+  });
+
+  ipcMain.handle('ntwine:removeUserTag', async (_event, sampleId: number, name: string) => {
+    const hash = hashOf(sampleId);
+    if (hash === null) return;
+    userDb.removeUserTag(hash, name);
+  });
+
+  ipcMain.handle('ntwine:listLibraryRail', async () => userDb.listLibraryRail());
+
+  ipcMain.handle('ntwine:createCollection', async (_event, name: string) => userDb.createCollection(name));
+
+  ipcMain.handle('ntwine:renameCollection', async (_event, id: string, name: string) => {
+    userDb.renameCollection(id, name);
+  });
+
+  ipcMain.handle('ntwine:deleteCollection', async (_event, id: string) => {
+    userDb.deleteCollection(id);
+  });
+
+  ipcMain.handle('ntwine:addToCollection', async (_event, collectionId: string, sampleId: number) => {
+    const hash = hashOf(sampleId);
+    if (hash === null) return;
+    userDb.addToCollection(collectionId, hash);
+  });
+
+  ipcMain.handle('ntwine:removeFromCollection', async (_event, collectionId: string, sampleId: number) => {
+    const hash = hashOf(sampleId);
+    if (hash === null) return;
+    userDb.removeFromCollection(collectionId, hash);
   });
 
   // Startup resume (spec §5 "resumable"): a quit mid-waveform-pass must not orphan pending

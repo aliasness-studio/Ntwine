@@ -2,23 +2,35 @@ import { expect, test } from './harness/fixtures';
 
 // The exact `window.ntwine` bridge surface (preload.ts's `api` object, `NtwineApi` in
 // ipcTypes.ts), sorted — a method silently added/removed/renamed shows up as an array diff rather
-// than a vague count mismatch.
+// than a vague count mismatch. Task 6 (design spec §4) grew this from 12 to 23: the 11 user-layer
+// methods below, plus `startDrag` promoted from `send` to `invoke` (same method, unchanged count).
 const NTWINE_API_METHODS = [
+  'addToCollection',
+  'addUserTag',
   'coverUrl',
+  'createCollection',
   'decodePreviewPcm',
+  'deleteCollection',
   'getPeaks',
   'getState',
+  'listLibraryRail',
   'listPacks',
   'listTags',
+  'listUserTags',
   'onImportProgress',
   'pickLibraryRoot',
   'querySamples',
+  'removeFromCollection',
+  'removeUserTag',
+  'renameCollection',
   'runImport',
   'sampleUrl',
+  'setFavorite',
+  'setNickname',
   'startDrag',
 ];
 
-test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 12 methods', async ({
+test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 23 methods', async ({
   ntwine,
 }) => {
   const { app, page, seam } = ntwine;

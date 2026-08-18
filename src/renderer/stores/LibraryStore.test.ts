@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
 import { LibraryStore } from './LibraryStore';
 
-// Full `NtwineApi`-shaped fake (all 12 bridge methods), built from plain `vi.fn()`s so the
+// Full `NtwineApi`-shaped fake (all 23 bridge methods), built from plain `vi.fn()`s so the
 // returned object satisfies `NtwineApi` structurally when passed into `new LibraryStore(...)` —
 // no cast needed. Individual methods LibraryStore actually calls (`listPacks`/`listTags`/
 // `querySamples`/`getPeaks`) are overridable per test; the rest are inert defaults LibraryStore
@@ -36,9 +36,23 @@ function makeFakeApi(
     decodePreviewPcm: vi.fn(
       async () => null as { sampleRate: number; channels: Float32Array[] } | null,
     ),
-    startDrag: vi.fn(() => {}),
+    startDrag: vi.fn(async () => {}),
     sampleUrl: vi.fn((id: number) => `sample://s/${id}`),
     coverUrl: vi.fn((id: number) => `cover://p/${id}`),
+    // Task 6 (design spec §4): 11 new bridge methods, inert here — LibraryStore itself never
+    // calls any of these (UserLayerStore, a later task, owns the writes; LibraryStore only
+    // re-runs querySamples/listTags afterward).
+    setFavorite: vi.fn(async () => {}),
+    setNickname: vi.fn(async () => {}),
+    listUserTags: vi.fn(async () => [] as string[]),
+    addUserTag: vi.fn(async () => {}),
+    removeUserTag: vi.fn(async () => {}),
+    listLibraryRail: vi.fn(async () => ({ favorites: 0, collections: [] as { id: string; name: string; count: number }[] })),
+    createCollection: vi.fn(async () => ({ id: 'c1' })),
+    renameCollection: vi.fn(async () => {}),
+    deleteCollection: vi.fn(async () => {}),
+    addToCollection: vi.fn(async () => {}),
+    removeFromCollection: vi.fn(async () => {}),
   };
 }
 
