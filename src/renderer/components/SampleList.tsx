@@ -50,7 +50,7 @@ const EmptyState = styled.div`
 `;
 
 export const SampleList = observer(function SampleList() {
-  const { library, player } = useStores();
+  const { library, player, userLayer } = useStores();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const rowVirtualizer = useVirtualizer({
@@ -230,6 +230,7 @@ export const SampleList = observer(function SampleList() {
               onSelect={() => {
                 if (!row.missing) player.select(row.id);
               }}
+              onToggleFavorite={() => void userLayer.toggleFavorite(row)}
             />
           );
         })}
