@@ -42,7 +42,7 @@ server.
 
 ```bash
 yarn e2e         # package + run the full Playwright suite (default project)
-yarn e2e:only    # re-run Playwright against the existing out/ build, no repackage
+yarn e2e:only    # re-run Playwright against the existing .vite/build, no repackage
 yarn e2e:real    # opt-in: import your real Splice library instead of the fixture
 ```
 
@@ -50,8 +50,8 @@ yarn e2e:real    # opt-in: import your real Splice library instead of the fixtur
 immediately after a `yarn e2e` (or a bare `electron-forge package`). The harness guards this
 itself before every launch, two ways: it refuses a **dev** build left behind by `yarn start`
 (`.vite/build/main.js` still points at the Vite dev server) and it refuses a **stale** build
-(`.vite/build/main.js` older than anything under `src/`) — either refusal names the fix
-(`yarn package` / `yarn e2e`) in the thrown error.
+(`.vite/build/main.js` older than anything under `src/`). The dev-build error names `yarn package`
+as the fix; the stale-build error names either `yarn package` or `yarn e2e`.
 
 `yarn e2e:real` (`NTWINE_E2E_REAL=1`, baked into the script) runs one opt-in spec against your
 actual Splice library over the network instead of the synthetic fixture, so it needs a real
