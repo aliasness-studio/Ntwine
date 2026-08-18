@@ -422,7 +422,14 @@ export const LibraryRail = observer(function LibraryRail() {
 
           if (renamingId === c.id) {
             return (
-              <EditRow key={c.id}>
+              // Task 15 carried fix (Task 8 deferred minor): this branch swaps the collection's
+              // normal `Item role="option"` for this row while renaming — it must keep exposing
+              // the SAME role inside the `Library` listbox, or the listbox's ARIA structure (and
+              // any getByRole('option') lookup against it) breaks for exactly the row being
+              // edited. `aria-selected={false}`: a mid-rename row is never the active query scope
+              // (renaming doesn't change `library.filters.scope`), so this is never anything but
+              // false in practice — matching, not guessing at, every other option's real prop.
+              <EditRow key={c.id} role="option" aria-selected={false}>
                 <EditInputRow>
                   <IconSlot aria-hidden="true" />
                   <TextInput
