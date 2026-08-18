@@ -69,7 +69,20 @@ export class LibraryStore {
       this.packs = packs;
       this.tags = tags;
     });
-    await this.runQuery();
+    await this.rerun();
+  }
+
+  /**
+   * Re-fetches just the tag facet list (`listTags()`), leaving `packs`/`rows` untouched — Task 7:
+   * UserLayerStore calls this after a user-tag add/remove so a brand-new tag's chip (or a tag's
+   * last removal) shows up in the facet list without re-fetching packs too, which `init()` would
+   * do unnecessarily.
+   */
+  async refreshTags(): Promise<void> {
+    const tags = await this.api.listTags();
+    runInAction(() => {
+      this.tags = tags;
+    });
   }
 
   /**
@@ -146,10 +159,15 @@ export class LibraryStore {
       }
     }
     this.filters = merged;
-    void this.runQuery();
+    void this.rerun();
   }
 
-  private async runQuery(): Promise<void> {
+  // Public (Task 7, renamed from `runQuery`) — UserLayerStore's private `refresh()` calls this
+  // directly after a user-layer write (favorite/nickname/tag/collection membership) so the
+  // CURRENT filters re-query against the just-changed catalog state, without UserLayerStore
+  // reaching into `patchFilters`/`filters` itself or duplicating the `toJS` IPC-safety handling
+  // below.
+  async rerun(): Promise<void> {
     this.loading = true;
     // `toJS(this.filters)`, not `this.filters` directly: `makeAutoObservable` deep-wraps
     // object-typed fields as MobX observables (Proxies) by default, and `filters` isn't in the

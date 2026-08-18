@@ -20,6 +20,7 @@ import { api } from './renderer/stores/api';
 import { ImportStore } from './renderer/stores/ImportStore';
 import { LibraryStore } from './renderer/stores/LibraryStore';
 import { PlayerStore } from './renderer/stores/PlayerStore';
+import { UserLayerStore } from './renderer/stores/UserLayerStore';
 
 // Task 14: the real WebAudio PlayPort, replacing Task 13's no-op stub. `fetchBytes` is the one
 // production implementation the previewPlayer brief names verbatim — `sample://` is
@@ -44,11 +45,26 @@ const basePort = createPreviewPlayer({
 });
 const { port: playPort, counters } = wrapPlayPort(basePort, e2eArmed);
 
+// Constructed as a local, not inline in `stores` below, so `UserLayerStore` (Task 7) — DI'd with
+// BOTH `api` and this same `library` instance, the same pattern its own constructor doc-comments
+// — can reference it without reaching back into `stores.library`.
+const library = new LibraryStore(api);
 const stores: Stores = {
-  library: new LibraryStore(api),
+  library,
   player: new PlayerStore(playPort),
   importStore: new ImportStore(api),
+  userLayer: new UserLayerStore(api, library),
 };
+
+// Fire-and-forget, same posture as `library.init()`'s own call site (App.tsx) — a rejection here
+// is a real IPC failure, not a validation error a caller needs to react to, so it's left to
+// surface as an unhandled rejection/console error rather than swallowed. Unlike `library.init()`
+// (gated behind FirstRun completion, since browsing UI has nothing to show before an import),
+// `userLayer.init()` runs unconditionally at startup: `openUserDb` (main.ts) opens user.db on
+// EVERY launch regardless of import state, so `listLibraryRail()`/`listUserTags()` are always
+// answerable — pre-import they just resolve to the zero values (Task 1: an empty user.db is a
+// valid, fully-migrated database, not a missing one).
+void stores.userLayer.init();
 
 // Synchronous, before any async work — the harness waits on typeof === 'function'.
 installE2ESnapshot(window, e2eArmed, () => ({
