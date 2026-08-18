@@ -91,8 +91,11 @@ describe('searchIdsForToken', () => {
 
   // Multi-token AND composition (was pinned here against the old whole-query `searchIds`) is now
   // queries.ts's job — `searchIdsForToken` only ever sees one already-split token, unioned with
-  // nickname/user-tag hits and AND-composed across tokens by `querySamples` itself (Task 4). That
-  // composition is covered in queries.test.ts (the per-token search union describe block) instead.
+  // nickname/user-tag hits and AND-composed across tokens by `querySamples` itself (Task 4). This
+  // file's own former 'kic ana' (same row, different FTS columns) / 'kic amb' (different rows)
+  // cases are ported verbatim in spirit to queries.test.ts's
+  // "FTS-only tokens still AND together under the new JS-Set composition" test — same shape,
+  // this repo's own fixture strings.
 
   it('returns an empty array (not a throw) for a token that matches nothing', () => {
     const { catalog } = setUp();

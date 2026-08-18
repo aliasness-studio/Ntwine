@@ -399,6 +399,32 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
     expect(result.map((r) => r.filename)).toEqual(['bass.wav']);
   });
 
+  // Direct successor to search.test.ts's retired 'kic ana'/'kic amb' cases (search.test.ts:92) —
+  // those pinned FTS5's own internal AND across two quoted phrases in ONE MATCH query; this task
+  // replaced that mechanism with N independent `searchIdsForToken` calls intersected via JS Sets
+  // (queries.ts), so the old test's SCENARIO (two tokens, both purely FTS-sourced) needs its own
+  // proof against the new mechanism, not just an assumption the replacement is equivalent. Plain
+  // `setUp()` (no user db) so `userText` is empty and both tokens can only resolve via
+  // `searchIdsForToken` — this test would not compile a meaningfully different result under the
+  // OLD implementation either (both mechanisms compute the same AND for pure-FTS tokens), but it
+  // DOES falsify a broken JS-Set intersection (e.g. accidentally unioning, or losing one token's
+  // constraint) — the same mutation check applied to the AND-across-sources test above.
+  it('FTS-only tokens still AND together under the new JS-Set composition: same row via different columns matches, different rows empties', () => {
+    const { catalog } = setUp();
+
+    // 'kic' -> kick.wav only (its filename token AND its 'kick' tag). 'fix' -> every Fixture Pack
+    // sample (their shared pack_name "Fixture Pack"). Intersecting narrows the pack-wide 'fix' hit
+    // down to exactly the row 'kic' also hits — proving AND still holds when two FTS-only tokens
+    // land on the SAME row through DIFFERENT indexed columns (filename/tag vs. pack_name).
+    expect(querySamples(catalog, { search: 'kic fix' }).map((r) => r.filename)).toEqual([
+      'kick.wav',
+    ]);
+
+    // 'kic' -> kick.wav (Fixture Pack). 'gho' -> boo.wav (Ghost Pack's pack_name). No row belongs
+    // to both packs, so the AND-intersection is empty.
+    expect(querySamples(catalog, { search: 'kic gho' })).toEqual([]);
+  });
+
   // Note on this test's RED-phase power: any assertion of an EMPTY result here is structurally
   // unable to fail against the OLD (pre-Task-4) implementation — old FTS-only matching is a strict
   // subset of the new union matching (it can only find FEWER rows, never more), so a token that
