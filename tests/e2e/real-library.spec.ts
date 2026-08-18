@@ -43,6 +43,6 @@ test('@real the real Splice library imports completely', async () => {
     // leaves 2 of the `real` project's 15-minute test budget for the assertion + teardown below.
     l.page.setDefaultTimeout(13 * 60_000);
     await importAndWait(l.page);            // network-bound: ~612 sequential cover fetches
-    expect(await readCount(l.page)).toBe(expected);
+    await expect.poll(() => readCount(l.page)).toBe(expected);
   } finally { await l.close(); rmSync(root, { recursive: true, force: true }); }
 });

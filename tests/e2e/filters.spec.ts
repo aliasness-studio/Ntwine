@@ -14,7 +14,7 @@ test('every FilterPanel control narrows/restores the result count, tags AND, and
 }) => {
   const { page, fixture } = ntwine;
   await importAndWait(page);
-  expect(await readCount(page)).toBe(fixture.totalSamples); // sanity: 12 before any filter
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // sanity: 12 before any filter
 
   await toggleType(page, 'One-shot');
   await expect.poll(() => readCount(page)).toBe(fixture.counts.oneshot); // 8
@@ -28,6 +28,11 @@ test('every FilterPanel control narrows/restores the result count, tags AND, and
 
   await pickKey(page, 'c#');
   await expect.poll(() => readCount(page)).toBe(fixture.counts.keyCSharp); // 3
+  await pickKey(page, ''); // Any key
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // 12
+
+  await pickKey(page, 'a');
+  await expect.poll(() => readCount(page)).toBe(fixture.counts.keyA); // 5
   await pickKey(page, ''); // Any key
   await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // 12
 
@@ -49,6 +54,16 @@ test('every FilterPanel control narrows/restores the result count, tags AND, and
     })
     .toBe(fixture.counts.kickAndSnare); // 1
   await toggleTag(page, 'kick'); // off
+  await toggleTag(page, 'snare'); // off
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // 12
+
+  await toggleTag(page, 'drums');
+  await expect.poll(() => readCount(page)).toBe(fixture.counts.tagDrums); // 6
+  await toggleTag(page, 'drums'); // off
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // 12
+
+  await toggleTag(page, 'snare');
+  await expect.poll(() => readCount(page)).toBe(fixture.counts.tagSnare); // 2
   await toggleTag(page, 'snare'); // off
   await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // 12
 

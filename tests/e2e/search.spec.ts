@@ -6,7 +6,7 @@ test('search matches filename/tag/pack-name tokens by FTS5 prefix, and clears ba
 }) => {
   const { page, fixture } = ntwine;
   await importAndWait(page);
-  expect(await readCount(page)).toBe(fixture.totalSamples); // sanity: 12 before any search
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // sanity: 12 before any search
 
   // fixture.counts.searchKick IS the tokenizer model (library.ts's own doc comment): a row
   // matches if some token in its filename, its parsed tags, or its pack name starts with "kick" —

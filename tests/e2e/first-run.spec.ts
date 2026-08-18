@@ -9,7 +9,7 @@ test('first run detects the fixture DB, imports, and lands on the library with e
   const { page, fixture } = ntwine;
   await expect(page.getByTestId('detected-splice-db')).toHaveText('found');
   await importAndWait(page);
-  expect(await readCount(page)).toBe(fixture.totalSamples);            // 12
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // 12
   await expect(page.getByTestId('result-count')).toHaveText(`${fixture.totalSamples} samples`);
 });
 

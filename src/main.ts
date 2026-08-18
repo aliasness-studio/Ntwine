@@ -29,18 +29,18 @@ registerProtocolSchemes();
 let e2e: E2EConfig | null = null;
 try {
   e2e = readE2EConfig(process.env);
+  if (e2e) {
+    // app.setPath throws when the directory does not exist (Electron docs) — create first.
+    mkdirSync(e2e.userData, { recursive: true });
+    app.setPath('userData', e2e.userData);
+    if (e2e.appData) {
+      mkdirSync(e2e.appData, { recursive: true });
+      app.setPath('appData', e2e.appData);
+    }
+  }
 } catch (err) {
   console.error(String(err));
   app.exit(2);
-}
-if (e2e) {
-  // app.setPath throws when the directory does not exist (Electron docs) — create first.
-  mkdirSync(e2e.userData, { recursive: true });
-  app.setPath('userData', e2e.userData);
-  if (e2e.appData) {
-    mkdirSync(e2e.appData, { recursive: true });
-    app.setPath('appData', e2e.appData);
-  }
 }
 const e2eEmit = makeE2EEmitter(app, e2e);
 
