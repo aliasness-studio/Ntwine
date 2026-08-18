@@ -94,6 +94,25 @@ export async function openSettings(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Settings' }).click();
 }
 
+/** The favorite-heart button on a row (`SampleRow.tsx`'s `HeartButton` — `aria-pressed`,
+ * `aria-label="Favorite"`, rendered only on non-missing rows, design spec §5.2). Click toggles
+ * without changing selection or playback. */
+export function rowHeart(page: Page, filename: string): Locator {
+  return rowByFilename(page, filename).getByRole('button', { name: 'Favorite' });
+}
+
+/** Selects the row by filename (focusing the list as a side effect, same as any other row click
+ * in this file) and presses `T` (design spec §5.4) to open its Tags popover — waits for the
+ * popover's `aria-label="Add tag"` input so callers can act on it immediately. Safe to call again
+ * for a different row without closing the first: `UserLayerStore.openTagsPopover` just overwrites
+ * `openPopover`, and `SampleList` remounts `TagsPopover` under a fresh `key={sampleId}`. */
+export async function openTagsPopover(page: Page, filename: string): Promise<void> {
+  await rowByFilename(page, filename).click();
+  await page.getByRole('listbox', { name: 'Sample list' }).focus();
+  await page.keyboard.press('t');
+  await page.getByLabel('Add tag').waitFor();
+}
+
 /** Real peaks draw accent-coloured bars away from the centre line; the null placeholder draws only a
  * thin centre line. Count non-background pixels in the top and bottom thirds (WaveformThumb.tsx). */
 export async function isRealWaveform(canvas: Locator): Promise<boolean> {
