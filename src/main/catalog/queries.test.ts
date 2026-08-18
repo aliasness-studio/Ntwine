@@ -376,6 +376,92 @@ describe('querySamples — user layer (favorite/nickname/userTags, favorites/col
   });
 });
 
+describe('querySamples — per-token search union (FTS + nickname + user tags, spec §3.4)', () => {
+  it('mixed vocabulary: a token matching only via nickname unions with a token matching only via FTS text, AND across tokens', () => {
+    const { catalog, user } = setUpWithUser();
+    // Spec §3.4's own example, adapted to this fixture's "kick.wav" (already an FTS hit for
+    // "kick" via both filename and its 'kick' tag) rather than inventing a new sample: nicknaming
+    // it "THE snare" gives one row reachable by "snare" ONLY through the nickname, and by "kick"
+    // ONLY through FTS — so a match on "snare kick" proves the two sources union per token.
+    user.setNickname('h-kick', 'THE snare');
+
+    const result = querySamples(catalog, { search: 'snare kick' });
+
+    expect(result.map((r) => r.filename)).toEqual(['kick.wav']);
+  });
+
+  it('a user-tag token matches through the tag source, not FTS or nickname', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-bass', 'bounce'); // "bounce" appears nowhere in this fixture's FTS text
+
+    const result = querySamples(catalog, { search: 'bounce' });
+
+    expect(result.map((r) => r.filename)).toEqual(['bass.wav']);
+  });
+
+  // Note on this test's RED-phase power: any assertion of an EMPTY result here is structurally
+  // unable to fail against the OLD (pre-Task-4) implementation — old FTS-only matching is a strict
+  // subset of the new union matching (it can only find FEWER rows, never more), so a token that
+  // only matches via nickname/tag returns [] under BOTH old and new code, for different reasons.
+  // This test's real job is a falsifier for a specific bug class the new union logic invites —
+  // unioning ACROSS tokens instead of per-token (turning "tokens AND" into "tokens OR") — verified
+  // by temporarily swapping the intersection for a union in queries.ts during self-review, which
+  // does turn this red.
+  it('tokens AND, not OR, across sources: two tokens each matching a different row (via different sources) match neither', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setNickname('h-kick', 'THE snare'); // 'snare' -> kick.wav, nickname-only
+    user.addUserTag('h-bass', 'bounce'); // 'bounce' -> bass.wav, tag-only
+
+    // Each token alone has a real, non-empty match, but on DIFFERENT rows — a buggy
+    // union-ACROSS-tokens implementation would wrongly return both.
+    expect(querySamples(catalog, { search: 'snare bounce' })).toEqual([]);
+    // The brief's own phrasing of the case (spec §3.4): a garbage second token empties an
+    // otherwise-matching single-token result too.
+    expect(querySamples(catalog, { search: 'snare nosuch' })).toEqual([]);
+  });
+
+  it('an NFD search token matches an NFC-stored nickname (JS normalization); a plain ASCII prefix matches the same row', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setNickname('h-tom', 'Café Hit');
+
+    const nfdQuery = 'café'.normalize('NFD');
+    // Prove this is byte-genuine NFD (5 UTF-16 units: c,a,f,e,COMBINING ACUTE ACCENT U+0301) and
+    // not silently re-composed back to NFC (4 units, one precomposed 'é') by a source-file save —
+    // .normalize('NFD') is called at runtime on a fresh literal specifically so the on-disk
+    // encoding of this test file can never be the thing making the assertion pass.
+    expect(nfdQuery.length).toBe(5);
+    expect(nfdQuery).not.toBe('café');
+
+    expect(querySamples(catalog, { search: nfdQuery }).map((r) => r.filename)).toEqual([
+      'tom.wav',
+    ]);
+    // Word-boundary prefix, no unicode involved: 'caf' still reaches the same nickname.
+    expect(querySamples(catalog, { search: 'caf' }).map((r) => r.filename)).toEqual(['tom.wav']);
+  });
+
+  it('word-boundary prefix: a token starting a word inside the nickname matches; a token starting mid-word does not', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setNickname('h-kick', 'THE snare');
+
+    expect(querySamples(catalog, { search: 'sna' }).map((r) => r.filename)).toEqual(['kick.wav']);
+    // "nare" is a real suffix of "snare" but starts mid-word — must NOT match.
+    expect(querySamples(catalog, { search: 'nare' })).toEqual([]);
+  });
+
+  it('FTS-only search is unaffected on a connection without openUserDb', () => {
+    const { catalog } = setUp(); // user schema never attached
+
+    const result = querySamples(catalog, { search: 'drums' });
+
+    expect(result.map((r) => r.filename).sort()).toEqual([
+      'bass.wav',
+      'kick.wav',
+      'loop.wav',
+      'tom.wav',
+    ]);
+  });
+});
+
 describe('listPacks', () => {
   it('hides a pack whose only sample is missing, keeps one with some present, counts only present', () => {
     const { catalog } = setUp();

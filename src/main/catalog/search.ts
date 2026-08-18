@@ -41,32 +41,37 @@ export function rebuildSearch(catalog: Catalog): void {
 }
 
 /**
- * Resolves a free-text search-box query to the `samples.id` values it matches, via
+ * Resolves ONE already-split search token to the `samples.id` values it prefix-matches, via
  * `sample_search MATCH` against `filename`/`pack_name`/`tag_text` (the columns actually
- * indexed — `sample_id` is UNINDEXED and never part of MATCH, per db.ts's DDL comment). Each
- * whitespace-separated token becomes its own quoted, prefix-matched phrase (`"tok"*`), joined
- * with FTS5's implicit AND — so `'kic drum'` requires both a "kic*" hit and a "drum*" hit in the
- * SAME row, matching the "narrows as you type more words" feel spec §7 wants from the search
- * box. The `sample_search` table's default tokenizer (unicode61 — no `tokenize=` override in
- * the DDL) case-folds both indexed text and query tokens, which is what makes matches
- * case-insensitive with no extra work here.
+ * indexed — `sample_id` is UNINDEXED and never part of MATCH, per db.ts's DDL comment). The
+ * token becomes a single quoted, prefix-matched phrase (`"tok"*`). The `sample_search` table's
+ * default tokenizer (unicode61 — no `tokenize=` override in the DDL) case-folds both indexed
+ * text and query tokens, which is what makes matches case-insensitive with no extra work here.
  *
- * A double-quote inside a token is escaped by doubling it (`"` -> `""`), the same rule SQL
- * string literals use — that's what lets a query like `ki"ck` reach FTS5 as a syntactically
+ * Single-token by contract (Task 4, spec §3.4) — `querySamples` (queries.ts) is the only caller,
+ * and it now does the multi-token AND/per-source-union composition itself: each whitespace-split
+ * token's FTS hit (this function) is unioned with any nickname/user-tag hit for the SAME token
+ * before the running result is intersected across tokens. Multi-token composition inside FTS5's
+ * own query string (this function's previous, pre-Task-4 job — see git history) can't do that
+ * union, since a nickname/tag hit never has a `sample_search` row to match against.
+ *
+ * A double-quote inside the token is escaped by doubling it (`"` -> `""`), the same rule SQL
+ * string literals use — that's what lets a token like `ki"ck` reach FTS5 as a syntactically
  * valid quoted phrase (`"ki""ck"*`) instead of throwing a query-syntax error.
  *
- * Throws on an empty (or whitespace-only) query: there is no sensible "match nothing" vs.
+ * Throws on an empty (or whitespace-only) token: there is no sensible "match nothing" vs.
  * "match everything" FTS5 spelling for a blank MATCH string, so this makes the caller decide.
- * `querySamples` is the only caller today, and it treats a blank `f.search` as "no search
- * filter" rather than ever reaching this throw (see queries.ts).
+ * `querySamples` never reaches this throw in practice — it only ever calls this with tokens
+ * already filtered by `.split(/\s+/).filter((t) => t.length > 0)`.
  */
-export function searchIds(catalog: Catalog, query: string): number[] {
-  const tokens = query.split(/\s+/).filter((tok) => tok.length > 0);
-  if (tokens.length === 0) {
-    throw new Error('searchIds: empty query — callers must guard against a blank search string');
+export function searchIdsForToken(catalog: Catalog, token: string): number[] {
+  if (token.trim() === '') {
+    throw new Error(
+      'searchIdsForToken: empty token — callers must guard against a blank search token',
+    );
   }
 
-  const matchQuery = tokens.map((tok) => `"${tok.replaceAll('"', '""')}"*`).join(' ');
+  const matchQuery = `"${token.replaceAll('"', '""')}"*`;
 
   const rows = catalog.db
     .prepare<[string], SearchHitRow>(

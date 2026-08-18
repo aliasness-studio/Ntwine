@@ -1,6 +1,7 @@
 import type { Catalog } from './db';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
-import { searchIds } from './search';
+import { searchIdsForToken } from './search';
+import { normalizeUserName } from '../../shared/userNames';
 
 // Driver-row shape for querySamples's row SELECT: camelCase output names (`AS`-aliased in the
 // SQL itself) so the only translation left for the JS side is the boolean/tags fixups SQLite has
@@ -44,6 +45,77 @@ interface UserTagLinkRow {
 }
 
 type Bound = string | number;
+
+// Row shape for `readUserTextWithIds`'s join — one row per (sample, user-tag) pair, fanned out
+// by `user.sample_tags` exactly like `UserTagLinkRow` above, but keyed by `samples.id` (not
+// `fileHash`) since the search composition below works in the same id-space `searchIdsForToken`
+// returns. `nickname`/`tagNormalizedName` are both nullable: LEFT JOINed so a sample with no
+// nickname and/or no user tags still produces a row (nulls) rather than vanishing from the join.
+interface UserTextRow {
+  id: number;
+  nickname: string | null;
+  tagNormalizedName: string | null;
+}
+
+/**
+ * Per-`samples.id` normalized text fragments contributed by the user layer — a sample's nickname
+ * plus each of its user-tag names — for the search composition below (spec §3.4) to word-boundary
+ * match search tokens against, the same way `searchIdsForToken` matches them against FTS text.
+ * Only called when `hasUser` (querySamples's own gate): the `user` schema alias must be ATTACHed
+ * for `user.sample_state`/`user.sample_tags`/`user.tags` to exist at all.
+ *
+ * One SQL join from `samples` through `file_hash` to `user.sample_state` (nickname) and
+ * `user.sample_tags`/`user.tags` (tag names), LEFT JOINed throughout so a sample with neither
+ * still round-trips as a joined row (nulls) instead of disappearing — grouped into one entry per
+ * id in JS afterward, same "separate query, group in JS" shape `querySamples` already uses for
+ * `tags`/`userTags` below. A multiply-tagged sample fans out to one row per tag (same reason
+ * `userTagRows` does); the nickname is simply repeated across those rows, which is harmless here
+ * since every fragment is only ever read with `.some()`, never counted.
+ *
+ * Nicknames are normalized here, at READ time (`normalizeUserName`, `../../shared/userNames`),
+ * not at write time — `setNickname` (userDb.ts) stores the trimmed string exactly as typed, the
+ * same "store raw, fold at query time" split `sample_search`'s FTS columns already use. Tag
+ * fragments are already normalized on disk (`user.tags.normalized_name`, userDb.ts's own SCHEMA)
+ * and are used as-is.
+ */
+function readUserTextWithIds(db: Catalog['db']): Map<number, { text: string[] }> {
+  const rows = db
+    .prepare<[], UserTextRow>(
+      `SELECT s.id AS id, us.nickname AS nickname, t.normalized_name AS tagNormalizedName
+       FROM samples s
+       LEFT JOIN user.sample_state us ON us.sample_file_hash = s.file_hash
+       LEFT JOIN user.sample_tags st ON st.sample_file_hash = s.file_hash
+       LEFT JOIN user.tags t ON t.id = st.tag_id`,
+    )
+    .all();
+
+  const result = new Map<number, { text: string[] }>();
+  for (const row of rows) {
+    if (row.nickname === null && row.tagNormalizedName === null) continue;
+    let entry = result.get(row.id);
+    if (!entry) {
+      entry = { text: [] };
+      result.set(row.id, entry);
+    }
+    if (row.nickname !== null) entry.text.push(normalizeUserName(row.nickname));
+    if (row.tagNormalizedName !== null) entry.text.push(row.tagNormalizedName);
+  }
+  return result;
+}
+
+/**
+ * Word-boundary prefix test (spec §3.4) between one normalized search token and one normalized
+ * user-text fragment (a nickname or a user-tag name): true when the token starts the fragment, or
+ * starts a word inside it. `' ' + tokenNorm` rather than a regex `\b` is enough because both sides
+ * are already `normalizeUserName`d — internal whitespace is already collapsed to single spaces, so
+ * the only word boundaries that can exist are "start of string" and "right after one of those
+ * single spaces." This gives a nickname/tag hit the same "narrows as you type more words" prefix
+ * feel `searchIdsForToken`'s FTS5 `"tok"*` already gives filename/pack/tag hits (spec §7) — so a
+ * search box user can't tell which source answered their query from the matching behavior alone.
+ */
+function wordPrefixMatch(text: string, tokenNorm: string): boolean {
+  return text.startsWith(tokenNorm) || text.includes(` ${tokenNorm}`);
+}
 
 /**
  * Runs the samples list query used by browse + search (spec §7): composes `f`'s filters with
@@ -104,13 +176,38 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   }
 
   // A blank/whitespace-only search is treated as "no search filter" rather than forwarded to
-  // searchIds, which throws on exactly that input (its contract: "callers guard"). Once a real
-  // query string IS present, a zero-match result must short-circuit here — a literal `id IN ()`
-  // is a SQLite syntax error, not an empty result set — so the rest of the WHERE clause is never
-  // even built, let alone run, for a search with no hits.
+  // searchIdsForToken, which throws on exactly that input (its contract: "callers guard"). Once a
+  // real query string IS present, a zero-match result must short-circuit here — a literal
+  // `id IN ()` is a SQLite syntax error, not an empty result set — so the rest of the WHERE clause
+  // is never even built, let alone run, for a search with no hits.
+  //
+  // Per-token search union (spec §3.4): a sample matches when EVERY token prefix-matches, at a
+  // word boundary, at least one of FTS text (searchIdsForToken), its nickname, or one of its
+  // user-tag names — sources union PER token, tokens AND together. `userText` is read once per
+  // call (not once per token): it's the same per-sample fragment set every token gets compared
+  // against, and reading it inside the loop would just re-run the same join once per token for no
+  // benefit.
   let matchedIds: number[] | null = null;
   if (f.search !== undefined && f.search.trim() !== '') {
-    matchedIds = searchIds(catalog, f.search);
+    const tokens = f.search.split(/\s+/).filter((t) => t.length > 0);
+    const userText = hasUser ? readUserTextWithIds(db) : new Map<number, { text: string[] }>();
+    let acc: Set<number> | null = null;
+    for (const token of tokens) {
+      const ftsIds = new Set(searchIdsForToken(catalog, token));
+      const norm = normalizeUserName(token);
+      for (const [id, { text }] of userText) {
+        if (text.some((t) => wordPrefixMatch(t, norm))) ftsIds.add(id);
+      }
+      // `(id: number)` is an explicit type, not a stylistic choice: without it, tsc's inference
+      // for this self-referential `acc = acc === null ? … : new Set([...acc].filter(…))` shape
+      // circularly resolves the callback parameter to `never` (reproduced in isolation outside
+      // this file too) — a real tsc inference limit on this exact "reassign through a ternary
+      // whose else-branch spreads-then-filters the narrowed variable" pattern, not a sign
+      // anything here is actually `never`.
+      acc = acc === null ? ftsIds : new Set([...acc].filter((id: number) => ftsIds.has(id)));
+      if (acc.size === 0) return [];
+    }
+    matchedIds = [...(acc ?? new Set<number>())];
     if (matchedIds.length === 0) return [];
   }
 
