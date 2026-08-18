@@ -1,7 +1,10 @@
 // The three-region window (Task 13 brief, Step 1 / spec §7): a CSS grid with a 240px rail
-// spanning both rows, a 48px top bar, and the list filling the rest. Also owns the top-level
-// FirstRun/library switch (spec §3.1 item 6) and the settings-sheet open/closed boolean — neither
-// belongs to a store (they're one-shot UI wiring, not browsing/playback/import STATE).
+// spanning both rows, a 48px top bar, and the list filling the rest. The rail itself is two
+// independent sections (QoL round 1): a packs scroller that takes all spare height, and a
+// filter dock pinned below it that is always on screen — collapsible down to its header row so
+// the packs scroller can have the full rail. Also owns the top-level FirstRun/library switch
+// (spec §3.1 item 6) plus the settings-sheet and dock-collapsed booleans — none of which belong
+// in a store (they're one-shot UI wiring, not browsing/playback/import STATE).
 import { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { api } from '../stores/api';
@@ -52,11 +55,77 @@ const Rail = styled.div`
   border-right: 1px solid ${(p) => p.theme.color.border};
 `;
 
-const RailScroll = styled.div`
+const PacksScroll = styled.div`
   flex: 1;
   min-height: 0;
   overflow-y: auto;
 `;
+
+// Never taller than 55% of the rail: the filter panel's natural height (four sections, a tag
+// chip cloud) would otherwise crush the packs section to nothing on a short window. The body
+// scrolls internally when the cap bites, so both sections stay usable at any window height.
+const FilterDock = styled.div`
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 55%;
+  border-top: 1px solid ${(p) => p.theme.color.border};
+`;
+
+const FilterDockHeader = styled.button`
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: ${(p) => p.theme.color.textMuted};
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+
+  &:hover {
+    background: ${(p) => p.theme.color.bgRowHover};
+    color: ${(p) => p.theme.color.text};
+  }
+`;
+
+const FilterDockBody = styled.div`
+  min-height: 0;
+  overflow-y: auto;
+`;
+
+// Same inline-SVG reasoning as GearIcon below: the collapse affordance shouldn't depend on how a
+// system font renders a triangle dingbat. Points down when open, right when collapsed.
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      aria-hidden="true"
+      style={{ transform: open ? undefined : 'rotate(-90deg)' }}
+    >
+      <path
+        d="M2 3.5 L5 6.5 L8 3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// localStorage (renderer-local, persisted under userData like the rest of the web storage) rather
+// than the catalog: which rail sections are open is a per-machine UI preference, not library
+// state — nothing in main needs to know it, so no IPC round-trip is warranted.
+const FILTERS_COLLAPSED_KEY = 'ntwine.filtersCollapsed';
 
 const RailFooter = styled.div`
   flex-shrink: 0;
@@ -115,7 +184,18 @@ export function App() {
   const { library } = useStores();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filtersCollapsed, setFiltersCollapsed] = useState(
+    () => window.localStorage.getItem(FILTERS_COLLAPSED_KEY) === '1',
+  );
   const initedRef = useRef(false);
+
+  const toggleFiltersCollapsed = (): void => {
+    setFiltersCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(FILTERS_COLLAPSED_KEY, next ? '1' : '0');
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -154,10 +234,24 @@ export function App() {
   return (
     <Grid>
       <Rail>
-        <RailScroll>
+        <PacksScroll>
           <PackRail />
-          <FilterPanel />
-        </RailScroll>
+        </PacksScroll>
+        <FilterDock>
+          <FilterDockHeader
+            type="button"
+            aria-expanded={!filtersCollapsed}
+            onClick={toggleFiltersCollapsed}
+          >
+            <span>Filters</span>
+            <ChevronIcon open={!filtersCollapsed} />
+          </FilterDockHeader>
+          {!filtersCollapsed && (
+            <FilterDockBody>
+              <FilterPanel />
+            </FilterDockBody>
+          )}
+        </FilterDock>
         <RailFooter>
           <GearButton
             type="button"
