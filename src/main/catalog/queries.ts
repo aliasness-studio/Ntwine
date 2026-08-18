@@ -22,10 +22,24 @@ interface SampleQueryRow {
   missing: number;
   hasPeaks: number;
   peaksFailed: number;
+  // `fileHash` is `samples.file_hash` itself — always present regardless of `hasUser`, needed to
+  // key the userTags lookup below. `favorite`/`nickname` are `0`/`NULL` on a connection without
+  // the `user` schema attached (see `querySamples`'s `hasUser` gate).
+  fileHash: string;
+  favorite: number;
+  nickname: string | null;
 }
 
 interface TagLinkRow {
   sampleId: number;
+  name: string;
+}
+
+// Row shape for the userTags lookup query — same `sample_file_hash`/tag-name join `TagLinkRow`
+// does for catalog tags, keyed by hash instead of id since `user.*` tables key off
+// `sample_file_hash`, not the catalog's integer `samples.id`.
+interface UserTagLinkRow {
+  hash: string;
   name: string;
 }
 
@@ -52,9 +66,42 @@ type Bound = string | number;
  * TRUE rows, so an unknown-bpm/-key row silently drops out of the result the moment either
  * filter is actually active (spec §3.1). No explicit `IS NOT NULL` is added, so as not to imply
  * the exclusion needs help it doesn't.
+ *
+ * User layer (Task 3, gated on `hasUser` — whether this connection ever ran `openUserDb`,
+ * src/main/user/userDb.ts): `favorite`/`nickname` are a 1:1 LEFT JOIN inlined into the row query
+ * (`user.sample_state`'s PK is `sample_file_hash`, so unlike tags it can never fan a row out).
+ * `userTags` gets its own third query for the same fan-out reason `tags` does, over exactly the
+ * hashes the row query returned, then grouped and sorted with `localeCompare` in JS — never SQL
+ * `ORDER BY`, which would sort by BINARY collation instead (Global Constraints). Without
+ * `hasUser`, every row reads its zero value (`favorite: false`, `nickname: null`,
+ * `userTags: []`) and a `favorites`/`collection` scope short-circuits to `[]` before any SQL
+ * referencing the `user` schema alias would run.
  */
 export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   const { db } = catalog;
+
+  // Whether this connection ever ran `openUserDb` (src/main/user/userDb.ts) — computed once per
+  // call, not cached on `Catalog`, since ATTACH could in principle happen after a `Catalog` is
+  // already held elsewhere and a cached answer would go stale silently. Gates the
+  // favorite/nickname/userTags columns below AND the favorites/collection scope arms: neither can
+  // run against a connection that never ATTACHed the `user` schema alias.
+  const hasUser = (db.pragma('database_list', { simple: false }) as { name: string }[]).some(
+    (d) => d.name === 'user',
+  );
+
+  // A favorites/collection scope is meaningless without the user schema attached — short-circuit
+  // to [] rather than let the SQL below reference `user.sample_state`/`user.collection_items` and
+  // throw "no such table" on a connection that only ever ran `openCatalog`. Nothing sends these
+  // scopes before a caller has actually opened the user db, so an unattached connection seeing
+  // one is "asked for a view onto data that was never opened," not "asked for an existing empty
+  // result" — but the practical contract callers get is the same either way: `[]`.
+  if (
+    f.scope !== undefined &&
+    (f.scope.kind === 'favorites' || f.scope.kind === 'collection') &&
+    !hasUser
+  ) {
+    return [];
+  }
 
   // A blank/whitespace-only search is treated as "no search filter" rather than forwarded to
   // searchIds, which throws on exactly that input (its contract: "callers guard"). Once a real
@@ -70,13 +117,23 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   const where: string[] = [];
   const params: Bound[] = [];
 
-  // Only the `pack` scope produces a WHERE arm today. `favorites`/`collection` are part of the
-  // `Scope` union (ipcTypes.ts) but their arms land in a later task, gated on whether this
-  // connection ever ran `openUserDb` — falling through here rather than throwing on an unhandled
-  // kind is deliberate, since nothing sends those scopes before that task wires the path that can.
-  if (f.scope !== undefined && f.scope.kind === 'pack') {
-    where.push('s.pack_id = ?');
-    params.push(f.scope.packId);
+  // All three `Scope` kinds (ipcTypes.ts) produce a WHERE arm. `favorites`/`collection` only
+  // reach this point when `hasUser` is true — the `!hasUser` case already returned `[]` above —
+  // so their SQL can reference `user.sample_state`/`user.collection_items` unconditionally.
+  if (f.scope !== undefined) {
+    if (f.scope.kind === 'pack') {
+      where.push('s.pack_id = ?');
+      params.push(f.scope.packId);
+    } else if (f.scope.kind === 'favorites') {
+      where.push(
+        's.file_hash IN (SELECT sample_file_hash FROM user.sample_state WHERE favorite = 1)',
+      );
+    } else if (f.scope.kind === 'collection') {
+      where.push(
+        's.file_hash IN (SELECT sample_file_hash FROM user.collection_items WHERE collection_id = ?)',
+      );
+      params.push(f.scope.collectionId);
+    }
   }
   if (f.sampleType !== undefined) {
     where.push('s.sample_type = ?');
@@ -119,17 +176,31 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
+  // `COALESCE(us.favorite, 0)` rather than the bare joined column: the LEFT JOIN below leaves
+  // `us.favorite` NULL (not 0) for a sample with no `user.sample_state` row at all, and this
+  // column is declared `number` — same "never a type the column claims it isn't" reasoning
+  // `hasPeaks`/`peaksFailed`'s CASE expressions already apply to their own LEFT JOIN. `nickname`
+  // stays nullable either way, so it needs no such guard.
+  const userColumns = hasUser
+    ? 'COALESCE(us.favorite, 0) AS favorite, us.nickname AS nickname'
+    : '0 AS favorite, NULL AS nickname';
+  const userJoin = hasUser
+    ? 'LEFT JOIN user.sample_state us ON us.sample_file_hash = s.file_hash'
+    : '';
+
   const rows = db
     .prepare<Bound[], SampleQueryRow>(
       `SELECT s.id AS id, s.filename AS filename, s.rel_path AS relPath, s.pack_id AS packId,
               p.name AS packName, s.sample_type AS sampleType, s.bpm AS bpm,
               s.audio_key AS audioKey, s.chord_type AS chordType, s.duration_ms AS durationMs,
-              s.missing AS missing,
+              s.missing AS missing, s.file_hash AS fileHash,
               CASE WHEN w.sample_id IS NOT NULL AND w.format != 0 THEN 1 ELSE 0 END AS hasPeaks,
-              CASE WHEN w.sample_id IS NOT NULL AND w.format = 0 THEN 1 ELSE 0 END AS peaksFailed
+              CASE WHEN w.sample_id IS NOT NULL AND w.format = 0 THEN 1 ELSE 0 END AS peaksFailed,
+              ${userColumns}
        FROM samples s
        LEFT JOIN packs p ON p.id = s.pack_id
        LEFT JOIN waveforms w ON w.sample_id = s.id
+       ${userJoin}
        ${whereSql}
        ORDER BY p.name, s.filename, s.id`,
     )
@@ -154,6 +225,32 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     }
   }
 
+  // userTags: same "separate query, grouped in JS" shape as tags above, and for the same reason
+  // (a sample_tags/tags join would fan a multi-tag sample out into duplicate rows) — keyed by
+  // `fileHash` since `user.sample_tags` keys off `sample_file_hash`, not the catalog's integer
+  // `samples.id`. Only run when `hasUser`: without the `user` schema attached this table doesn't
+  // exist, and every row's `userTags` is `[]` regardless (the map stays empty, `?? []` below
+  // supplies it). No `ORDER BY` here — sorted with `localeCompare` in JS after grouping, never
+  // SQL's BINARY collation (Global Constraints).
+  const userTagsByHash = new Map<string, string[]>();
+  if (hasUser && rows.length > 0) {
+    const hashes = rows.map((r) => r.fileHash);
+    const userTagRows = db
+      .prepare<string[], UserTagLinkRow>(
+        `SELECT st.sample_file_hash AS hash, t.name AS name
+         FROM user.sample_tags st
+         JOIN user.tags t ON t.id = st.tag_id
+         WHERE st.sample_file_hash IN (${hashes.map(() => '?').join(', ')})`,
+      )
+      .all(...hashes);
+    for (const tr of userTagRows) {
+      const tags = userTagsByHash.get(tr.hash);
+      if (tags) tags.push(tr.name);
+      else userTagsByHash.set(tr.hash, [tr.name]);
+    }
+    for (const tags of userTagsByHash.values()) tags.sort((a, b) => a.localeCompare(b));
+  }
+
   return rows.map((r) => ({
     id: r.id,
     filename: r.filename,
@@ -169,6 +266,9 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     tags: tagsBySample.get(r.id) ?? [],
     hasPeaks: r.hasPeaks === 1,
     peaksFailed: r.peaksFailed === 1,
+    favorite: r.favorite === 1,
+    nickname: r.nickname,
+    userTags: userTagsByHash.get(r.fileHash) ?? [],
   }));
 }
 

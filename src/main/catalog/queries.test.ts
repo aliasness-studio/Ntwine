@@ -6,6 +6,7 @@ import { openCatalog, type Catalog } from './db';
 import { buildFixtureSpliceDb, type FixtureRow } from '../importer/fixtureSpliceDb';
 import { readSplice } from '../importer/spliceDb';
 import { buildCatalog } from '../importer/importer';
+import { openUserDb } from '../user/userDb';
 import {
   getPeaks,
   listPacks,
@@ -127,6 +128,15 @@ function markMissing(catalog: Catalog, fileHash: string): void {
   catalog.db.prepare('UPDATE samples SET missing = 1 WHERE file_hash = ?').run(fileHash);
 }
 
+// Same fixture catalog as `setUp`, plus the `user` schema alias ATTACHed (Task 1's `openUserDb`)
+// on the SAME connection — the shape every user-layer test below needs, since `querySamples`
+// detects the attachment on `catalog.db` itself rather than taking a separate handle.
+function setUpWithUser() {
+  const { catalog } = setUp();
+  const user = openUserDb(catalog, join(tmp(), 'user.db'));
+  return { catalog, user };
+}
+
 describe('querySamples', () => {
   it('shapes a row exactly: camelCase fields, coerced booleans, tags array, pack join', () => {
     const { catalog } = setUp();
@@ -148,6 +158,11 @@ describe('querySamples', () => {
       tags: ['drums', 'loop'],
       hasPeaks: false,
       peaksFailed: false,
+      // No `openUserDb` on this connection — the three user-layer fields must still be present,
+      // at their zero value, rather than absent (Task 3).
+      favorite: false,
+      nickname: null,
+      userTags: [],
     });
   });
 
@@ -275,6 +290,89 @@ describe('querySamples', () => {
     const result = querySamples(catalog, { search: 'drums', sampleType: 'loop' });
 
     expect(result.map((r) => r.filename)).toEqual(['loop.wav']);
+  });
+});
+
+describe('querySamples — user layer (favorite/nickname/userTags, favorites/collection scopes)', () => {
+  it('carries favorite/nickname from user.sample_state onto rows; untouched samples default to false/null/[]', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setFavorite('h-kick', true);
+    user.setNickname('h-kick', 'THE snare');
+
+    const rows = querySamples(catalog, {});
+    const kick = rows.find((r) => r.filename === 'kick.wav');
+    const bass = rows.find((r) => r.filename === 'bass.wav'); // never touched by user.*
+
+    expect(kick).toMatchObject({ favorite: true, nickname: 'THE snare' });
+    expect(bass).toMatchObject({ favorite: false, nickname: null, userTags: [] });
+  });
+
+  it('userTags are grouped per sample and sorted with localeCompare, never SQL collation', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-kick', 'Kick');
+    user.addUserTag('h-kick', 'bounce');
+
+    const kick = querySamples(catalog, {}).find((r) => r.filename === 'kick.wav');
+
+    // Plain SQL BINARY collation would sort 'Kick' before 'bounce' (uppercase < lowercase in
+    // ASCII); localeCompare orders case-insensitively. This pins a regression to `ORDER BY
+    // t.name` in the user-tags query the same way userDb.test.ts pins `listUserTagNames`.
+    expect(kick?.userTags).toEqual(['bounce', 'Kick']);
+  });
+
+  it('scope { kind: favorites } returns only favorited, catalog-present rows', () => {
+    const { catalog, user } = setUpWithUser();
+    user.setFavorite('h-kick', true);
+    user.setFavorite('h-bass', true);
+    user.setFavorite('h-dangling-hash', true); // no matching samples row — must not surface
+
+    const result = querySamples(catalog, { scope: { kind: 'favorites' } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual(['bass.wav', 'kick.wav']);
+  });
+
+  it('scope { kind: collection } returns exactly that collection’s members', () => {
+    const { catalog, user } = setUpWithUser();
+    const { id } = user.createCollection('Drums');
+    user.addToCollection(id, 'h-tom');
+    user.addToCollection(id, 'h-loop');
+
+    const result = querySamples(catalog, { scope: { kind: 'collection', collectionId: id } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual(['loop.wav', 'tom.wav']);
+  });
+
+  it('a pack scope still composes with the favorite field flowing through', () => {
+    const { catalog, user } = setUpWithUser();
+    const fixturePackId = packIdOf(catalog, 'pack-fixture');
+    user.setFavorite('h-kick', true);
+
+    const result = querySamples(catalog, { scope: { kind: 'pack', packId: fixturePackId } });
+
+    expect(result.map((r) => r.filename).sort()).toEqual([
+      'bass.wav',
+      'kick.wav',
+      'loop.wav',
+      'tom.wav',
+    ]);
+    expect(result.find((r) => r.filename === 'kick.wav')?.favorite).toBe(true);
+  });
+
+  it('without openUserDb: favorites/collection scopes short-circuit to [], plain rows carry the three defaults', () => {
+    const { catalog } = setUp(); // user schema never attached on this connection
+
+    expect(querySamples(catalog, { scope: { kind: 'favorites' } })).toEqual([]);
+    expect(
+      querySamples(catalog, { scope: { kind: 'collection', collectionId: 'whatever' } }),
+    ).toEqual([]);
+
+    const rows = querySamples(catalog, {});
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.favorite).toBe(false);
+      expect(r.nickname).toBeNull();
+      expect(r.userTags).toEqual([]);
+    }
   });
 });
 

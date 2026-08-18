@@ -59,6 +59,9 @@ const sampleRow: SampleRow = {
   tags: ['kick'],
   hasPeaks: true,
   peaksFailed: false,
+  favorite: false,
+  nickname: null,
+  userTags: [],
 };
 
 describe('LibraryStore', () => {

@@ -8,6 +8,12 @@
 // `format = 0` for a failed decode specifically so "failed" is distinguishable from "pending, no
 // row yet" — `hasPeaks` alone couldn't carry that distinction once such rows exist.
 
+// `favorite`/`nickname`/`userTags` (Task 3): the same "connection-gated" shape `Scope` documents
+// below — a `querySamples` call on a connection that never ran `openUserDb`
+// (src/main/user/userDb.ts) still returns these three fields, at their zero value
+// (`false`/`null`/`[]`), rather than omitting them. `userTags` is display names, A-Z
+// (`localeCompare`, never SQL collation — Global Constraints), same ordering contract as
+// `UserDb.listUserTagNames`.
 export interface SampleRow {
   id: number;
   filename: string;
@@ -23,6 +29,9 @@ export interface SampleRow {
   tags: string[];
   hasPeaks: boolean;
   peaksFailed: boolean;
+  favorite: boolean;
+  nickname: string | null;
+  userTags: string[];
 }
 
 export interface PackRow {
@@ -39,10 +48,10 @@ export interface PackRow {
 // filter dimension, so `setScope(null)` round-trips to `{}` exactly like every other cleared
 // filter does.
 //
-// `querySamples` (src/main/catalog/queries.ts) implements only the `pack` arm so far —
-// `favorites`/`collection` are typed here but their WHERE arms land in a later task, gated on
-// whether the connection ever ran `openUserDb` (src/main/user/userDb.ts). Until wired, both kinds
-// compose to no WHERE arm at all rather than an error.
+// `querySamples` (src/main/catalog/queries.ts) implements all three arms. `favorites`/
+// `collection` are gated on whether the connection ever ran `openUserDb`
+// (src/main/user/userDb.ts): on one that has not, both kinds short-circuit to `[]` rather than
+// let the underlying SQL reference a `user` schema alias that was never ATTACHed.
 export type Scope =
   | { kind: 'pack'; packId: number }
   | { kind: 'favorites' }
