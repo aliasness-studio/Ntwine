@@ -486,6 +486,30 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
   });
 });
 
+describe('querySamples — either-source tag filtering (spec §3.3)', () => {
+  it('a selected tag matches a sample carrying it from EITHER source', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-loop', 'kick'); // loop.wav has no splice 'kick' tag
+
+    const result = querySamples(catalog, { tags: ['kick'] });
+
+    // kick.wav via its splice tag, loop.wav via its user tag — neither excludes the other.
+    expect(result.map((r) => r.filename).sort()).toEqual(['kick.wav', 'loop.wav']);
+  });
+
+  it('two selected tags AND across sources: each name may be satisfied by a different source, but both are still required', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-kick', 'bounce'); // kick.wav: splice 'kick' + user 'bounce'
+    user.addUserTag('h-loop', 'bounce'); // loop.wav: user 'bounce' but no 'kick' from either source
+
+    const result = querySamples(catalog, { tags: ['kick', 'bounce'] });
+
+    // loop.wav satisfies 'bounce' but not 'kick' from either source, so AND still excludes it —
+    // proving the per-name OR-across-sources didn't loosen the existing ALL-tags contract.
+    expect(result.map((r) => r.filename)).toEqual(['kick.wav']);
+  });
+});
+
 describe('listPacks', () => {
   it('hides a pack whose only sample is missing, keeps one with some present, counts only present', () => {
     const { catalog } = setUp();
@@ -514,6 +538,74 @@ describe('listTags', () => {
 
     expect(tags).toEqual([
       { name: 'drums', count: 3 }, // kick, loop, bass — tom excluded (missing)
+      { name: 'bass', count: 1 },
+      { name: 'kick', count: 1 },
+      { name: 'loop', count: 1 },
+    ]);
+  });
+});
+
+describe('listTags — user layer union (spec §3.3)', () => {
+  // kick.wav already carries the splice tag 'kick' from the fixture — giving bass.wav a second
+  // splice-side 'kick' link (raw SQL, same idiom this file already uses for waveforms rows) is
+  // what lets a single test prove the union counts DISTINCT samples rather than merely "at least
+  // one common name," since bass.wav below also gets a user-side 'kick'/'KICK' tag.
+  function addSpliceTag(catalog: Catalog, fileHash: string, tagName: string): void {
+    const tag = catalog.db.prepare('SELECT id FROM tags WHERE name = ?').get(tagName) as
+      { id: number } | undefined;
+    if (!tag) throw new Error(`fixture splice tag "${tagName}" not found`);
+    catalog.db
+      .prepare('INSERT OR IGNORE INTO sample_tags (sample_id, tag_id) VALUES (?, ?)')
+      .run(idOf(catalog, fileHash), tag.id);
+  }
+
+  it('merges splice + user tag facets by normalized name: a sample tagged from both sources counts once, display form is the splice one', () => {
+    const { catalog, user } = setUpWithUser();
+    addSpliceTag(catalog, 'h-bass', 'kick'); // splice 'kick' now carried by kick.wav AND bass.wav
+
+    // User-side 'KICK' (different case — merge key is normalizeUserName, not the raw string)
+    // lands on bass.wav (already a splice-side carrier, so this must NOT double-count it) plus
+    // loop.wav (a present sample splice never tagged 'kick' at all).
+    user.addUserTag('h-bass', 'KICK');
+    user.addUserTag('h-loop', 'KICK');
+
+    const kick = listTags(catalog).find((t) => t.name === 'kick');
+
+    // Distinct samples: kick.wav (splice only) + bass.wav (both — counts once) + loop.wav (user
+    // only) = 3. Display form is 'kick' (Splice's own), never 'KICK' (the user's typed case).
+    expect(kick).toEqual({ name: 'kick', count: 3 });
+  });
+
+  it('a user-only tag appears in the merged list, under its own (untouched) display form', () => {
+    const { catalog, user } = setUpWithUser();
+    user.addUserTag('h-tom', 'Bounce'); // splice never has a 'bounce' tag anywhere in the fixture
+
+    const bounce = listTags(catalog).find((t) => t.name === 'Bounce');
+
+    expect(bounce).toEqual({ name: 'Bounce', count: 1 });
+  });
+
+  it('missing samples are excluded from a merged facet on both the splice side and the user side', () => {
+    const { catalog, user } = setUpWithUser();
+    addSpliceTag(catalog, 'h-bass', 'kick');
+    user.addUserTag('h-loop', 'kick');
+
+    // Before marking anything missing: 3 distinct present carriers (kick.wav, bass.wav, loop.wav
+    // — same union as the merge test above).
+    expect(listTags(catalog).find((t) => t.name === 'kick')).toEqual({ name: 'kick', count: 3 });
+
+    markMissing(catalog, 'h-bass'); // was a splice-side carrier
+    markMissing(catalog, 'h-loop'); // was the user-side-only carrier
+
+    expect(listTags(catalog).find((t) => t.name === 'kick')).toEqual({ name: 'kick', count: 1 });
+  });
+
+  it('hasUser attached but zero user tags: merged output matches the splice-only computation exactly', () => {
+    const { catalog } = setUpWithUser(); // user schema attached, but no user tags ever added
+    markMissing(catalog, 'h-tom'); // same scenario as the plain listTags test above
+
+    expect(listTags(catalog)).toEqual([
+      { name: 'drums', count: 3 },
       { name: 'bass', count: 1 },
       { name: 'kick', count: 1 },
       { name: 'loop', count: 1 },

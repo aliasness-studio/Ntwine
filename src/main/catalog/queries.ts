@@ -249,22 +249,34 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
     params.push(f.audioKey);
   }
   if (f.tags !== undefined && f.tags.length > 0) {
-    // ALL listed tags, not any: a sample only qualifies if the junction join produces one
-    // matching row per distinct wanted tag name. De-duped so a caller accidentally repeating a
-    // tag name in the filter can't inflate the required count past what a real sample could ever
-    // satisfy.
+    // ALL listed tags, not any — same contract as before the user layer, now extended per name
+    // to either source (spec §3.3): a sample qualifies for one wanted name if EITHER its Splice
+    // tags OR (when `hasUser`) its user tags contain that name, and must qualify for EVERY
+    // wanted name. One parenthesized `EXISTS ... OR EXISTS ...` is pushed per name — ANDed
+    // together by the shared `where.join(' AND ')` below — replacing the old single
+    // HAVING-count subquery, since a plain count can no longer tell "matched, from either
+    // source" apart from "matched twice, once per source" without double-counting a name a
+    // sample carries on both sides. De-duped so a caller accidentally repeating a tag name in
+    // the filter can't push the same clause twice.
     const wanted = [...new Set(f.tags)];
-    const placeholders = wanted.map(() => '?').join(', ');
-    where.push(
-      `s.id IN (
-         SELECT st.sample_id FROM sample_tags st
-         JOIN tags t ON t.id = st.tag_id
-         WHERE t.name IN (${placeholders})
-         GROUP BY st.sample_id
-         HAVING COUNT(DISTINCT t.name) = ?
-       )`,
-    );
-    params.push(...wanted, wanted.length);
+    for (const name of wanted) {
+      // User-side EXISTS compares `ut.normalized_name` against `normalizeUserName(name)` — the
+      // same merge key `mergeTagFacets` unions on below — never the raw `name`, since a user
+      // tag's only guaranteed-unique/comparable column is its normalized one (userDb.ts
+      // SCHEMA); the Splice-side EXISTS compares `t.name` directly, unchanged, since Splice tag
+      // names arrive already-lowercase from import and need no folding.
+      const userClause = hasUser
+        ? `OR EXISTS (SELECT 1 FROM user.sample_tags ust JOIN user.tags ut ON ut.id = ust.tag_id
+                WHERE ust.sample_file_hash = s.file_hash AND ut.normalized_name = ?)`
+        : '';
+      where.push(`(
+        EXISTS (SELECT 1 FROM sample_tags st JOIN tags t ON t.id = st.tag_id
+                WHERE st.sample_id = s.id AND t.name = ?)
+        ${userClause}
+      )`);
+      params.push(name);
+      if (hasUser) params.push(normalizeUserName(name));
+    }
   }
   if (matchedIds !== null) {
     where.push(`s.id IN (${matchedIds.map(() => '?').join(', ')})`);
@@ -390,22 +402,111 @@ export function listPacks(catalog: Catalog): PackRow[] {
 }
 
 /**
- * Tag-chip facet (spec §7): every tag name in use, with a count of the non-missing samples
- * carrying it (same "present, not merely imported" reasoning as `listPacks`'s `sampleCount`),
- * highest-count first. Ties break alphabetically so the ordering is fully deterministic rather
- * than falling back to whatever order SQLite happens to visit rows in.
+ * Unions two `(name, sampleId)` tag-link row sets — one from Splice's `tags`, one from the user
+ * layer's `user.tags` — into the merged facet list `listTags` returns once the user schema is
+ * attached (spec §3.3). Merge key is `normalizeUserName(name)`, never the raw name: a user tag's
+ * only guaranteed-unique/comparable column is its `normalized_name` (userDb.ts SCHEMA), and
+ * folding Splice's own already-lowercase names through the same normalizer costs nothing — it's
+ * idempotent on them — while giving both sides one shared comparison rule instead of two.
+ *
+ * Splice rows are folded in FIRST, each planting its own name as that facet's `display` the
+ * first time its key is seen; user rows only ever ADD a sample id to an existing entry, never
+ * overwrite a `display` a Splice row already set. That one-way rule — never reassign `display`
+ * once set — is what makes "the Splice display form wins when both sources carry the name, else
+ * the user display form" fall out of iteration order, with no explicit source-priority check
+ * needed per row.
+ *
+ * `count` is `ids.size`, not two separate counts summed: `ids` is a `Set<sampleId>`, so a sample
+ * carrying the same normalized name from BOTH sources still contributes exactly one id, and
+ * therefore counts once — the "distinct matching samples from either source" contract spec §3.3
+ * and this task's brief both call for, not a sum that would double-count it.
+ *
+ * Sort is JS, not SQL, for the same reason the merge itself is JS: count DESC then name ASC via
+ * `localeCompare` (the Global Constraints' one display-sort comparator) — the same deterministic
+ * tie-break `listTags`'s pre-existing SQL `ORDER BY` already gave the splice-only path, just
+ * computed after the union instead of inside a single-source `GROUP BY`.
+ */
+function mergeTagFacets(spliceRows: TagLinkRow[], userRows: TagLinkRow[]): TagFacet[] {
+  const facets = new Map<string, { display: string; ids: Set<number> }>();
+  for (const row of spliceRows) {
+    const key = normalizeUserName(row.name);
+    let entry = facets.get(key);
+    if (!entry) {
+      entry = { display: row.name, ids: new Set() };
+      facets.set(key, entry);
+    }
+    entry.ids.add(row.sampleId);
+  }
+  for (const row of userRows) {
+    const key = normalizeUserName(row.name);
+    let entry = facets.get(key);
+    if (!entry) {
+      entry = { display: row.name, ids: new Set() };
+      facets.set(key, entry);
+    }
+    entry.ids.add(row.sampleId);
+  }
+  return [...facets.values()]
+    .map((e) => ({ name: e.display, count: e.ids.size }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/**
+ * Tag-chip facet (spec §7 baseline; either-source union spec §3.3): every tag name in use across
+ * BOTH Splice's own tags and — once the user schema is attached — the user layer's tags, with a
+ * count of the DISTINCT non-missing samples carrying it from EITHER source (same "present, not
+ * merely imported" reasoning as `listPacks`'s `sampleCount`), highest-count first, ties broken
+ * alphabetically.
+ *
+ * `!hasUser`: unchanged from before the user layer existed — same single-source SQL, same
+ * `ORDER BY count DESC, t.name ASC`. Nothing to union when there is nothing to union with, so
+ * this path stays byte-identical rather than routing a no-op merge through `mergeTagFacets`.
+ *
+ * `hasUser`: two flat, ungrouped `(name, sampleId)` queries — one per source, both already
+ * filtered to present (`missing = 0`) samples and both resolving `sampleId` to the SAME identity
+ * (the user-side query joins back through `samples.file_hash` to get there), so a sample tagged
+ * from both sources collapses to one id in `mergeTagFacets`'s `Set` — merged and sorted in JS,
+ * since only JS can key two separate SQL result sets by a normalized name neither source table
+ * stores in a directly-joinable form together.
  */
 export function listTags(catalog: Catalog): TagFacet[] {
-  return catalog.db
-    .prepare<[], TagFacet>(
-      `SELECT t.name AS name, COUNT(*) AS count
+  // Same computed-per-call reasoning as `querySamples`'s own `hasUser` gate above: never cached
+  // on `Catalog`, since ATTACH could happen after a `Catalog` is already held elsewhere.
+  const hasUser = (
+    catalog.db.pragma('database_list', { simple: false }) as { name: string }[]
+  ).some((d) => d.name === 'user');
+
+  if (!hasUser) {
+    return catalog.db
+      .prepare<[], TagFacet>(
+        `SELECT t.name AS name, COUNT(*) AS count
+         FROM sample_tags st
+         JOIN tags t ON t.id = st.tag_id
+         JOIN samples s ON s.id = st.sample_id AND s.missing = 0
+         GROUP BY t.id
+         ORDER BY count DESC, t.name ASC`,
+      )
+      .all();
+  }
+
+  const spliceRows = catalog.db
+    .prepare<[], TagLinkRow>(
+      `SELECT t.name AS name, s.id AS sampleId
        FROM sample_tags st
        JOIN tags t ON t.id = st.tag_id
-       JOIN samples s ON s.id = st.sample_id AND s.missing = 0
-       GROUP BY t.id
-       ORDER BY count DESC, t.name ASC`,
+       JOIN samples s ON s.id = st.sample_id AND s.missing = 0`,
     )
     .all();
+  const userRows = catalog.db
+    .prepare<[], TagLinkRow>(
+      `SELECT ut.name AS name, s.id AS sampleId
+       FROM user.sample_tags ust
+       JOIN user.tags ut ON ut.id = ust.tag_id
+       JOIN samples s ON s.file_hash = ust.sample_file_hash AND s.missing = 0`,
+    )
+    .all();
+
+  return mergeTagFacets(spliceRows, userRows);
 }
 
 interface PendingPeakIdRow {
