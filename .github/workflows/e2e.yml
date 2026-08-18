@@ -1,0 +1,34 @@
+name: e2e
+on:
+  workflow_dispatch:   # deliberately manual (spec D2) — flip to pull_request when the owner decides
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22        # host Node runs yarn/Forge/Vite only; app + tests run under Electron's Node
+          cache: yarn
+      - run: yarn --frozen-lockfile
+      # ORDER IS LOAD-BEARING: `yarn e2e` runs `electron-forge package`, whose rebuild puts
+      # better-sqlite3 on Electron's ABI; `yarn test` (Vitest under Electron's Node) fails
+      # on the ABI mismatch if it runs before that.
+      - run: yarn e2e
+      - run: yarn test
+      - run: yarn typecheck
+      - run: yarn lint
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: |
+            playwright-report/
+            test-results/

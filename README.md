@@ -11,7 +11,9 @@ for now.
 
 ## Prerequisites
 
-- Node ≥ 20 (project developed on 20.x; the test suite runs under Electron's own bundled Node)
+- Node ≥ 22 for `yarn install` (`better-sqlite3`'s `engines` field hard-fails yarn below that).
+  After install, the app and test suite run under Electron's own bundled Node, so the host Node
+  version stops mattering — see [Verification](#verification).
 - yarn (classic)
 - macOS
 
@@ -30,6 +32,41 @@ yarn test    # Vitest, run under Electron's own Node
 `yarn test` runs Vitest under `ELECTRON_RUN_AS_NODE=1 electron`, not plain Node, so
 the app and the test suite share one compiled ABI for the native `better-sqlite3`
 module instead of fighting over two.
+
+## Verification
+
+Four gates: `yarn test` (Vitest), `yarn typecheck` (`tsc --noEmit`), `yarn lint` (ESLint), and
+`yarn e2e` (Playwright). `yarn e2e` runs `electron-forge package` and then drives the resulting
+production build with Playwright under Electron's own Node — a real packaged app, not a dev
+server.
+
+```bash
+yarn e2e         # package + run the full Playwright suite (default project)
+yarn e2e:only    # re-run Playwright against the existing out/ build, no repackage
+yarn e2e:real    # opt-in: import your real Splice library instead of the fixture
+```
+
+`yarn e2e:only` re-runs Playwright against whatever's already built, so it's only valid
+immediately after a `yarn e2e` (or a bare `electron-forge package`). The harness guards this
+itself before every launch, two ways: it refuses a **dev** build left behind by `yarn start`
+(`.vite/build/main.js` still points at the Vite dev server) and it refuses a **stale** build
+(`.vite/build/main.js` older than anything under `src/`) — either refusal names the fix
+(`yarn package` / `yarn e2e`) in the thrown error.
+
+`yarn e2e:real` (`NTWINE_E2E_REAL=1`, baked into the script) runs one opt-in spec against your
+actual Splice library over the network instead of the synthetic fixture, so it needs a real
+library on disk. It's excluded from `yarn e2e`/`yarn e2e:only`'s default project and must be run
+by name.
+
+**Fresh clone:** run `yarn e2e` or `yarn start` once *before* `yarn test`. Either one triggers
+Forge's native-module rebuild, which puts `better-sqlite3` on Electron's ABI; `yarn test` never
+does that rebuild itself, so running it first fails on the ABI mismatch. Note the install floor
+above too — `yarn` (install) needs Node ≥ 22; the gates themselves run under Electron's bundled
+Node regardless of host Node version once `node_modules` exists.
+
+CI (`.github/workflows/e2e.yml`) runs all four gates on macOS and Windows, but is
+`workflow_dispatch`-only for now — trigger it by hand from the Actions tab; it does not run on
+every push or pull request.
 
 ## Import flow
 
