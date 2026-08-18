@@ -499,13 +499,24 @@ describe('querySamples — either-source tag filtering (spec §3.3)', () => {
 
   it('two selected tags AND across sources: each name may be satisfied by a different source, but both are still required', () => {
     const { catalog, user } = setUpWithUser();
-    user.addUserTag('h-kick', 'bounce'); // kick.wav: splice 'kick' + user 'bounce'
+    user.addUserTag('h-kick', 'bounce'); // kick.wav: splice 'kick' + user tag normalized_name 'bounce'
     user.addUserTag('h-loop', 'bounce'); // loop.wav: user 'bounce' but no 'kick' from either source
 
-    const result = querySamples(catalog, { tags: ['kick', 'bounce'] });
+    // Filter with 'BOUNCE' (raw), not 'bounce' — a discriminator for the two `params.push` calls
+    // in the tags-filter arm, not just the either-source behavior. Splice's EXISTS compares the
+    // RAW param (`t.name = ?`) and splice never has a 'BOUNCE'/'bounce' tag anywhere in this
+    // fixture, so 'BOUNCE' can only match through the user-side EXISTS, whose param must be
+    // `normalizeUserName('BOUNCE')` === 'bounce' — the SECOND value pushed for this name. Plain
+    // lowercase 'kick'/'bounce' would still pass even with the two pushes swapped, since
+    // `normalizeUserName` is a no-op on them; 'BOUNCE' forces the second (normalized) param to
+    // carry the right value or the user-side match silently fails. (Verified by temporarily
+    // swapping the two `params.push` calls in queries.ts during self-review: this exact
+    // assertion goes red — `[]` instead of `['kick.wav']` — while reverting restores green.)
+    const result = querySamples(catalog, { tags: ['kick', 'BOUNCE'] });
 
-    // loop.wav satisfies 'bounce' but not 'kick' from either source, so AND still excludes it —
-    // proving the per-name OR-across-sources didn't loosen the existing ALL-tags contract.
+    // loop.wav satisfies 'BOUNCE' (via its user tag) but not 'kick' from either source, so AND
+    // still excludes it — proving the per-name OR-across-sources didn't loosen the existing
+    // ALL-tags contract.
     expect(result.map((r) => r.filename)).toEqual(['kick.wav']);
   });
 });
