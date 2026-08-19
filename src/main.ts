@@ -44,6 +44,19 @@ try {
   console.error(String(err));
   app.exit(2);
 }
+// Hidden-mode throughput (module scope on purpose: commandLine switches must land before app
+// ready). Chromium treats a never-shown window as occluded and BACKGROUNDS its renderer —
+// compositor frames drop to ~1/s, and Playwright's actionability check (which waits for a
+// stable bounding box across two consecutive animation frames) then costs ~2s per click:
+// measured, interaction-heavy specs ran 5-8x slower hidden (filters 3.9s → 24.9s) while
+// passive specs were unchanged. webPreferences.backgroundThrottling only governs in-page
+// timers/visibility; these process-level switches stop the occlusion/backgrounding itself.
+// E2E-hidden only — the production app is untouched.
+if (e2e?.hidden) {
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+}
 const e2eEmit = makeE2EEmitter(app, e2e);
 
 let mainWindow: BrowserWindow | null = null;
@@ -53,14 +66,48 @@ const createWindow = (): BrowserWindow => {
   // callable after app ready — the `screen` module throws before that, and createWindow's one
   // call site is inside whenReady() below.
   const { width, height } = computeDefaultBounds(screen.getPrimaryDisplay().workAreaSize);
+  // E2E quiet mode (NTWINE_E2E_HIDDEN=1, e2e.ts): the window must not pop up, steal focus, or
+  // make noise while the dev works — WITHOUT costing test fidelity or speed. A plain
+  // `show:false` window is NOT usable here: measured on this exact suite, Chromium drops a
+  // never-shown window's compositor surface once the post-import library view lands, after
+  // which requestAnimationFrame limps at ~1.5 Hz (probe: 482 rAF/2s pre-import → 3/2s after;
+  // renderer 99.9% idle in a CPU profile, so it's frame *scheduling*, not load; un-muting,
+  // removing canvases, and the backgrounding switches all changed nothing — only show()
+  // restored 482/2s). Playwright's actionability check waits for a stable box across two
+  // consecutive frames, so at 1.5 Hz EVERY click pays ~2 s (filters spec: 3.9 s → 24.9 s).
+  // The strategy that keeps real compositor frames with nothing on screen:
+  //   x/y −32000           — parked far off every display (where Windows parks minimized
+  //                          windows); can never sit under the cursor or be seen
+  //   opacity 0            — belt-and-braces: even a mis-positioned window draws nothing
+  //   skipTaskbar          — no taskbar entry flicker per spec launch
+  //   showInactive()       — presented WITHOUT activation, so keyboard focus stays wherever
+  //                          the dev is typing (probe: isFocused() === false)
+  //   backgroundThrottling — off, so in-page timers/rAF never get background-clamped
+  //   setAudioMuted        — WebAudio still plays in an unseen window; preview specs would be
+  //                          audible without it
+  // Measured after the switch: 482 rAF/2s and 204 ms row-clicks — identical to a headed run.
   const win = new BrowserWindow({
     width,
     height,
+    // Quiet mode creates unshown then presents via showInactive() below; headed e2e and
+    // production keep the default constructor show — the unarmed app stays byte-for-byte v1.
+    ...(e2e?.hidden ? { show: false, x: -32000, y: -32000, opacity: 0, skipTaskbar: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: e2e ? ['--ntwine-e2e'] : [],
+      ...(e2e?.hidden ? { backgroundThrottling: false } : {}),
     },
   });
+  if (e2e?.hidden) {
+    win.webContents.setAudioMuted(true);
+    // macOS clamps the -32000 placement back onto a display (CI: bounds.x read 0), so there the
+    // quiet window sits ON-screen, merely transparent — and a transparent window still hit-tests,
+    // i.e. it would swallow the dev's real clicks. Forward OS mouse input straight through it on
+    // every platform (belt-and-braces on win32 too). Test input is unaffected: Playwright drives
+    // the page via CDP, which bypasses OS hit-testing entirely — verified by the full suite.
+    win.setIgnoreMouseEvents(true);
+    win.showInactive();
+  }
 
   // macOS keeps the app process alive after its one-and-only window closes (see
   // window-all-closed below) — a background pass (e.g. the waveform peaks queue, queue.ts) can
