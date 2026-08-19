@@ -37,7 +37,16 @@ const config: ForgeConfig = {
       return true;
     },
   },
-  rebuildConfig: {},
+  // Skip @electron/rebuild's native-module pass entirely. Our ONLY native dep, better-sqlite3
+  // v13, ships its runtime binary in prebuilds/<platform>-<arch>.node (lib/binding.js loads
+  // ONLY from there) and its binding.gyp no-ops when a prebuild exists — verified: after a full
+  // package, out/…/prebuilds/win32-x64.node is byte-identical (sha256) to the one in
+  // node_modules, and no build/Release/*.node exists. The rebuild therefore compiles nothing —
+  // but @electron/rebuild's pinned @electron/node-gyp still has to FIND Visual Studio to do
+  // that nothing, and its VS discovery can't parse VS 2026 ("18", now on GitHub's
+  // windows-latest runners): "unknown version \"undefined\"" → package fails. An empty
+  // onlyModules list rebuilds no modules, so no VS is required to package on Windows at all.
+  rebuildConfig: { onlyModules: [] },
   makers: [
     new MakerSquirrel({}),
     new MakerZIP({}, ['darwin']),

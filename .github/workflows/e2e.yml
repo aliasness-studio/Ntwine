@@ -15,7 +15,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22        # host Node runs yarn/Forge/Vite only; app + tests run under Electron's Node
+          # Host Node runs yarn/Forge/Vite only; app + tests run under Electron's Node. 24 (not 22)
+          # because better-sqlite3 v13's install runs an (always-no-op, prebuilds ship in the
+          # tarball) `node-gyp rebuild`, and gyp configure on Windows still has to FIND Visual
+          # Studio: windows-latest now carries VS 2026 ("18"), which the node-gyp bundled with
+          # Node 22's npm can't parse (`unknown version "undefined"` → install fails). Node 24's
+          # npm bundles a node-gyp that understands VS 2026.
+          node-version: 24
           cache: yarn
       - run: yarn --frozen-lockfile
       # ORDER IS LOAD-BEARING: `yarn e2e` runs `electron-forge package`, whose rebuild puts
