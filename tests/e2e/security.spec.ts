@@ -4,6 +4,7 @@ import { expect, test } from './harness/fixtures';
 // ipcTypes.ts), sorted — a method silently added/removed/renamed shows up as an array diff rather
 // than a vague count mismatch. Task 6 (design spec §4) grew this from 12 to 23: the 11 user-layer
 // methods below, plus `startDrag` promoted from `send` to `invoke` (same method, unchanged count).
+// The Splice-DB picker fallback (Windows-port audit blocker) grew it 23 -> 24: `pickSpliceDb`.
 const NTWINE_API_METHODS = [
   'addToCollection',
   'addUserTag',
@@ -19,6 +20,7 @@ const NTWINE_API_METHODS = [
   'listUserTags',
   'onImportProgress',
   'pickLibraryRoot',
+  'pickSpliceDb',
   'querySamples',
   'removeFromCollection',
   'removeUserTag',
@@ -30,7 +32,7 @@ const NTWINE_API_METHODS = [
   'startDrag',
 ];
 
-test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 23 methods', async ({
+test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 24 methods', async ({
   ntwine,
 }) => {
   const { app, page, seam } = ntwine;

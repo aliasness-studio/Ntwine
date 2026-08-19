@@ -6,8 +6,11 @@
 // as `phase: 'error'` instead), so the error branch below is reached by checking `phase` after
 // the await, not by a `catch`.
 import { observer } from 'mobx-react-lite';
+import { useState } from 'react';
 import styled from 'styled-components';
 import type { NtwineApi } from '../../shared/ipcTypes';
+import { ipcErrorMessage } from '../ipcError';
+import { api } from '../stores/api';
 import { useStores } from './StoreContext';
 
 const PHASE_LABEL: Partial<Record<string, string>> = {
@@ -80,6 +83,18 @@ const ImportButton = styled.button`
   }
 `;
 
+const LocateButton = styled.button`
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: ${(p) => p.theme.radius.md};
+  border: 1px solid ${(p) => p.theme.color.border};
+  background: transparent;
+  color: ${(p) => p.theme.color.text};
+  cursor: pointer;
+  align-self: flex-start;
+`;
+
 const ProgressLine = styled.div`
   font-size: 12px;
   color: ${(p) => p.theme.color.textMuted};
@@ -97,6 +112,23 @@ export interface FirstRunProps {
 
 export const FirstRun = observer(function FirstRun({ state, onImported }: FirstRunProps) {
   const { importStore } = useStores();
+
+  // The Splice-DB picker fallback (Windows-port audit blocker): detection's win32 glob is a
+  // best-guess, and without this button a missed guess left the app with no way in. Local state
+  // (seeded from the boot-time getState) because a successful pick changes the answer without a
+  // relaunch — main persists meta.splice_db_path and getState would agree on the next boot.
+  const [dbFound, setDbFound] = useState(state.spliceDbFound);
+  const [pickError, setPickError] = useState<string | null>(null);
+
+  const handleLocate = (): void => {
+    setPickError(null);
+    void api
+      .pickSpliceDb()
+      .then((picked) => {
+        if (picked !== null) setDbFound(true); // null = dialog canceled — no change either way
+      })
+      .catch((err: unknown) => setPickError(ipcErrorMessage(err)));
+  };
 
   // Review round 1, Finding 2 + 3 (controller-elevated): this used to hand-derive "is an import
   // running" from `phase` (duplicated verbatim in SettingsSheet.tsx) — racy, since `phase` only
@@ -131,10 +163,22 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
         <DetectedRow>
           <span>Splice database</span>
           <DetectedValue data-testid="detected-splice-db">
-            {state.spliceDbFound ? 'found' : 'not found'}
+            {dbFound ? 'found' : 'not found'}
           </DetectedValue>
         </DetectedRow>
       </DetectedList>
+      {!dbFound && (
+        <>
+          <Subtitle>
+            Couldn&apos;t find Splice&apos;s sounds.db automatically. If Splice is installed, you can
+            point Ntwine at the file yourself.
+          </Subtitle>
+          <LocateButton type="button" onClick={handleLocate}>
+            Locate sounds.db…
+          </LocateButton>
+        </>
+      )}
+      {pickError !== null && <ErrorLine data-testid="pick-splice-db-error">{pickError}</ErrorLine>}
       <ImportButton type="button" disabled={importing} onClick={handleImport}>
         {importing ? 'Importing…' : 'Import library'}
       </ImportButton>

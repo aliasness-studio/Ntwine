@@ -47,6 +47,46 @@ export function snapshotSpliceDb(src: string, destDir: string): string {
   return dest;
 }
 
+// The exact projections readSplice runs — shared with validateSpliceDb below so "valid" can
+// never drift from "what readSplice actually needs": one column added here is one column
+// validated there, automatically.
+const SAMPLES_PROJECTION = `SELECT local_path, file_hash, filename, pack_uuid, sample_type, bpm, audio_key, chord_type, duration, tags
+   FROM samples ORDER BY id`;
+const PACKS_PROJECTION = `SELECT uuid, name, genre, provider_name, cover_url FROM packs ORDER BY id`;
+
+/** Sanity-check a hand-picked file before persisting it as the Splice DB (the picker fallback
+ * for when detection's glob misses — Windows-port audit blocker). Compiles `readSplice`'s own
+ * projections with `LIMIT 0` (Copilot review, PR #11): checking table NAMES alone would accept
+ * a right-named/wrong-shaped database, persist it, and only fail at import — the exact
+ * late-failure this validation exists to prevent. A missing table OR column throws at prepare,
+ * so success here means `readSplice` can actually run. Returns null when usable, or a
+ * user-facing reason when not. */
+export function validateSpliceDb(path: string): string | null {
+  let db: InstanceType<typeof Database>;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch {
+    return 'That file could not be opened as a SQLite database.';
+  }
+  try {
+    // LIMIT 0: compile + execute the projections without reading rows — prepare alone catches
+    // missing tables/columns, the empty run keeps this a full "readSplice would work" proof.
+    db.prepare(`${SAMPLES_PROJECTION} LIMIT 0`).all();
+    db.prepare(`${PACKS_PROJECTION} LIMIT 0`).all();
+    return null;
+  } catch (err) {
+    // better-sqlite3 opens lazily enough that a non-SQLite file often survives `new Database`
+    // and only explodes at the first statement — SQLITE_NOTADB there means "not SQLite at
+    // all", anything else means real SQLite with the wrong schema. Two different user mistakes,
+    // two different messages.
+    return (err as { code?: string }).code === 'SQLITE_NOTADB'
+      ? 'That file could not be read as a SQLite database.'
+      : 'That is a SQLite database, but not a usable Splice sounds.db (its samples/packs tables are missing or have the wrong shape).';
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * Opens a Splice sounds.db snapshot read-only and reads back `samples` + `packs`. Selects
  * named columns rather than `SELECT *` — that column list is the boundary that keeps every
@@ -57,17 +97,8 @@ export function snapshotSpliceDb(src: string, destDir: string): string {
 export function readSplice(snapshotPath: string): { samples: SpliceSample[]; packs: SplicePack[] } {
   const db = new Database(snapshotPath, { readonly: true });
   try {
-    const samples = db
-      .prepare<[], SpliceSample>(
-        `SELECT local_path, file_hash, filename, pack_uuid, sample_type, bpm, audio_key, chord_type, duration, tags
-         FROM samples ORDER BY id`,
-      )
-      .all();
-    const packs = db
-      .prepare<[], SplicePack>(
-        `SELECT uuid, name, genre, provider_name, cover_url FROM packs ORDER BY id`,
-      )
-      .all();
+    const samples = db.prepare<[], SpliceSample>(SAMPLES_PROJECTION).all();
+    const packs = db.prepare<[], SplicePack>(PACKS_PROJECTION).all();
     return { samples, packs };
   } finally {
     db.close();
