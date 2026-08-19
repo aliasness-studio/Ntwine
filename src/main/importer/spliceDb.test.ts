@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { buildFixtureSpliceDb, type FixtureRow } from './fixtureSpliceDb';
 import { readSplice, snapshotSpliceDb, validateSpliceDb } from './spliceDb';
 
@@ -266,6 +267,14 @@ describe('validateSpliceDb', () => {
     // contents" case: open succeeds, the schema check is what must catch it.
     const p = join(tmp(), 'empty.db');
     writeFileSync(p, '');
+    expect(validateSpliceDb(p)).toMatch(/sounds\.db|samples/i);
+  });
+
+  it("rejects tables that are RIGHT-named but wrong-shaped (Copilot review, PR #11): name-only checking would persist a file readSplice then chokes on — validation must compile readSplice's own projections", () => {
+    const p = join(tmp(), 'wrong-shape.db');
+    const db = new Database(p);
+    db.exec('CREATE TABLE samples (x TEXT); CREATE TABLE packs (y TEXT);');
+    db.close();
     expect(validateSpliceDb(p)).toMatch(/sounds\.db|samples/i);
   });
 });

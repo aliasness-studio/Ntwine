@@ -47,18 +47,20 @@ export function snapshotSpliceDb(src: string, destDir: string): string {
   return dest;
 }
 
-/**
- * Opens a Splice sounds.db snapshot read-only and reads back `samples` + `packs`. Selects
- * named columns rather than `SELECT *` — that column list is the boundary that keeps every
- * Splice-internal column this codebase doesn't use out of everything downstream. `ORDER BY id`
- * on both queries makes the result deterministic for callers/tests rather than relying on
- * SQLite's incidental physical row order.
- */
+// The exact projections readSplice runs — shared with validateSpliceDb below so "valid" can
+// never drift from "what readSplice actually needs": one column added here is one column
+// validated there, automatically.
+const SAMPLES_PROJECTION = `SELECT local_path, file_hash, filename, pack_uuid, sample_type, bpm, audio_key, chord_type, duration, tags
+   FROM samples ORDER BY id`;
+const PACKS_PROJECTION = `SELECT uuid, name, genre, provider_name, cover_url FROM packs ORDER BY id`;
+
 /** Sanity-check a hand-picked file before persisting it as the Splice DB (the picker fallback
- * for when detection's glob misses — Windows-port audit blocker). Light on purpose: opens
- * read-only and checks the two tables `readSplice` will query. Returns null when usable, or a
- * user-facing reason when not — a random file must produce a clear error at pick time, not a
- * broken import later. */
+ * for when detection's glob misses — Windows-port audit blocker). Compiles `readSplice`'s own
+ * projections with `LIMIT 0` (Copilot review, PR #11): checking table NAMES alone would accept
+ * a right-named/wrong-shaped database, persist it, and only fail at import — the exact
+ * late-failure this validation exists to prevent. A missing table OR column throws at prepare,
+ * so success here means `readSplice` can actually run. Returns null when usable, or a
+ * user-facing reason when not. */
 export function validateSpliceDb(path: string): string | null {
   let db: InstanceType<typeof Database>;
   try {
@@ -67,37 +69,36 @@ export function validateSpliceDb(path: string): string | null {
     return 'That file could not be opened as a SQLite database.';
   }
   try {
-    const tables = db
-      .prepare<[], { name: string }>(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('samples', 'packs')`,
-      )
-      .all();
-    if (tables.length < 2) {
-      return 'That is a SQLite database, but not a Splice sounds.db (no samples/packs tables).';
-    }
+    // LIMIT 0: compile + execute the projections without reading rows — prepare alone catches
+    // missing tables/columns, the empty run keeps this a full "readSplice would work" proof.
+    db.prepare(`${SAMPLES_PROJECTION} LIMIT 0`).all();
+    db.prepare(`${PACKS_PROJECTION} LIMIT 0`).all();
     return null;
-  } catch {
-    // e.g. SQLITE_NOTADB surfacing at first query rather than at open.
-    return 'That file could not be read as a SQLite database.';
+  } catch (err) {
+    // better-sqlite3 opens lazily enough that a non-SQLite file often survives `new Database`
+    // and only explodes at the first statement — SQLITE_NOTADB there means "not SQLite at
+    // all", anything else means real SQLite with the wrong schema. Two different user mistakes,
+    // two different messages.
+    return (err as { code?: string }).code === 'SQLITE_NOTADB'
+      ? 'That file could not be read as a SQLite database.'
+      : 'That is a SQLite database, but not a usable Splice sounds.db (its samples/packs tables are missing or have the wrong shape).';
   } finally {
     db.close();
   }
 }
 
+/**
+ * Opens a Splice sounds.db snapshot read-only and reads back `samples` + `packs`. Selects
+ * named columns rather than `SELECT *` — that column list is the boundary that keeps every
+ * Splice-internal column this codebase doesn't use out of everything downstream. `ORDER BY id`
+ * on both queries makes the result deterministic for callers/tests rather than relying on
+ * SQLite's incidental physical row order.
+ */
 export function readSplice(snapshotPath: string): { samples: SpliceSample[]; packs: SplicePack[] } {
   const db = new Database(snapshotPath, { readonly: true });
   try {
-    const samples = db
-      .prepare<[], SpliceSample>(
-        `SELECT local_path, file_hash, filename, pack_uuid, sample_type, bpm, audio_key, chord_type, duration, tags
-         FROM samples ORDER BY id`,
-      )
-      .all();
-    const packs = db
-      .prepare<[], SplicePack>(
-        `SELECT uuid, name, genre, provider_name, cover_url FROM packs ORDER BY id`,
-      )
-      .all();
+    const samples = db.prepare<[], SpliceSample>(SAMPLES_PROJECTION).all();
+    const packs = db.prepare<[], SplicePack>(PACKS_PROJECTION).all();
     return { samples, packs };
   } finally {
     db.close();
