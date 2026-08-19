@@ -100,6 +100,12 @@ const createWindow = (): BrowserWindow => {
   });
   if (e2e?.hidden) {
     win.webContents.setAudioMuted(true);
+    // macOS clamps the -32000 placement back onto a display (CI: bounds.x read 0), so there the
+    // quiet window sits ON-screen, merely transparent — and a transparent window still hit-tests,
+    // i.e. it would swallow the dev's real clicks. Forward OS mouse input straight through it on
+    // every platform (belt-and-braces on win32 too). Test input is unaffected: Playwright drives
+    // the page via CDP, which bypasses OS hit-testing entirely — verified by the full suite.
+    win.setIgnoreMouseEvents(true);
     win.showInactive();
   }
 

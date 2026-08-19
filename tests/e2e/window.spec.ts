@@ -33,7 +33,12 @@ test('the window opens at 90% of the work area, not the old fixed 800x600', asyn
   } else {
     expect(opacity).toBe(0);
     expect(focused).toBe(false);
-    expect(bounds.x).toBeLessThan(-10000);
+    // The off-screen park only survives on win32 — macOS (AppKit) clamps window placement back
+    // onto a display (CI read bounds.x === 0), which is why quiet mode also forwards OS mouse
+    // input through the window (setIgnoreMouseEvents, main.ts): on a Mac the invisible window
+    // sits on-screen and must not swallow real clicks. No getter exposes that flag, so the
+    // imperceptibility pins on darwin are opacity 0 + never-focused above.
+    if (process.platform === 'win32') expect(bounds.x).toBeLessThan(-10000);
   }
   const expected = computeDefaultBounds(workArea);
   // Windows snaps window bounds to the PHYSICAL pixel grid, so on a fractional display scale
