@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ipcMain } from 'electron';
+import { dialog, ipcMain } from 'electron';
 import { openCatalog, type Catalog } from './catalog/db';
 import { openUserDb } from './user/userDb';
 import {
@@ -11,11 +11,13 @@ import {
   PREVIEW_MAX_BYTES,
   PREVIEW_MAX_SECONDS,
   registerIpc,
+  resolveSpliceDb,
   runWaveformsInBackground,
   type DecodePreviewPcmDeps,
   type RunWaveformsInBackgroundDeps,
 } from './ipc';
 import type { WorkerLike } from './waveforms/queue';
+import { buildFixtureSpliceDb } from './importer/fixtureSpliceDb';
 
 // registerIpc (and drag.ts, transitively through main.ts in production) reaches for `electron`'s
 // main-process singletons at call time. Under this test file's runner (`ELECTRON_RUN_AS_NODE=1`),
@@ -376,5 +378,74 @@ describe('registerIpc — user-layer handlers (Task 6, design spec §4)', () => 
     const rail = await handlerFor(handlers, 'ntwine:listLibraryRail')({});
 
     expect(rail).toEqual({ favorites: 0, collections: [] });
+  });
+});
+
+// The Splice-DB picker fallback (Windows-port audit blocker): detection's win32 glob is a
+// best-guess — when it misses, the user must be able to point at sounds.db by hand, and that
+// choice must persist and keep winning until it goes stale.
+describe('resolveSpliceDb — manual override precedence', () => {
+  function plantCandidate(appData: string): string {
+    const dir = join(appData, 'com.splice.Splice', 'users', 'default', 'someuser');
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, 'sounds.db');
+    writeFileSync(p, '');
+    return p;
+  }
+
+  it('a persisted splice_db_path wins over a live glob candidate while the file exists', () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    const appData = join(dir, 'appdata');
+    const globbed = plantCandidate(appData);
+    const picked = join(dir, 'hand-picked-sounds.db');
+    writeFileSync(picked, '');
+    catalog.setMeta('splice_db_path', picked);
+    expect(resolveSpliceDb(catalog, appData)).toBe(picked);
+    expect(resolveSpliceDb(catalog, appData)).not.toBe(globbed);
+  });
+
+  it('a STALE override (file deleted) falls back to glob detection instead of failing', () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    const appData = join(dir, 'appdata');
+    const globbed = plantCandidate(appData);
+    catalog.setMeta('splice_db_path', join(dir, 'gone.db')); // never created
+    expect(resolveSpliceDb(catalog, appData)).toBe(globbed);
+  });
+
+  it('no override and no candidates → null (getState reads this as "not found")', () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    expect(resolveSpliceDb(catalog, join(dir, 'empty-appdata'))).toBeNull();
+  });
+});
+
+describe('registerIpc — ntwine:pickSpliceDb', () => {
+  const pickDialog = () => dialog.showOpenDialog as unknown as Mock;
+
+  it('cancel → null, and nothing is persisted', async () => {
+    const { catalog, handlers } = setUpUserIpc();
+    pickDialog().mockResolvedValueOnce({ canceled: true, filePaths: [] });
+    await expect(handlerFor(handlers, 'ntwine:pickSpliceDb')({})).resolves.toBeNull();
+    expect(catalog.getMeta('splice_db_path')).toBeNull();
+  });
+
+  it('an invalid file rejects with a clear error and persists nothing', async () => {
+    const { catalog, handlers } = setUpUserIpc();
+    const bad = join(tmp(), 'random.txt');
+    writeFileSync(bad, 'not a database');
+    pickDialog().mockResolvedValueOnce({ canceled: false, filePaths: [bad] });
+    await expect(handlerFor(handlers, 'ntwine:pickSpliceDb')({})).rejects.toThrow(/SQLite|database/i);
+    expect(catalog.getMeta('splice_db_path')).toBeNull();
+  });
+
+  it('a valid sounds.db is persisted to splice_db_path and returned', async () => {
+    const { catalog, handlers } = setUpUserIpc();
+    const good = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(good, []);
+    pickDialog().mockResolvedValueOnce({ canceled: false, filePaths: [good] });
+    await expect(handlerFor(handlers, 'ntwine:pickSpliceDb')({})).resolves.toBe(good);
+    expect(catalog.getMeta('splice_db_path')).toBe(good);
   });
 });

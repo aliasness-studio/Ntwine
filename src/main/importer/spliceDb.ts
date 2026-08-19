@@ -54,6 +54,36 @@ export function snapshotSpliceDb(src: string, destDir: string): string {
  * on both queries makes the result deterministic for callers/tests rather than relying on
  * SQLite's incidental physical row order.
  */
+/** Sanity-check a hand-picked file before persisting it as the Splice DB (the picker fallback
+ * for when detection's glob misses — Windows-port audit blocker). Light on purpose: opens
+ * read-only and checks the two tables `readSplice` will query. Returns null when usable, or a
+ * user-facing reason when not — a random file must produce a clear error at pick time, not a
+ * broken import later. */
+export function validateSpliceDb(path: string): string | null {
+  let db: InstanceType<typeof Database>;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch {
+    return 'That file could not be opened as a SQLite database.';
+  }
+  try {
+    const tables = db
+      .prepare<[], { name: string }>(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('samples', 'packs')`,
+      )
+      .all();
+    if (tables.length < 2) {
+      return 'That is a SQLite database, but not a Splice sounds.db (no samples/packs tables).';
+    }
+    return null;
+  } catch {
+    // e.g. SQLITE_NOTADB surfacing at first query rather than at open.
+    return 'That file could not be read as a SQLite database.';
+  } finally {
+    db.close();
+  }
+}
+
 export function readSplice(snapshotPath: string): { samples: SpliceSample[]; packs: SplicePack[] } {
   const db = new Database(snapshotPath, { readonly: true });
   try {

@@ -30,6 +30,7 @@ function makeFakeApi(
     runImport: vi.fn(async () => {}),
     onImportProgress: vi.fn(() => () => {}),
     pickLibraryRoot: vi.fn(async () => null as string | null),
+    pickSpliceDb: vi.fn(async () => null as string | null),
     listPacks: vi.fn(async () => [] as PackRow[]),
     listTags: vi.fn(over.listTags ?? (async () => [] as TagFacet[])),
     querySamples: vi.fn(over.querySamples ?? (async () => [] as SampleRow[])),

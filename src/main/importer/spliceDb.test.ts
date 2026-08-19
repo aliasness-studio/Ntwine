@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFixtureSpliceDb, type FixtureRow } from './fixtureSpliceDb';
-import { readSplice, snapshotSpliceDb } from './spliceDb';
+import { readSplice, snapshotSpliceDb, validateSpliceDb } from './spliceDb';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-splicedb-'));
 
@@ -245,5 +245,27 @@ describe('snapshotSpliceDb', () => {
     expect(readFileSync(path2)).toEqual(readFileSync(dbPath));
     const { samples } = readSplice(path2); // proves the stale garbage was replaced, not just path-equal
     expect(samples).toHaveLength(3);
+  });
+});
+
+describe('validateSpliceDb', () => {
+  it('accepts a real fixture sounds.db (samples + packs tables present)', () => {
+    const dbPath = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(dbPath, FIXTURE_ROWS);
+    expect(validateSpliceDb(dbPath)).toBeNull();
+  });
+
+  it('rejects a file that is not SQLite at all, with an error naming the problem', () => {
+    const p = join(tmp(), 'not-a-db.db');
+    writeFileSync(p, 'just some text pretending to be a database');
+    expect(validateSpliceDb(p)).toMatch(/SQLite|database/i);
+  });
+
+  it('rejects a valid SQLite file that is not a Splice sounds.db (an empty db has neither samples nor packs)', () => {
+    // A zero-byte file IS a valid empty SQLite database — the sharpest "right container, wrong
+    // contents" case: open succeeds, the schema check is what must catch it.
+    const p = join(tmp(), 'empty.db');
+    writeFileSync(p, '');
+    expect(validateSpliceDb(p)).toMatch(/sounds\.db|samples/i);
   });
 });

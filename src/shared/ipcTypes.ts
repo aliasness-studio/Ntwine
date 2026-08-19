@@ -96,6 +96,10 @@ export interface NtwineApi {
   runImport(): Promise<void>; // resolves when catalog+stat+covers done; waveforms continue
   onImportProgress(cb: (p: ImportProgress) => void): () => void;
   pickLibraryRoot(): Promise<string | null>;
+  // Splice-DB picker fallback: null = dialog canceled; rejects (user-facing message via
+  // ipcError.ts) when the picked file fails validation. On success the path is persisted
+  // (meta.splice_db_path) and wins over detection while the file exists.
+  pickSpliceDb(): Promise<string | null>;
   listPacks(): Promise<PackRow[]>;
   listTags(): Promise<TagFacet[]>; // feeds the §7 tag chips (top-N by count, full list searchable)
   querySamples(f: QueryFilters): Promise<SampleRow[]>; // whole result set — 4.2k rows max, one IPC hop

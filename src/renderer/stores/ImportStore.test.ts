@@ -23,6 +23,7 @@ function makeFakeApi(
     // the same reasoning, applied throughout there too).
     onImportProgress: vi.fn(over.onImportProgress ?? (() => () => {})),
     pickLibraryRoot: vi.fn(async () => null as string | null),
+    pickSpliceDb: vi.fn(async () => null as string | null),
     listPacks: vi.fn(async () => []),
     listTags: vi.fn(async () => []),
     querySamples: vi.fn(async () => []),

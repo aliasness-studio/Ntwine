@@ -1,11 +1,12 @@
 import { app, dialog, ipcMain, net, utilityProcess } from 'electron';
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Catalog } from './catalog/db';
 import { getPeaks, listPacks, listTags, pendingPeakIds, querySamples } from './catalog/queries';
 import type { E2EEmit } from './e2e';
 import { runImport as runImportPipeline, statPass, type ImportDeps } from './importer/importer';
+import { validateSpliceDb } from './importer/spliceDb';
 import { resolveSpliceDbCandidates } from './paths';
 import { resolveSampleAbsPath } from './protocol';
 import type { UserDb } from './user/userDb';
@@ -32,11 +33,18 @@ export function currentLibraryRoot(catalog: Catalog, defaultRoot: string = DEFAU
 
 // Splice DB discovery (spec §5 step 1) answered once here and reused by both `getState`'s
 // `spliceDbFound` and `runImport`'s own `spliceDbPath` — the same "one question, two gates"
-// reasoning as `currentLibraryRoot` above. `resolveSpliceDbCandidates` can return more than one
-// hit (multiple Splice user profiles); the first is as good a guess as any today — v1 has no UI
-// to choose among candidates.
-function findSpliceDbPath(): string | null {
-  const candidates = resolveSpliceDbCandidates(app.getPath('appData'));
+// reasoning as `currentLibraryRoot` above. Precedence (Windows-port audit blocker fix): a
+// hand-picked `splice_db_path` (persisted by ntwine:pickSpliceDb below) wins WHILE ITS FILE
+// STILL EXISTS — the win32 detection glob is a best-guess, and the picker is the escape hatch
+// when it misses. A stale override (file moved/deleted) falls back to detection instead of
+// wedging the app on a dead path. `resolveSpliceDbCandidates` can return more than one hit
+// (multiple Splice user profiles); the first is as good a guess as any today — v1 has no UI to
+// choose among candidates. Exported (with appDataDir injected, not read from `app`) so the
+// precedence is unit-pinned without an Electron mock.
+export function resolveSpliceDb(catalog: Catalog, appDataDir: string): string | null {
+  const override = catalog.getMeta('splice_db_path');
+  if (override !== null && existsSync(override)) return override;
+  const candidates = resolveSpliceDbCandidates(appDataDir);
   return candidates.length > 0 ? candidates[0] : null;
 }
 
@@ -223,14 +231,14 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     // 'library_root' — so this can never drift from what a successful import actually stamped.
     imported: catalog.getMeta('imported') === '1',
     libraryRoot: catalog.getMeta('library_root'),
-    spliceDbFound: findSpliceDbPath() !== null,
+    spliceDbFound: resolveSpliceDb(catalog, app.getPath('appData')) !== null,
   }));
 
   ipcMain.handle('ntwine:runImport', async () => {
     const importDeps: ImportDeps = {
       catalog,
       libraryRoot: currentLibraryRoot(catalog, deps.defaultLibraryRoot),
-      spliceDbPath: findSpliceDbPath(),
+      spliceDbPath: resolveSpliceDb(catalog, app.getPath('appData')),
       snapshotDir: deps.snapshotDir,
       coversDir: deps.coversDir,
       fetchFn: (url) => net.fetch(url),
@@ -250,6 +258,28 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     catalog.setMeta('library_root', newRoot);
     statPass(catalog, newRoot);
     return newRoot;
+  });
+
+  ipcMain.handle('ntwine:pickSpliceDb', async () => {
+    // The detection escape hatch (Windows-port audit blocker): when the glob misses — an
+    // unverified win32 layout, a nonstandard install, linux — the user points at sounds.db by
+    // hand. Validated BEFORE persisting: a random file must fail loudly here, not as a broken
+    // import later; the renderer surfaces the thrown message via ipcError's unwrap. Persisted to
+    // the same meta store as library_root; resolveSpliceDb above gives it precedence while the
+    // file exists.
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        { name: 'SQLite database', extensions: ['db'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const picked = result.filePaths[0];
+    const problem = validateSpliceDb(picked);
+    if (problem !== null) throw new Error(problem);
+    catalog.setMeta('splice_db_path', picked);
+    return picked;
   });
 
   ipcMain.handle('ntwine:listPacks', async () => listPacks(catalog));

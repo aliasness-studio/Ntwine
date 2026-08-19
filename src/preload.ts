@@ -5,7 +5,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { ImportProgress, NtwineApi, QueryFilters } from './shared/ipcTypes';
 
 // THE typed IPC bridge (Task 11 — grown from the Task 2 spike's bare `startDrag`; Task 6 grows it
-// again, 12 -> 23 methods, design spec §4). Every method but two is a plain
+// again, 12 -> 23 methods, design spec §4; the Splice-DB picker fallback, 23 -> 24). Every method but two is a plain
 // `ipcMain.handle`/`ipcRenderer.invoke` round-trip on the `ntwine:<method>` channel ipc.ts (or,
 // for `startDrag`, drag.ts) registers. The two exceptions:
 //  - `onImportProgress` wraps `ipcRenderer.on` for the 'ntwine:import-progress' broadcast
@@ -29,6 +29,8 @@ const api: NtwineApi = {
   },
 
   pickLibraryRoot: () => ipcRenderer.invoke('ntwine:pickLibraryRoot'),
+
+  pickSpliceDb: () => ipcRenderer.invoke('ntwine:pickSpliceDb'),
 
   listPacks: () => ipcRenderer.invoke('ntwine:listPacks'),
 
