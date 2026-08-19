@@ -1,3 +1,4 @@
+import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseTags, normalizeSample, relPathToAbs } from './transform';
 
@@ -96,12 +97,19 @@ describe('parseTags — additional (not in brief)', () => {
 // importer.ts's statPass and queue.ts's absPathsFor (one-question-two-gates).
 describe('relPathToAbs — additional (not in brief)', () => {
   it('rejoins a multi-segment POSIX rel_path under libraryRoot', () => {
-    expect(relPathToAbs('/root', 'sounds/packs/P/kick.wav')).toBe('/root/sounds/packs/P/kick.wav');
+    // relPathToAbs returns a HOST-NATIVE absolute path by contract (its doc comment), so the
+    // expectation is built with the host separator — POSIX-hardcoding this broke on Windows.
+    expect(relPathToAbs('/root', 'sounds/packs/P/kick.wav')).toBe(
+      ['', 'root', 'sounds', 'packs', 'P', 'kick.wav'].join(sep),
+    );
   });
 
   it('is the true inverse of toRelPath — round-trips through normalizeSample back to local_path', () => {
+    // Native input path (not hardcoded POSIX) so the inverse property is exercised on every
+    // host: toRelPath takes a native local_path, relPathToAbs must hand the same one back.
+    const root = join(sep, 'root');
     const base = {
-      local_path: '/root/sounds/packs/P/kick.wav',
+      local_path: join(root, 'sounds', 'packs', 'P', 'kick.wav'),
       file_hash: 'h',
       filename: 'kick.wav',
       pack_uuid: 'u',
@@ -112,8 +120,8 @@ describe('relPathToAbs — additional (not in brief)', () => {
       duration: 1395,
       tags: 'drums',
     };
-    const n = normalizeSample(base as any, '/root');
+    const n = normalizeSample(base as any, root);
 
-    expect(relPathToAbs('/root', n.relPath)).toBe(base.local_path);
+    expect(relPathToAbs(root, n.relPath)).toBe(base.local_path);
   });
 });
