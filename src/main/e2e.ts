@@ -10,6 +10,11 @@ export interface E2EConfig {
   appData: string | null;
   libraryRoot: string | null;
   bootMarker: string | null;
+  /** NTWINE_E2E_HIDDEN=1 — present the window imperceptibly (off-screen, transparent, inactive,
+   * muted; see main.ts for why plain `show:false` is too slow) so an e2e run never pops a
+   * window, steals focus, or makes noise on the dev box. Same exact-"1" discipline as
+   * NTWINE_E2E itself; the harness sets it by default (NTWINE_E2E_HEADED=1 opts back out). */
+  hidden: boolean;
 }
 
 export class E2EConfigError extends Error {}
@@ -35,6 +40,7 @@ export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null {
     appData: absoluteOrNull(env, 'NTWINE_APP_DATA'),
     libraryRoot: absoluteOrNull(env, 'NTWINE_LIBRARY_ROOT'),
     bootMarker: absoluteOrNull(env, 'NTWINE_E2E_BOOT_MARKER'),
+    hidden: env.NTWINE_E2E_HIDDEN === '1',
   };
 }
 

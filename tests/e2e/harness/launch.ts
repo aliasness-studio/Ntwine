@@ -34,6 +34,12 @@ export function assertProductionArtifact(): void {
   }
 }
 
+/** Quiet by default: every harness launch runs the app window hidden + muted (NTWINE_E2E_HIDDEN=1,
+ * src/main/e2e.ts) so a `yarn e2e` never pops windows or makes noise on the dev box. Set
+ * NTWINE_E2E_HEADED=1 in YOUR shell to watch a run (debugging); specs can read this constant to
+ * assert visibility without re-deriving the env contract. */
+export const E2E_HEADED = process.env.NTWINE_E2E_HEADED === '1';
+
 export interface LaunchOptions {
   userData: string;
   appData?: string;
@@ -54,6 +60,7 @@ export async function launchNtwine(opts: LaunchOptions): Promise<Launched> {
     NTWINE_E2E: '1',
     NTWINE_USER_DATA: opts.userData,
     ELECTRON_ENABLE_LOGGING: '1',
+    ...(E2E_HEADED ? {} : { NTWINE_E2E_HIDDEN: '1' }),
     ...(opts.appData ? { NTWINE_APP_DATA: opts.appData } : {}),
     ...(opts.libraryRoot ? { NTWINE_LIBRARY_ROOT: opts.libraryRoot } : {}),
     ...opts.extraEnv,

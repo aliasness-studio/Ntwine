@@ -14,7 +14,14 @@ function run(exe: string, env: Record<string, string>): Promise<{ code: number |
     child.on('exit', (code) => { clearTimeout(t); resolve({ code, stderr }); });
   });
 }
-const baseEnv = (): Record<string, string> => { const e = { ...(process.env as Record<string, string>) }; delete e.ELECTRON_RUN_AS_NODE; return e; };
+// Quiet by default, same contract as harness/launch.ts: the boot probe otherwise flashes a real
+// window. NTWINE_E2E_HEADED=1 in the runner's shell opts back out (debugging).
+const baseEnv = (): Record<string, string> => {
+  const e = { ...(process.env as Record<string, string>) };
+  delete e.ELECTRON_RUN_AS_NODE;
+  if (process.env.NTWINE_E2E_HEADED !== '1') e.NTWINE_E2E_HIDDEN = '1';
+  return e;
+};
 
 test('the packaged app boots, loads the renderer, and quits on the boot marker', async () => {
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-pkg-'));

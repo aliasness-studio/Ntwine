@@ -33,12 +33,21 @@ describe('readE2EConfig', () => {
       appData: path.join(ABS, 'ad'),
       libraryRoot: path.join(ABS, 'lib'),
       bootMarker: path.join(ABS, 'marker'),
+      hidden: false,
     });
   });
   it('leaves optional overrides null when absent', () => {
     expect(readE2EConfig({ NTWINE_E2E: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') })).toStrictEqual(
-      { userData: path.join(ABS, 'ud'), appData: null, libraryRoot: null, bootMarker: null },
+      { userData: path.join(ABS, 'ud'), appData: null, libraryRoot: null, bootMarker: null, hidden: false },
     );
+  });
+  it('arms hidden mode only on the exact value "1" (same discipline as NTWINE_E2E itself)', () => {
+    const base = { NTWINE_E2E: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') };
+    expect(readE2EConfig({ ...base, NTWINE_E2E_HIDDEN: '1' })?.hidden).toBe(true);
+    expect(readE2EConfig({ ...base, NTWINE_E2E_HIDDEN: 'true' })?.hidden).toBe(false);
+    expect(readE2EConfig({ ...base, NTWINE_E2E_HIDDEN: '' })?.hidden).toBe(false);
+    // Not honoured outside E2E mode — the whole config is null, hidden included.
+    expect(readE2EConfig({ NTWINE_E2E_HIDDEN: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') })).toBeNull();
   });
   it('refuses a SUPPLIED optional override that is not absolute (a typo must not run against cwd-relative data)', () => {
     for (const key of ['NTWINE_APP_DATA', 'NTWINE_LIBRARY_ROOT', 'NTWINE_E2E_BOOT_MARKER'] as const) {
@@ -62,6 +71,7 @@ describe('makeE2EEmitter', () => {
       appData: null,
       libraryRoot: null,
       bootMarker: null,
+      hidden: false,
     });
     emit!('ntwine:e2e:drag', { sampleId: 3, file: null });
     expect(app.emit).toHaveBeenCalledWith('ntwine:e2e:drag', { sampleId: 3, file: null });
