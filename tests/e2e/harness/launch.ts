@@ -67,6 +67,15 @@ export async function launchNtwine(opts: LaunchOptions): Promise<Launched> {
   };
   // The RUNNER is Electron-as-Node (yarn e2e:only); the APP must not be.
   delete env.ELECTRON_RUN_AS_NODE;
+  // A launch that did not ASK for an override must not inherit one (review, PR #13). `env` starts
+  // as a copy of `process.env`, so a developer with NTWINE_APP_DATA or NTWINE_LIBRARY_ROOT exported
+  // in their shell would have it ride in and silently replace the fixture's own dirs — and the
+  // specs most damaged by that are precisely the ones that omit an override on purpose, to drive
+  // detection. They would still pass, while testing the override path they exist to avoid. Same
+  // reasoning as the ELECTRON_RUN_AS_NODE delete above: the harness decides the app's environment,
+  // never the shell it happens to be launched from.
+  if (opts.appData === undefined) delete env.NTWINE_APP_DATA;
+  if (opts.libraryRoot === undefined) delete env.NTWINE_LIBRARY_ROOT;
   const app = await _electron.launch({ args: [MAIN_JS], env, cwd: REPO_ROOT });
   let page: Page;
   try {

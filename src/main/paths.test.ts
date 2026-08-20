@@ -112,6 +112,17 @@ describe('readSpliceFolderSetting', () => {
     writeSettings({ splice_folder: join(libraryDir, 'moved-away') });
     expect(readSpliceFolderSetting(dbPath)).toBeNull();
   });
+
+  // Existence alone isn't enough: a FILE at that path would be adopted as the library root and
+  // only fail at import, where every sample reads as "outside library root" — a baffling error a
+  // long way from its cause. Falling through to the platform default keeps it local.
+  it('returns null when the reported path exists but is a file, not a directory', () => {
+    const { dbPath, libraryDir, writeSettings } = plantSpliceDir();
+    const notADirectory = join(libraryDir, 'Splice.txt');
+    writeFileSync(notADirectory, 'this is a file');
+    writeSettings({ splice_folder: notADirectory });
+    expect(readSpliceFolderSetting(dbPath)).toBeNull();
+  });
 });
 
 describe('resolveDefaultLibraryRoot', () => {

@@ -33,16 +33,36 @@ const withUnoverriddenLaunch = async (
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-rootpick-'));
   const fixture = buildFixtureLibrary(join(root, 'fixture'));
   const l = await launchNtwine({ userData: fixture.userData, appData: fixture.appData });
+
+  // The body's own failure is captured rather than thrown, so teardown always runs AND the real
+  // assertion error still wins over any cleanup error below — a `finally` that throws would
+  // otherwise replace the failure you actually need to read.
+  let bodyError: unknown = null;
   try {
     await body(l, fixture);
-  } finally {
-    await l.close();
-    // Windows holds the just-closed app's SQLite handles for a moment — retry the teardown
-    // rather than fail the test on a transient EBUSY.
-    for (let i = 0; i < 5; i++) {
-      try { rmSync(root, { recursive: true, force: true }); break; } catch { await new Promise((r) => setTimeout(r, 200)); }
+  } catch (err) {
+    bodyError = err;
+  }
+  await l.close();
+
+  // Windows holds the just-closed app's SQLite handles for a moment — retry rather than fail on a
+  // transient EBUSY. But a directory that is STILL locked after every attempt is a real defect (a
+  // leaked handle), so the last error surfaces instead of being swallowed (review, PR #13):
+  // silently leaving temp data behind is exactly how a handle leak hides.
+  let cleanupError: unknown = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      cleanupError = null;
+      break;
+    } catch (err) {
+      cleanupError = err;
+      await new Promise((r) => setTimeout(r, 200));
     }
   }
+
+  if (bodyError !== null) throw bodyError;
+  if (cleanupError !== null) throw cleanupError;
 };
 
 // Library-root auto-detection (2026-08-20): first-run used to show a hardcoded "~/Splice

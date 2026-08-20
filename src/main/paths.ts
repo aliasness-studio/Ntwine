@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import { dirname, join } from 'node:path';
-import { existsSync, globSync, readFileSync } from 'node:fs'; // Node 22+: fs.globSync
+import { globSync, readFileSync, statSync } from 'node:fs'; // Node 22+: fs.globSync
 
 export function dataDirFrom(userData: string): string {
   return join(userData, 'ntwine-data');
@@ -54,8 +54,9 @@ export function resolveSpliceDbCandidates(
  * per-platform subfolder layout Splice happens to use.
  *
  * Returns null for everything that isn't a usable answer — no settings.json, unparseable JSON, a
- * non-object payload, the key absent or not a non-empty string, or a folder no longer on disk —
- * so callers fall through to their own default rather than adopting a path that can't work.
+ * non-object payload, the key absent or not a non-empty string, or a path that isn't an existing
+ * DIRECTORY — so callers fall through to their own default rather than adopting a path that can't
+ * work.
  */
 export function readSpliceFolderSetting(spliceDbPath: string): string | null {
   let parsed: unknown;
@@ -67,7 +68,15 @@ export function readSpliceFolderSetting(spliceDbPath: string): string | null {
   if (typeof parsed !== 'object' || parsed === null) return null;
   const folder = (parsed as { splice_folder?: unknown }).splice_folder;
   if (typeof folder !== 'string' || folder.trim() === '') return null;
-  return existsSync(folder) ? folder : null;
+  // A DIRECTORY specifically, not merely something that exists (review, PR #13): a library root
+  // that happens to be a file would be adopted here and only fail much later, at import, where
+  // every single sample reads as "outside library root" — a baffling error a mile from its cause.
+  // Falling through to the platform default instead keeps the failure local and recoverable.
+  try {
+    return statSync(folder).isDirectory() ? folder : null;
+  } catch {
+    return null; // gone between read and stat, a broken symlink, or unreadable
+  }
 }
 
 export interface DefaultLibraryRootOptions {
