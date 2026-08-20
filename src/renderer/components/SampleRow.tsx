@@ -196,10 +196,19 @@ const cellLink = css`
   }
 `;
 
-const PackLink = styled.button`
-  ${cellLink}
+// The pack column is wide and its name usually short, so the LINK hugs its text and the cell
+// around it stays inert: clicking the empty space to the right of a pack name still selects the
+// row (and previews it), the way clicking any other blank part of the row does. Only the name
+// itself navigates.
+const PackCell = styled.span`
   flex: 1;
   min-width: 0;
+  display: flex;
+`;
+
+const PackLink = styled.button`
+  ${cellLink}
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -548,38 +557,46 @@ export function SampleRow({
       {/* Each cell is a link only when it has something to navigate TO — a sample with no pack,
           no detected key, or no bpm keeps the inert span, so there's never a button that does
           nothing when clicked. */}
+      {/* Each cell carries a stable testid on BOTH branches. Cells used to be addressable only by
+          child position (`:scope > span` + an index), which stopped working the moment a cell could
+          be either a span or a button depending on whether its value exists — the index then means
+          different things on different rows. */}
       {row.packId !== null && row.packName !== null ? (
-        <PackLink
-          title={row.packName}
-          aria-label={`Show pack ${row.packName}`}
-          {...linkProps({ kind: 'pack', packId: row.packId })}
-        >
-          {row.packName}
-        </PackLink>
+        <PackCell data-testid="row-pack">
+          <PackLink
+            title={row.packName}
+            aria-label={`Show pack ${row.packName}`}
+            {...linkProps({ kind: 'pack', packId: row.packId })}
+          >
+            {row.packName}
+          </PackLink>
+        </PackCell>
       ) : (
-        <PackName>—</PackName>
+        <PackName data-testid="row-pack">—</PackName>
       )}
       {row.audioKey !== null ? (
         <KeyLink
+          data-testid="row-key"
           aria-label={`Filter by key ${formatKey(row.audioKey, null)}`}
           {...linkProps({ kind: 'key', audioKey: row.audioKey })}
         >
           {formatKey(row.audioKey, row.chordType)}
         </KeyLink>
       ) : (
-        <KeyCell>{formatKey(row.audioKey, row.chordType)}</KeyCell>
+        <KeyCell data-testid="row-key">{formatKey(row.audioKey, row.chordType)}</KeyCell>
       )}
       {row.bpm !== null ? (
         <BpmLink
+          data-testid="row-bpm"
           aria-label={`Filter by ${row.bpm} BPM`}
           {...linkProps({ kind: 'bpm', bpm: row.bpm })}
         >
           {row.bpm}
         </BpmLink>
       ) : (
-        <BpmCell>—</BpmCell>
+        <BpmCell data-testid="row-bpm">—</BpmCell>
       )}
-      <DurationCell>{formatDuration(row.durationMs)}</DurationCell>
+      <DurationCell data-testid="row-duration">{formatDuration(row.durationMs)}</DurationCell>
       <Tags>
         {allChips.slice(0, MAX_INLINE_TAGS)}
         {extraChipCount > 0 && <Chip>+{extraChipCount}</Chip>}

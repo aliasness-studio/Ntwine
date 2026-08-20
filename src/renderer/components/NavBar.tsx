@@ -202,7 +202,11 @@ export const NavBar = observer(function NavBar() {
       </IconButton>
       {crumbs.map((crumb) => (
         <Crumb key={crumb.key} data-testid="nav-crumb">
-          <CrumbLabel title={crumb.label}>{crumb.label}</CrumbLabel>
+          {/* Its own testid: the crumb element's text includes the ✕, so only the label carries
+              the filter's name on its own. */}
+          <CrumbLabel data-testid="nav-crumb-label" title={crumb.label}>
+            {crumb.label}
+          </CrumbLabel>
           <RemoveButton
             type="button"
             aria-label={`Remove filter ${crumb.label}`}

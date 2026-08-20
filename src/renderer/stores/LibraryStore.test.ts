@@ -1,7 +1,7 @@
 import { autorun, isObservable } from 'mobx';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
-import { LibraryStore } from './LibraryStore';
+import { LibraryStore, sameFilters } from './LibraryStore';
 
 // Full `NtwineApi`-shaped fake (all 23 bridge methods), built from plain `vi.fn()`s so the
 // returned object satisfies `NtwineApi` structurally when passed into `new LibraryStore(...)` —
@@ -426,6 +426,37 @@ describe('LibraryStore', () => {
       store.setScope(null); // clear only the scope
 
       expect(store.filters).toStrictEqual({ audioKey: 'c#' });
+    });
+  });
+
+  // Guards the "a change that changes nothing costs nothing" rule below. A false NEGATIVE here
+  // (equal filters reported different) silently adds a dead history entry, which surfaces as a
+  // back press that appears to do nothing at all.
+  describe('sameFilters', () => {
+    it('treats an empty filter set as equal to itself', () => {
+      expect(sameFilters({}, {})).toBe(true);
+    });
+
+    it('compares scope by kind AND payload, not by reference', () => {
+      expect(sameFilters({ scope: { kind: 'pack', packId: 5 } }, { scope: { kind: 'pack', packId: 5 } })).toBe(true);
+      expect(sameFilters({ scope: { kind: 'pack', packId: 5 } }, { scope: { kind: 'pack', packId: 6 } })).toBe(false);
+      expect(sameFilters({ scope: { kind: 'favorites' } }, { scope: { kind: 'favorites' } })).toBe(true);
+      expect(sameFilters({ scope: { kind: 'favorites' } }, { scope: { kind: 'pack', packId: 5 } })).toBe(false);
+      expect(sameFilters({ scope: { kind: 'collection', collectionId: 'a' } }, { scope: { kind: 'collection', collectionId: 'b' } })).toBe(false);
+      expect(sameFilters({ scope: { kind: 'pack', packId: 5 } }, {})).toBe(false);
+    });
+
+    it('treats tags as a set — order does not matter, membership does', () => {
+      expect(sameFilters({ tags: ['kick', 'snare'] }, { tags: ['snare', 'kick'] })).toBe(true);
+      expect(sameFilters({ tags: ['kick'] }, { tags: ['kick', 'snare'] })).toBe(false);
+      expect(sameFilters({ tags: [] }, {})).toBe(true); // an empty list narrows nothing
+    });
+
+    it('compares the scalar dimensions by value', () => {
+      expect(sameFilters({ bpmMin: 90, bpmMax: 140 }, { bpmMin: 90, bpmMax: 140 })).toBe(true);
+      expect(sameFilters({ bpmMin: 90 }, { bpmMin: 91 })).toBe(false);
+      expect(sameFilters({ audioKey: 'c#' }, { audioKey: 'c' })).toBe(false);
+      expect(sameFilters({ search: 'kick' }, {})).toBe(false);
     });
   });
 

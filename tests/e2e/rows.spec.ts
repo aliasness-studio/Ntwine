@@ -1,20 +1,13 @@
-import type { Locator } from '@playwright/test';
 import { importAndWait, rowByFilename } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
-// SampleRow.tsx's cells carry no testid/aria-label to target individually — but its direct
-// children are, in JSX order (for a non-missing row): Filename, PackName, KeyCell, BpmCell,
-// DurationCell (all <span>s), then Tags (a <div>, never picked up by a `span` selector). Position
-// is the only handle available, so it's documented once here rather than scattered magic `.nth()`
-// calls — and it's what the brief's "assert on the row's cell texts, not a bare '—' anywhere"
-// requires: a bpm-0 row shows '—' in TWO cells (key AND bpm) for two independently-NULL reasons,
-// and a bare `toContainText('—')` couldn't tell those apart from a third, actually-broken cell.
-const KEY_CELL = 2;
-const BPM_CELL = 3;
-const DURATION_CELL = 4;
-function cell(row: Locator, index: number): Locator {
-  return row.locator(':scope > span').nth(index);
-}
+// Cells are addressed by testid (`row-key`/`row-bpm`/`row-duration`, SampleRow.tsx). This used to
+// be child position — `:scope > span` plus an index — which broke once a cell became either a span
+// or a button depending on whether it has a value to link to: the same index then means different
+// cells on different rows. Naming them is also what the brief's "assert on the row's cell texts,
+// not a bare '—' anywhere" asks for: a bpm-0 row shows '—' in TWO cells (key AND bpm) for two
+// independently-NULL reasons, and a bare `toContainText('—')` can't tell those apart from a third,
+// actually-broken cell.
 
 test('sample rows render key/bpm/duration/tags formatting and the missing/NFD/AIFF edge cases', async ({
   ntwine,
@@ -34,13 +27,13 @@ test('sample rows render key/bpm/duration/tags formatting and the missing/NFD/AI
   }
 
   const nullDurationRow = rowByFilename(page, fixture.nullDurationFilename);
-  await expect(cell(nullDurationRow, DURATION_CELL)).toHaveText('—'); // formatDuration(null)
+  await expect(nullDurationRow.getByTestId('row-duration')).toHaveText('—'); // formatDuration(null)
 
   // AD_Kick_01.wav: bpm 0 (normalizeSample maps 0 -> NULL) and a real NULL audio_key — one row,
   // two independently-NULL cells, no fixture field of its own (not one of the named rows above).
   const bpmZeroRow = rowByFilename(page, 'AD_Kick_01.wav');
-  await expect(cell(bpmZeroRow, KEY_CELL)).toHaveText('—');
-  await expect(cell(bpmZeroRow, BPM_CELL)).toHaveText('—');
+  await expect(bpmZeroRow.getByTestId('row-key')).toHaveText('—');
+  await expect(bpmZeroRow.getByTestId('row-bpm')).toHaveText('—');
 
   const missingRow = rowByFilename(page, fixture.missingFilename);
   await expect(missingRow.getByTestId('missing-badge')).toBeVisible();

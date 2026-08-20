@@ -17,7 +17,8 @@ test('a favorite, a nickname, and a user tag on the same row all survive Setting
   await rowHeart(page, 'AD_Kick_01.wav').click();
   await expect(rowHeart(page, 'AD_Kick_01.wav')).toHaveAttribute('aria-pressed', 'true');
 
-  await row.click();
+  // The filename cell, not the row's midpoint — see `clickRow` (actions.ts).
+  await filenameCell.click();
   await list.focus();
   await page.keyboard.press('n');
   await page.getByLabel('Nickname').fill('Prime Kick');

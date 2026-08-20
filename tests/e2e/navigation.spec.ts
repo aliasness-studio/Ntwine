@@ -3,7 +3,7 @@
 // a link, watch the result set actually change, then unwind it three different ways (the back
 // button, Alt+Left, a crumb's ✕) — because the failure mode this guards against is a link that
 // LOOKS live but leaves `filters` untouched, which no unit test of the store can catch.
-import { importAndWait, readCount, rowByFilename } from './harness/actions';
+import { clickRow, importAndWait, readCount, rowByFilename } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
 // Local copy, same as collections.spec.ts keeps: a fixture-supplied pack name is dropped into a
@@ -19,7 +19,7 @@ test('row cells link to their pack, key, bpm and tags — and every hop unwinds'
 
   const list = page.getByRole('listbox', { name: 'Sample list' });
   const navBar = page.getByTestId('nav-bar');
-  const crumbs = page.getByTestId('nav-crumb');
+  const crumbs = page.getByTestId('nav-crumb-label'); // the label alone — a crumb's own text includes its ✕
   const linkRow = rowByFilename(page, fixture.keyBpmRow.filename); // AD_Loop_128_kick.wav
   const pack = fixture.keyBpmRow.pack;
 
@@ -92,7 +92,7 @@ test('following a link leaves selection and playback alone', async ({ ntwine }) 
   await importAndWait(page);
 
   const row = rowByFilename(page, fixture.keyBpmRow.filename);
-  await row.click();
+  await clickRow(page, fixture.keyBpmRow.filename);
   await expect(row).toHaveAttribute('aria-selected', 'true');
 
   await row.getByRole('button', { name: 'Filter by key C♯' }).click();

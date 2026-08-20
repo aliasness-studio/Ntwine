@@ -12,7 +12,9 @@ test('N edits the selected row nickname in place, the real filename stays the ti
   const row = rowByFilename(page, 'AD_Kick_01.wav');
   const filenameCell = row.locator('[title="AD_Kick_01.wav"]');
 
-  await row.click();
+  // The filename cell, not the row's midpoint — see `clickRow` (actions.ts): a row's pack/key/bpm/
+  // tag cells navigate on click now, and which one the midpoint lands on depends on window width.
+  await filenameCell.click();
   await list.focus();
   await page.keyboard.press('n');
 
@@ -39,7 +41,7 @@ test('N edits the selected row nickname in place, the real filename stays the ti
   await expect.poll(() => readCount(page)).toBe(fixture.totalSamples);
 
   // --- clear nickname (N, empty, Enter) -> filename text restored ---
-  await row.click();
+  await filenameCell.click();
   await list.focus();
   await page.keyboard.press('n');
 

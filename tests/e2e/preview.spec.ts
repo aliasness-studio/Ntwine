@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { importAndWait, rowByFilename, snapshot } from './harness/actions';
+import { clickRow, importAndWait, snapshot } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
 // Mirrors the shape of the two main-process emit call sites (protocol.ts's `registerProtocols`
@@ -50,7 +50,7 @@ test('click-to-preview and the keyboard walk go through the protocol/pcm seams, 
   await seam.arm('ntwine:e2e:preview-pcm');
 
   // --- click plays + fetches (cache miss) ---
-  await rowByFilename(page, 'AD_Kick_01.wav').click();
+  await clickRow(page, 'AD_Kick_01.wav');
   const id1 = await currentSelectedId(page);
 
   await expect.poll(() => seam.count('ntwine:e2e:protocol')).toBeGreaterThanOrEqual(1);
@@ -111,7 +111,7 @@ test('click-to-preview and the keyboard walk go through the protocol/pcm seams, 
   expect(protocolEvents.filter((e) => e.scheme === 'sample')).toEqual([]);
 
   // --- AIFF fallback: the wav-path WebAudio decode fails, the app falls back to the PCM worker ---
-  await rowByFilename(page, 'BK_Pluck.aiff').click();
+  await clickRow(page, 'BK_Pluck.aiff');
   const id3 = await currentSelectedId(page);
 
   await expect.poll(() => seam.count('ntwine:e2e:preview-pcm')).toBeGreaterThanOrEqual(1);

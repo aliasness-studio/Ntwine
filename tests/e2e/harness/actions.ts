@@ -89,6 +89,20 @@ export function rowByFilename(page: Page, filename: string): Locator {
     .filter({ has: page.locator(`[title="${filename}"]`) });
 }
 
+/**
+ * Selects a row the way "click the row" is meant: on its filename cell, which is the one cell that
+ * is never a link.
+ *
+ * A bare `rowByFilename(...).click()` targets the row's geometric CENTRE, and since the QoL round-2
+ * navigation work a row's pack / key / bpm / tag cells are buttons that navigate instead of
+ * selecting. Which cell the centre lands on is a function of the flex layout at the current window
+ * width — on a wide window it's the pack column — so "click the row" has to name a target rather
+ * than trust the midpoint.
+ */
+export async function clickRow(page: Page, filename: string): Promise<void> {
+  await rowByFilename(page, filename).locator(`[title="${filename}"]`).click();
+}
+
 /** Opens the settings sheet via the rail's gear button (`App.tsx`, `aria-label="Settings"`). */
 export async function openSettings(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Settings' }).click();
@@ -107,7 +121,7 @@ export function rowHeart(page: Page, filename: string): Locator {
  * for a different row without closing the first: `UserLayerStore.openTagsPopover` just overwrites
  * `openPopover`, and `SampleList` remounts `TagsPopover` under a fresh `key={sampleId}`. */
 export async function openTagsPopover(page: Page, filename: string): Promise<void> {
-  await rowByFilename(page, filename).click();
+  await clickRow(page, filename);
   await page.getByRole('listbox', { name: 'Sample list' }).focus();
   await page.keyboard.press('t');
   await page.getByLabel('Add tag').waitFor();

@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { emptyStateText } from '../../src/renderer/emptyState';
-import { importAndWait, readCount, rowByFilename, rowHeart } from './harness/actions';
+import { clickRow, importAndWait, readCount, rowByFilename, rowHeart } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 import { launchNtwine } from './harness/launch';
 
@@ -48,7 +48,8 @@ test('the heart toggles aria-pressed and the rail count, Favorites-scope selecti
   await expect(favRows).toHaveCount(3);
 
   const middleRow = rowByFilename(page, 'AD_Kick_02.wav');
-  await middleRow.click();
+  // clickRow, not middleRow.click() — see actions.ts: the row's midpoint can land on a link cell.
+  await clickRow(page, 'AD_Kick_02.wav');
   await expect(middleRow).toHaveAttribute('aria-selected', 'true');
   await list.focus();
   await page.keyboard.press('f');

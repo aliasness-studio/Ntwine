@@ -23,15 +23,6 @@ const SEARCH_DEBOUNCE_MS = 50;
 // long-lived window can't grow the stack without limit.
 const HISTORY_LIMIT = 50;
 
-/** One point in the browsing history — everything `back()` has to restore. `searchText` is
- * separate from `filters.search` on purpose: the box's text is set synchronously on every
- * keystroke while `filters.search` only lands after the debounce, so restoring one without the
- * other would leave the input and the result set disagreeing. */
-export interface BrowseState {
-  filters: QueryFilters;
-  searchText: string;
-}
-
 function sameScope(a: Scope | undefined, b: Scope | undefined): boolean {
   if (a === undefined || b === undefined) return a === b;
   if (a.kind !== b.kind) return false;
@@ -75,7 +66,14 @@ export class LibraryStore {
   // Browser-style back stack (QoL round 2, 2026-08-20): every filter-shaped change snapshots the
   // state it replaced, so following a link out of a row — pack, key, bpm, tag — is always
   // reversible. Oldest-first; `back()` pops the tail.
-  history: BrowseState[] = [];
+  //
+  // A snapshot is `filters` ALONE, never a filters+searchText pair, because `searchText` is not
+  // independent state at a restorable point: the box is set synchronously on every keystroke while
+  // `filters.search` only lands after the debounce, so a captured `searchText` records a moment
+  // mid-typing that was never actually queried. Every APPLIED state satisfies
+  // `searchText === filters.search ?? ''`, so `back()` derives the box from the filters it
+  // restores and the two can't disagree by construction.
+  history: QueryFilters[] = [];
 
   // What produced the top history entry, so a run of same-kind changes collapses into ONE entry
   // instead of one per event. Without it, typing "kick" leaves up to four entries behind and
@@ -185,8 +183,8 @@ export class LibraryStore {
     // the very search this restore just undid.
     this.cancelPendingSearch();
     this.historyCoalesceKey = null;
-    this.filters = previous.filters;
-    this.searchText = previous.searchText;
+    this.filters = previous;
+    this.searchText = previous.search ?? '';
     void this.rerun();
   }
 
@@ -274,7 +272,7 @@ export class LibraryStore {
     // Copied, not referenced: `filters` is replaced wholesale by patchFilters (never mutated in
     // place), but a snapshot that aliased the live object would still be a trap for any future
     // in-place edit.
-    this.history.push({ filters: { ...this.filters }, searchText: this.searchText });
+    this.history.push({ ...this.filters });
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
   }
 
