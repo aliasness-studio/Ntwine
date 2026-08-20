@@ -589,6 +589,81 @@ describe('LibraryStore', () => {
     });
   });
 
+  // Review, PR #14: a snapshot must be an inert value. A shallow spread left `tags`/`scope`
+  // aliased to the live filters and stored MobX proxies in the history, so a future in-place edit
+  // of a nested filter value could reach back and rewrite the past.
+  describe('history snapshots are inert values', () => {
+    it('does not alias nested filter values, and stores no observables', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.toggleTag('kick');
+      store.setScope({ kind: 'pack', packId: 5 }); // snapshots the tags-only state
+
+      const snapshot = store.history[store.history.length - 1];
+      expect(snapshot).toEqual({ tags: ['kick'] });
+      expect(isObservable(snapshot)).toBe(false);
+      expect(snapshot.tags).not.toBe(store.filters.tags); // a copy, not the live array
+    });
+
+    it('a snapshot survives later edits to the same dimensions untouched', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.toggleTag('kick');
+      const afterScope = store.history[store.history.length - 1];
+
+      store.toggleTag('snare');
+      store.setScope({ kind: 'favorites' });
+
+      expect(afterScope).toEqual({ scope: { kind: 'pack', packId: 5 } });
+    });
+  });
+
+  describe('clearSearch', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('clears box and filter on the spot, without waiting out the debounce', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+      store.setSearch('kick');
+      vi.advanceTimersByTime(50);
+      expect(store.filters).toStrictEqual({ search: 'kick' });
+
+      store.clearSearch();
+
+      // No timer advance: the crumb's ✕ is a discrete control, not a keystroke.
+      expect(store.filters).toStrictEqual({});
+      expect(store.searchText).toBe('');
+      expect(api.querySamples).toHaveBeenLastCalledWith({});
+    });
+
+    it('is its own back step rather than coalescing into the typing that preceded it', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setSearch('kick');
+      vi.advanceTimersByTime(50);
+
+      store.clearSearch();
+      store.back();
+
+      expect(store.filters).toStrictEqual({ search: 'kick' });
+      expect(store.searchText).toBe('kick');
+    });
+
+    it('cancels a still-pending keystroke so it cannot re-apply afterwards', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setSearch('kick'); // timer armed, never allowed to land
+
+      store.clearSearch();
+      vi.advanceTimersByTime(50);
+
+      expect(store.filters).toStrictEqual({});
+      expect(store.searchText).toBe('');
+    });
+  });
+
   describe('clearFilters', () => {
     it('drops every dimension at once and is reversible as a SINGLE step', () => {
       const store = new LibraryStore(makeFakeApi());

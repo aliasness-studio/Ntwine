@@ -3,7 +3,7 @@
 // a link, watch the result set actually change, then unwind it three different ways (the back
 // button, Alt+Left, a crumb's ✕) — because the failure mode this guards against is a link that
 // LOOKS live but leaves `filters` untouched, which no unit test of the store can catch.
-import { clickRow, importAndWait, readCount, rowByFilename } from './harness/actions';
+import { clickRow, importAndWait, readCount, rowByFilename, search } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
 // Local copy, same as collections.spec.ts keeps: a fixture-supplied pack name is dropped into a
@@ -79,6 +79,18 @@ test('row cells link to their pack, key, bpm and tags — and every hop unwinds'
   await expect(crumbs).toHaveText(['kick']);
 
   await page.getByRole('button', { name: 'Remove filter kick' }).click();
+  await expect.poll(() => readCount(page)).toBe(fixture.totalSamples);
+  await expect(crumbs).toHaveCount(0);
+
+  // --- the search crumb: a typed search shows one too, and its ✕ empties the box as well as the
+  // filter. Routed through clearSearch rather than the debounced setSearch, so it takes effect on
+  // the spot like every other crumb rather than a debounce window later. ---
+  await search(page, 'kick');
+  await expect.poll(() => readCount(page)).toBe(fixture.counts.searchKick);
+  await expect(crumbs).toHaveText(['“kick”']);
+
+  await page.getByRole('button', { name: 'Remove filter “kick”' }).click();
+  await expect(page.getByLabel('Search samples')).toHaveValue('');
   await expect.poll(() => readCount(page)).toBe(fixture.totalSamples);
   await expect(crumbs).toHaveCount(0);
 });

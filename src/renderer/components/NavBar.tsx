@@ -183,7 +183,9 @@ export const NavBar = observer(function NavBar() {
     crumbs.push({ key: `tag-${tag}`, label: tag, remove: () => library.toggleTag(tag) });
   }
   if (f.search !== undefined) {
-    crumbs.push({ key: 'search', label: `“${f.search}”`, remove: () => library.setSearch('') });
+    // clearSearch, not setSearch('') — the ✕ is a discrete control and must clear on the spot,
+    // like every other crumb here, rather than waiting out the search box's typing debounce.
+    crumbs.push({ key: 'search', label: `“${f.search}”`, remove: () => library.clearSearch() });
   }
 
   if (!library.canGoBack && crumbs.length === 0) return null;

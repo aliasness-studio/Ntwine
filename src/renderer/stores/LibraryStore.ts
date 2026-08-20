@@ -4,7 +4,7 @@
 // `filters` then re-queries; `filters` always mirrors the QueryFilters object the LAST
 // `querySamples` call was actually made with — there is no separate "pending" filter state to
 // reconcile against it.
-import { makeAutoObservable, runInAction, toJS } from 'mobx';
+import { makeAutoObservable, observable, runInAction, toJS } from 'mobx';
 import './configure';
 import type {
   NtwineApi,
@@ -103,7 +103,16 @@ export class LibraryStore {
     // graph (the documented pattern for constructor-injected collaborators) rather than left to
     // the default auto-inference, which would otherwise wrap it as a deep observable for no
     // benefit.
-    makeAutoObservable(this, { api: false, searchDebounceHandle: false });
+    // `history` is SHALLOW (review, PR #14): an observable array deep-converts whatever is pushed
+    // into it, so plain snapshots would be re-wrapped as proxies the moment they were stored.
+    // Nothing ever mutates a history entry — they are pushed and popped whole — so deep
+    // observability buys nothing and costs both a conversion per push and the guarantee that a
+    // snapshot is an inert value.
+    makeAutoObservable(this, {
+      api: false,
+      searchDebounceHandle: false,
+      history: observable.shallow,
+    });
   }
 
   get resultCount(): number {
@@ -188,6 +197,19 @@ export class LibraryStore {
     void this.rerun();
   }
 
+  /**
+   * Clears the search box and its filter IMMEDIATELY — for the search crumb's ✕, which is a
+   * discrete control like every other crumb's, not a keystroke (review, PR #14). Routing it
+   * through `setSearch('')` would make it the one crumb that doesn't take effect until a debounce
+   * elapses, and it would coalesce into whatever typing run preceded it instead of being its own
+   * back step.
+   */
+  clearSearch(): void {
+    this.cancelPendingSearch();
+    this.searchText = '';
+    this.patchFilters({ search: undefined });
+  }
+
   /** Drops every filter at once (the "Clear all" affordance) as ONE reversible step. */
   clearFilters(): void {
     if (this.activeFilterCount === 0) return;
@@ -269,10 +291,11 @@ export class LibraryStore {
   private pushHistory(coalesceKey: string | null): void {
     if (coalesceKey !== null && coalesceKey === this.historyCoalesceKey) return;
     this.historyCoalesceKey = coalesceKey;
-    // Copied, not referenced: `filters` is replaced wholesale by patchFilters (never mutated in
-    // place), but a snapshot that aliased the live object would still be a trap for any future
-    // in-place edit.
-    this.history.push({ ...this.filters });
+    // `toJS`, not a spread (review, PR #14): a spread is SHALLOW, so `tags` (an array) and `scope`
+    // (an object) would stay aliased to the live filters, and every entry would carry MobX proxies
+    // into the history. `toJS` deep-copies and strips observables, so a snapshot is an inert value
+    // that no later edit — in place or otherwise — can reach back and change.
+    this.history.push(toJS(this.filters));
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
   }
 
