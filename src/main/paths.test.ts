@@ -31,7 +31,7 @@ describe('resolveSpliceDbCandidates', () => {
     // app.getPath('appData') is ROAMING. The resolver must step ..\Local itself.
     const base = mkdtempSync(join(tmpdir(), 'ntwine-appdata-'));
     const roaming = join(base, 'Roaming');
-    const userDir = join(base, 'Local', 'SpliceSettings', 'users', 'default', '<splice-user>');
+    const userDir = join(base, 'Local', 'SpliceSettings', 'users', 'default', 'someuser');
     mkdirSync(roaming, { recursive: true });
     mkdirSync(userDir, { recursive: true });
     const dbPath = join(userDir, 'sounds.db');
