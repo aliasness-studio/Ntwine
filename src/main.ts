@@ -7,7 +7,7 @@ import { openCatalog } from './main/catalog/db';
 import { computeDefaultBounds } from './main/defaultBounds';
 import { registerDragHandler } from './main/drag';
 import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
-import { currentLibraryRoot, registerIpc } from './main/ipc';
+import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
 import { openUserDb } from './main/user/userDb';
@@ -195,7 +195,7 @@ app.whenReady().then(() => {
   // A getter, not a resolved string: the library root can change at runtime
   // (NtwineApi.pickLibraryRoot), and everything below is wired up once — each consumer re-reads
   // the current value at request time instead of resolving against a startup snapshot.
-  const getLibraryRoot = () => currentLibraryRoot(catalog, e2e?.libraryRoot ?? undefined);
+  const getLibraryRoot = () => currentLibraryRoot(catalog, libraryRootDeps(e2e?.libraryRoot));
 
   mainWindow = createWindow();
 

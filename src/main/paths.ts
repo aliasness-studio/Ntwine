@@ -1,6 +1,6 @@
 import { app } from 'electron';
-import { join } from 'node:path';
-import { globSync } from 'node:fs'; // Node 22+: fs.globSync
+import { dirname, join } from 'node:path';
+import { existsSync, globSync, readFileSync } from 'node:fs'; // Node 22+: fs.globSync
 
 export function dataDirFrom(userData: string): string {
   return join(userData, 'ntwine-data');
@@ -39,4 +39,64 @@ export function resolveSpliceDbCandidates(
   const entry = roots[platform];
   if (!entry) return []; // linux etc.: picker-only until verified
   return globSync(entry.pattern, { cwd: entry.root }).map((p) => join(entry.root, p));
+}
+
+/**
+ * Splice's OWN answer to "where do my samples live": the `splice_folder` key of the settings.json
+ * that sits in the same directory as sounds.db. Verified on a real Windows install (2026-08-20):
+ * `%LOCALAPPDATA%\SpliceSettings\users\default\<user>\settings.json` holds
+ * `"splice_folder": "C:\\Users\\<user>\\Documents\\Splice"`, and every `samples.local_path` in the
+ * DB beside it is `<splice_folder>\Samples\packs\...` — i.e. the setting is an ancestor of every
+ * sample, which is exactly what `normalizeSample`'s containment check requires of a library root.
+ *
+ * Preferred over any platform guess because it is reported rather than assumed: it already
+ * accounts for a relocated library, a localized/redirected Documents folder, and whatever
+ * per-platform subfolder layout Splice happens to use.
+ *
+ * Returns null for everything that isn't a usable answer — no settings.json, unparseable JSON, a
+ * non-object payload, the key absent or not a non-empty string, or a folder no longer on disk —
+ * so callers fall through to their own default rather than adopting a path that can't work.
+ */
+export function readSpliceFolderSetting(spliceDbPath: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(join(dirname(spliceDbPath), 'settings.json'), 'utf8'));
+  } catch {
+    return null; // missing file, unreadable, or invalid JSON — all "no answer here"
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const folder = (parsed as { splice_folder?: unknown }).splice_folder;
+  if (typeof folder !== 'string' || folder.trim() === '') return null;
+  return existsSync(folder) ? folder : null;
+}
+
+export interface DefaultLibraryRootOptions {
+  /** Whatever `resolveSpliceDb` settled on, or null when detection found nothing. */
+  spliceDbPath: string | null;
+  homeDir: string;
+  /** `app.getPath('documents')` — Windows' real Documents folder, which is localized and can be
+   * redirected (OneDrive, a different drive), so it must be asked for rather than string-built. */
+  documentsDir: string;
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * The library root to use when the user hasn't picked one — Splice's own `splice_folder` when we
+ * can read it, otherwise the platform's stock install location. Only ever a DEFAULT: a persisted
+ * `meta.library_root` (from an import or the Change… picker) always wins over this.
+ *
+ * The platform arm matters because Splice's stock location genuinely differs — `~/Splice` on
+ * macOS, `<Documents>\Splice` on Windows (verified 2026-08-20). Shipping the macOS path as the
+ * cross-platform default is what made first-run refuse every row on Windows with
+ * "local_path ... is outside library root".
+ */
+export function resolveDefaultLibraryRoot(opts: DefaultLibraryRootOptions): string {
+  if (opts.spliceDbPath !== null) {
+    const reported = readSpliceFolderSetting(opts.spliceDbPath);
+    if (reported !== null) return reported;
+  }
+  const platform = opts.platform ?? process.platform;
+  return platform === 'win32'
+    ? join(opts.documentsDir, 'Splice')
+    : join(opts.homeDir, 'Splice');
 }

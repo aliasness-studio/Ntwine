@@ -180,7 +180,12 @@ Rules:
 
 Order matters; each step is resumable and idempotent.
 
-1. **Locate**: default library root `~/Splice`. The Splice DB base directory is
+1. **Locate**: the default library root is Splice's own reported folder — the
+   `splice_folder` key of the `settings.json` that sits beside `sounds.db`
+   (verified on a real Windows install 2026-08-20) — falling back to the
+   platform's stock location (`~/Splice` on macOS, `<Documents>\Splice` on
+   Windows) when that setting can't be read. A persisted `meta.library_root`
+   (import or picker) always wins over both. The Splice DB base directory is
    resolved cross-platform via `app.getPath('appData')` + the Splice app's
    per-OS location (`com.splice.Splice/users/default/*/sounds.db` under appData on
    macOS, §2.2; `SpliceSettings/users/default/*/sounds.db` under LOCAL AppData on

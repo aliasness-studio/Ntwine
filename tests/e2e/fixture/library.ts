@@ -131,6 +131,13 @@ export function buildFixtureLibrary(root: string): FixtureLibrary {
     mkdirSync(join(libraryRoot, 'sounds', 'packs', pack.name, 'vendor'), { recursive: true });
   }
 
+  // Splice's own settings.json, beside sounds.db exactly as a real install carries it (verified
+  // 2026-08-20). Main's library-root detection reads `splice_folder` from here, so a launch with
+  // NO NTWINE_LIBRARY_ROOT override resolves to THIS fixture's library — never to whatever real
+  // Splice folder happens to exist on the machine running the suite, which is what keeps the
+  // detection-path specs hermetic.
+  writeFileSync(join(soundsDbDir, 'settings.json'), JSON.stringify({ splice_folder: libraryRoot }));
+
   // Covers: real PNG bytes on disk for the 2 covered packs, addressed by a real file: URL —
   // pathToFileURL owns the platform encoding (never a hand-built `file://` string, which would
   // mishandle a Windows drive letter). The third pack gets a real SQL NULL (fallback-tile path).

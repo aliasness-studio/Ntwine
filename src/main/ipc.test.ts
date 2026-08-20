@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dialog, ipcMain } from 'electron';
 import { openCatalog, type Catalog } from './catalog/db';
@@ -250,26 +250,78 @@ describe('runWaveformsInBackground', () => {
 });
 
 describe('currentLibraryRoot', () => {
-  // Precedence pin (Task 1, e2e spec §3.1): a persisted `library_root` must keep winning over an
-  // E2E `defaultLibraryRoot` override — the SAME precedence production already had over the spec
-  // default, now generalized to a second argument rather than a hardcoded constant. Getting this
-  // backwards would mean an E2E run's NTWINE_LIBRARY_ROOT silently overrides a library the user
-  // already picked via pickLibraryRoot in that same E2E userData dir.
-  it('falls back to the spec default (~/Splice) when nothing is persisted and no override is given', () => {
-    const catalog = openCatalog(join(tmp(), 'catalog.db'));
-    expect(currentLibraryRoot(catalog)).toBe(join(homedir(), 'Splice'));
+  // Precedence pin (Task 1, e2e spec §3.1, extended 2026-08-20 with detection):
+  // persisted > E2E override > Splice's reported folder > platform stock location.
+  //
+  // A persisted `library_root` must keep winning over an E2E `defaultLibraryRoot` override —
+  // getting this backwards would mean an E2E run's NTWINE_LIBRARY_ROOT silently overrides a
+  // library the user already picked via pickLibraryRoot in that same E2E userData dir. And the
+  // E2E override must keep winning over detection, or a suite run on a machine with a real
+  // Splice install would import against THAT library instead of its fixture.
+  const HOME = join('/home', 'someone');
+  const DOCS = join('/home', 'someone', 'Documents');
+  const platformDefault = process.platform === 'win32' ? join(DOCS, 'Splice') : join(HOME, 'Splice');
+
+  // Where THIS host's detection glob looks (mirrors resolveSpliceDb's own layout below), plus the
+  // settings.json a real install keeps beside sounds.db.
+  function plantDetectableSplice(appData: string, spliceFolder: string): void {
+    const dir =
+      process.platform === 'win32'
+        ? join(appData, '..', 'Local', 'SpliceSettings', 'users', 'default', 'someuser')
+        : join(appData, 'com.splice.Splice', 'users', 'default', 'someuser');
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(spliceFolder, { recursive: true });
+    writeFileSync(join(dir, 'sounds.db'), '');
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ splice_folder: spliceFolder }));
+  }
+
+  it("falls back to the platform's stock Splice location when nothing is persisted and nothing is detectable", () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    expect(
+      currentLibraryRoot(catalog, {
+        appDataDir: join(dir, 'empty-appdata'),
+        documentsDir: DOCS,
+        homeDir: HOME,
+      }),
+    ).toBe(platformDefault);
   });
 
-  it('uses the supplied default when nothing is persisted', () => {
-    const catalog = openCatalog(join(tmp(), 'catalog.db'));
-    expect(currentLibraryRoot(catalog, '/x')).toBe('/x');
+  it("uses Splice's own reported splice_folder over the platform default", () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    const appData = join(dir, 'appdata');
+    const reported = join(dir, 'Splice-reported');
+    plantDetectableSplice(appData, reported);
+    expect(
+      currentLibraryRoot(catalog, { appDataDir: appData, documentsDir: DOCS, homeDir: HOME }),
+    ).toBe(reported);
   });
 
-  it('a persisted library_root wins over BOTH the spec default and a supplied default', () => {
-    const catalog = openCatalog(join(tmp(), 'catalog.db'));
+  it('the E2E override wins over a detectable real install', () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    const appData = join(dir, 'appdata');
+    plantDetectableSplice(appData, join(dir, 'Splice-reported'));
+    expect(
+      currentLibraryRoot(catalog, {
+        appDataDir: appData,
+        documentsDir: DOCS,
+        homeDir: HOME,
+        e2eDefault: '/x',
+      }),
+    ).toBe('/x');
+  });
+
+  it('a persisted library_root wins over the E2E override, detection, and the platform default', () => {
+    const dir = tmp();
+    const catalog = openCatalog(join(dir, 'catalog.db'));
+    const appData = join(dir, 'appdata');
+    plantDetectableSplice(appData, join(dir, 'Splice-reported'));
     catalog.setMeta('library_root', '/persisted');
-    expect(currentLibraryRoot(catalog)).toBe('/persisted');
-    expect(currentLibraryRoot(catalog, '/x')).toBe('/persisted');
+    const deps = { appDataDir: appData, documentsDir: DOCS, homeDir: HOME };
+    expect(currentLibraryRoot(catalog, deps)).toBe('/persisted');
+    expect(currentLibraryRoot(catalog, { ...deps, e2eDefault: '/x' })).toBe('/persisted');
   });
 });
 
