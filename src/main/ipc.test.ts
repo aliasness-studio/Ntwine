@@ -385,8 +385,13 @@ describe('registerIpc — user-layer handlers (Task 6, design spec §4)', () => 
 // best-guess — when it misses, the user must be able to point at sounds.db by hand, and that
 // choice must persist and keep winning until it goes stale.
 describe('resolveSpliceDb — manual override precedence', () => {
+  // Mirrors the per-platform layout paths.ts actually globs (win32's verified real install keeps
+  // the DB under ..\Local\SpliceSettings relative to the Roaming dir the resolver is handed).
   function plantCandidate(appData: string): string {
-    const dir = join(appData, 'com.splice.Splice', 'users', 'default', 'someuser');
+    const dir =
+      process.platform === 'win32'
+        ? join(appData, '..', 'Local', 'SpliceSettings', 'users', 'default', 'someuser')
+        : join(appData, 'com.splice.Splice', 'users', 'default', 'someuser');
     mkdirSync(dir, { recursive: true });
     const p = join(dir, 'sounds.db');
     writeFileSync(p, '');

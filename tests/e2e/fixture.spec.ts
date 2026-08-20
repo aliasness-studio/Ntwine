@@ -10,7 +10,7 @@ test('buildFixtureLibrary writes a Splice-shaped tree + sounds.db with the docum
   try {
     const f = buildFixtureLibrary(root);
     expect(existsSync(f.userData)).toBe(true);
-    const dbPath = join(f.appData, 'com.splice.Splice', 'users', 'default', 'e2e', 'sounds.db');
+    const dbPath = f.spliceDbPath;
     expect(existsSync(dbPath)).toBe(true);
     const db = new Database(dbPath, { readonly: true });
     const rows = db.prepare('select local_path, sample_type, bpm, audio_key, duration, tags from samples').all() as {

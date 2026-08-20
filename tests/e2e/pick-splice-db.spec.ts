@@ -17,7 +17,7 @@ test('detection misses → a bad pick shows the validation error → picking the
   const fixture = buildFixtureLibrary(join(scratch, 'fixture'));
   const emptyAppData = join(scratch, 'empty-appdata');
   mkdirSync(emptyAppData, { recursive: true });
-  const realDb = join(fixture.appData, 'com.splice.Splice', 'users', 'default', 'e2e', 'sounds.db');
+  const realDb = fixture.spliceDbPath;
   const bogus = join(scratch, 'not-a-db.db');
   writeFileSync(bogus, 'plain text pretending to be a database');
 

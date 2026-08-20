@@ -58,8 +58,10 @@ Verified in the merged code / on the owner's machine unless marked otherwise:
   (`dataDirFrom(userData) = <userData>/ntwine-data`); `src/main/ipc.ts` reads
   `app.getPath('appData')` for Splice-DB detection through
   `resolveSpliceDbCandidates(appDataDir)` — a `globSync` of
-  `com.splice.Splice/users/default/*/sounds.db` with `cwd = appDataDir` (identical pattern for
-  `darwin` and `win32`; the win32 pattern is a best-guess mirror marked TODO in code) — and
+  a per-platform (root, pattern) pair: darwin `com.splice.Splice/users/default/*/sounds.db` with
+  `cwd = appDataDir`; win32 `SpliceSettings/users/default/*/sounds.db` with `cwd = appDataDir/../Local`
+  (both VERIFIED on real installs — win32 on the owner's box 2026-08-19: Splice's Electron
+  userData dir is `SpliceSettings` under LOCAL AppData, while Electron's `appData` is Roaming) — and
   **the library root defaults to `join(homedir(), 'Splice')`** (`DEFAULT_LIBRARY_ROOT`,
   `ipc.ts:15`) unless `meta.library_root` was persisted by `pickLibraryRoot`. The importer
   rejects any sample whose path is outside the library root.
@@ -163,7 +165,7 @@ hook is installed — the app is byte-for-byte v1. Both branches are unit-pinned
 | Variable (all require `NTWINE_E2E=1`) | Effect |
 |---|---|
 | `NTWINE_USER_DATA=<abs dir>` | **required in E2E mode — the app refuses to boot without it** (a missed override on the packaged binary would otherwise write into the developer's real `…/Ntwine/ntwine-data`); `mkdirSync(dir, {recursive: true})` then `app.setPath('userData', dir)` |
-| `NTWINE_APP_DATA=<abs dir>` | `mkdirSync` then `app.setPath('appData', dir)` — Splice-DB detection globs under this root; the fixture places its `sounds.db` at `<dir>/com.splice.Splice/users/default/e2e/sounds.db`, so **the real detection glob is exercised unmodified** |
+| `NTWINE_APP_DATA=<abs dir>` | `mkdirSync` then `app.setPath('appData', dir)` — Splice-DB detection globs relative to this root; the fixture plants its `sounds.db` where THIS host's real glob looks (darwin `<dir>/com.splice.Splice/users/default/e2e/`, win32 `<dir>/../Local/SpliceSettings/users/default/e2e/` — the resolver steps `../Local` itself, keeping the override hermetic), so **the real detection glob is exercised unmodified** |
 | `NTWINE_LIBRARY_ROOT=<abs dir>` | replaces `DEFAULT_LIBRARY_ROOT` (`~/Splice`) as the default library root; a persisted `meta.library_root` still wins, exactly as in production, so persistence stays testable |
 | `NTWINE_E2E_BOOT_MARKER=<abs file>` | after the first window's `did-finish-load`, write the file (contents: the resolved `userData` path) and `app.quit()` — the fuse-safe packaged-boot probe (§4 `packaged.spec.ts`) |
 | `NTWINE_E2E_HIDDEN=1` | quiet mode: the window is presented **imperceptibly** — `showInactive()` (no focus steal) at x/y −32000 (off every display), `opacity: 0`, `skipTaskbar`, `backgroundThrottling: false`, `setAudioMuted(true)`. NOT `show: false`: Chromium evicts an unshown window's compositor surface once the library view lands (measured: 482 rAF/2s → 3/2s, renderer idle), and Playwright's two-stable-frames actionability check then costs ~2 s per click (filters spec 3.9 s → 24.9 s). Presented-but-imperceptible keeps real compositor frames: measured identical to headed (482 rAF/2s, ~200 ms row-clicks). macOS clamps the off-screen park back onto a display, so quiet mode also forwards OS mouse input through the window (`setIgnoreMouseEvents` — CDP-driven test input bypasses OS hit-testing, so specs are unaffected). The harness (`launch.ts`) and `packaged.spec.ts` set it by default; `NTWINE_E2E_HEADED=1` in the runner's shell opts a run back to visible windows for debugging. `window.spec.ts` pins the contract (visible, unfocused, opacity 0; far off-screen additionally pinned on win32 only). |
