@@ -78,6 +78,7 @@ export interface FixtureLibrary {
   root: string;
   userData: string;
   appData: string;
+  spliceDbPath: string; // where the fixture planted sounds.db (per-platform; matches the host's real detection glob)
   libraryRoot: string;
   totalSamples: number; // 12 — every row (querySamples / top-bar count)
   presentSamples: number; // 11 — rows whose file exists (listPacks / listTags counts)
@@ -113,7 +114,14 @@ export function buildFixtureLibrary(root: string): FixtureLibrary {
   const appData = join(root, 'appData');
   const libraryRoot = join(root, 'library');
   const coversDir = join(root, 'covers-src');
-  const soundsDbDir = join(appData, 'com.splice.Splice', 'users', 'default', 'e2e');
+  // Planted where THIS host's real detection glob looks (paths.ts), so first-run.spec exercises
+  // the unmodified glob: darwin keeps Splice's dir under appData itself; win32's real install
+  // (verified 2026-08-19) uses "SpliceSettings" under LOCAL AppData, which the resolver reaches
+  // by stepping ..\Local from the (here: overridden) appData dir — i.e. <root>/Local.
+  const soundsDbDir =
+    process.platform === 'win32'
+      ? join(appData, '..', 'Local', 'SpliceSettings', 'users', 'default', 'e2e')
+      : join(appData, 'com.splice.Splice', 'users', 'default', 'e2e');
   const dbPath = join(soundsDbDir, 'sounds.db');
 
   mkdirSync(userData, { recursive: true }); // empty; exists so app.setPath cannot throw
@@ -221,6 +229,7 @@ export function buildFixtureLibrary(root: string): FixtureLibrary {
     root,
     userData,
     appData,
+    spliceDbPath: dbPath,
     libraryRoot,
     totalSamples: SAMPLES.length,
     presentSamples: SAMPLES.filter((s) => s.kind !== 'missing').length,

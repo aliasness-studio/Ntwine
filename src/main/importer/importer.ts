@@ -5,7 +5,7 @@ import type { ImportProgress } from '../../shared/ipcTypes';
 import type { SplicePack, SpliceSample } from './spliceDb';
 import { normalizeSample, relPathToAbs } from './transform';
 import { rebuildSearch } from '../catalog/search';
-import { readSplice, snapshotSpliceDb } from './spliceDb';
+import { readSplice, snapshotSpliceDb, type DownloadedSpliceSample } from './spliceDb';
 import { downloadCovers, COVER_CANDIDATE_WHERE } from './covers';
 import { pendingPeakIds } from '../catalog/queries';
 
@@ -117,7 +117,14 @@ export function buildCatalog(
       });
     }
 
-    for (const sample of input.samples) {
+    // A mid-sync Splice DB really contains rows whose local_path is still NULL (file not yet
+    // downloaded — proven live 2026-08-19: 46 of 4,197). Nothing to import for those: no path
+    // to store, stat, play, or drag. Skipped, not fatal; the next (idempotent) re-import picks
+    // them up once Splice fills the path in.
+    const downloaded = input.samples.filter(
+      (s): s is DownloadedSpliceSample => s.local_path !== null,
+    );
+    for (const sample of downloaded) {
       const n = normalizeSample(sample, libraryRoot);
       const packRow = n.packUuid !== null ? findPackIdByUuid.get(n.packUuid) : undefined;
 
@@ -314,11 +321,16 @@ export async function runImport(
     onProgress({ phase: 'catalog', done: 0, total: 1, message: 'Reading Splice metadata…' });
     const data = readSplice(snapshotPath);
     buildCatalog(deps.catalog, data, deps.libraryRoot);
+    // Count what buildCatalog actually imported vs the rows Splice hasn't downloaded yet
+    // (local_path NULL, skipped there) — mid-sync, the honest number is both.
+    const pending = data.samples.filter((s) => s.local_path === null).length;
     onProgress({
       phase: 'catalog',
       done: 1,
       total: 1,
-      message: `Imported ${data.samples.length} samples, ${data.packs.length} packs`,
+      message:
+        `Imported ${data.samples.length - pending} samples, ${data.packs.length} packs` +
+        (pending > 0 ? ` (${pending} not downloaded yet — re-run import once Splice finishes)` : ''),
     });
 
     // --- stat (spec §5 step 4) -----------------------------------------------

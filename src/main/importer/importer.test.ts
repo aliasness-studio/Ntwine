@@ -181,6 +181,39 @@ describe('buildCatalog', () => {
     expect(row.chord_type).toBeNull();
   });
 
+  it('skips a not-yet-downloaded row (local_path NULL — a mid-sync Splice DB really contains these; proven live 2026-08-19) instead of crashing the whole transaction', () => {
+    const libraryRoot = tmp();
+    const dbPath = join(tmp(), 'sounds.db');
+    buildFixtureSpliceDb(dbPath, [
+      {
+        table: 'samples',
+        file_hash: 'hash-downloaded',
+        local_path: join(libraryRoot, 'sounds/packs/Fixture Pack/here.wav'),
+        filename: 'here.wav',
+        sample_type: 'oneshot',
+        tags: '',
+      },
+      {
+        table: 'samples',
+        file_hash: 'hash-not-downloaded',
+        local_path: null,
+        filename: 'pending.wav',
+        sample_type: 'oneshot',
+        tags: '',
+      },
+    ]);
+    const data = readSplice(dbPath);
+    const catalog = freshCatalog();
+
+    expect(() => buildCatalog(catalog, data, libraryRoot)).not.toThrow();
+
+    const hashes = (catalog.db.prepare('SELECT file_hash FROM samples').all() as { file_hash: string }[]).map(
+      (r) => r.file_hash,
+    );
+    expect(hashes).toContain('hash-downloaded');
+    expect(hashes).not.toContain('hash-not-downloaded');
+  });
+
   it('is idempotent: same row counts and stable sample ids across two runs, no duplicate tags/sample_tags', () => {
     const { libraryRoot, data, catalog } = setUp();
 

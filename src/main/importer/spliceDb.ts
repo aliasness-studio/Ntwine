@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 // Shape read off the real `samples` table (spec §2.2) — only the columns the importer needs,
@@ -11,7 +11,11 @@ import { basename, join } from 'node:path';
 // wire value that actually comes back from better-sqlite3 for a NULL cell is JS `null`, not `''`
 // — a `string`-typed field would silently lie about a shape the real driver really returns.
 export interface SpliceSample {
-  local_path: string;
+  // NULL until Splice finishes downloading the file (proven against a live mid-sync Windows DB,
+  // 2026-08-19: 46 of 4,197 rows) — a bare `string` here would lie about a shape the driver
+  // really returns, exactly like audio_key/chord_type below. buildCatalog skips NULL rows; a
+  // later re-import (idempotent) picks them up once downloaded.
+  local_path: string | null;
   file_hash: string;
   filename: string;
   pack_uuid: string | null;
@@ -23,6 +27,11 @@ export interface SpliceSample {
   tags: string;
 }
 
+/** A sample whose file Splice has actually downloaded — the only kind the catalog imports.
+ * The narrowing happens ONCE, in buildCatalog's filter; everything downstream of it
+ * (normalizeSample, toRelPath) works on a real string path by type, not by hope. */
+export type DownloadedSpliceSample = SpliceSample & { local_path: string };
+
 // Shape read off the real `packs` table (spec §2.2) — same "named columns only" reasoning.
 export interface SplicePack {
   uuid: string;
@@ -33,17 +42,27 @@ export interface SplicePack {
 }
 
 /**
- * Copies `src` (a Splice sounds.db, or a previously-taken snapshot of one) into `destDir`,
- * preserving its filename, and returns the destination path. Unconditional overwrite — no
- * mtime/freshness check, ever: `copyFileSync` always replaces whatever is at the destination,
- * so repeated calls (even with something else having since overwritten the destination) leave
- * it byte-identical to the current `src` every time. That's what makes this idempotent: not
- * "skips redundant work," but "last write always wins, so calling it again changes nothing."
+ * Snapshots `src` (a Splice sounds.db, or a previously-taken snapshot of one) into `destDir`,
+ * preserving its filename, and returns the destination path. NOT a file copy: Splice runs
+ * SQLite in WAL mode, and while the Splice app is open a large slice of recent writes lives
+ * only in the `-wal` sidecar (measured live 2026-08-19: a 4.7 MB WAL next to a 6.4 MB main
+ * file — a `copyFileSync` snapshot was missing 46 rows' local_path updates and broke the
+ * import). `VACUUM INTO` runs through SQLite itself on a read-only connection, so the output
+ * is a single consistent database with the WAL fully applied, safe to take while Splice is
+ * running, and still write-free on Splice's own files. Idempotent the same way the old copy
+ * was: the previous destination is removed and fully rewritten every call — last write wins.
  */
 export function snapshotSpliceDb(src: string, destDir: string): string {
   mkdirSync(destDir, { recursive: true });
   const dest = join(destDir, basename(src));
-  copyFileSync(src, dest);
+  rmSync(dest, { force: true }); // VACUUM INTO refuses an existing file — remove, don't reuse
+  const db = new Database(src, { readonly: true });
+  try {
+    // SQL string literal: single quotes double; both slash styles are fine in a filename.
+    db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+  } finally {
+    db.close();
+  }
   return dest;
 }
 

@@ -83,7 +83,7 @@ const ImportButton = styled.button`
   }
 `;
 
-const LocateButton = styled.button`
+const SecondaryButton = styled.button`
   padding: 8px 14px;
   font-size: 12px;
   font-weight: 600;
@@ -93,6 +93,13 @@ const LocateButton = styled.button`
   color: ${(p) => p.theme.color.text};
   cursor: pointer;
   align-self: flex-start;
+`;
+
+const InlineButton = styled(SecondaryButton)`
+  padding: 2px 8px;
+  font-size: 11px;
+  align-self: center;
+  flex-shrink: 0;
 `;
 
 const ProgressLine = styled.div`
@@ -119,6 +126,22 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
   // relaunch — main persists meta.splice_db_path and getState would agree on the next boot.
   const [dbFound, setDbFound] = useState(state.spliceDbFound);
   const [pickError, setPickError] = useState<string | null>(null);
+
+  // First-run library-root picker (Option A, 2026-08-20): the shipped default (~/Splice) is
+  // wrong wherever Splice puts samples elsewhere (the owner's real box: Documents\Splice\
+  // Samples), and Settings' re-pick only exists AFTER a successful import — importing with a
+  // wrong root refuses every row (normalizeSample's out-of-root throw), a first-run wedge.
+  // Reuses the exact pickLibraryRoot IPC Settings uses (persists meta.library_root + stat pass;
+  // the stat over a pre-import empty catalog is a no-op). Local state, same rationale as
+  // dbFound above. Option B (derive the root from sounds.db's own local_paths) is filed as a
+  // later QoL improvement.
+  const [libraryRoot, setLibraryRoot] = useState(state.libraryRoot);
+
+  const handleChangeRoot = (): void => {
+    void api.pickLibraryRoot().then((picked) => {
+      if (picked !== null) setLibraryRoot(picked); // null = dialog canceled
+    });
+  };
 
   const handleLocate = (): void => {
     setPickError(null);
@@ -156,9 +179,12 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
       <DetectedList>
         <DetectedRow>
           <span>Library folder</span>
-          <DetectedValue title={state.libraryRoot ?? undefined}>
-            {state.libraryRoot ?? '~/Splice (default)'}
+          <DetectedValue data-testid="first-run-library-root" title={libraryRoot ?? undefined}>
+            {libraryRoot ?? '~/Splice (default)'}
           </DetectedValue>
+          <InlineButton type="button" onClick={handleChangeRoot}>
+            Change…
+          </InlineButton>
         </DetectedRow>
         <DetectedRow>
           <span>Splice database</span>
@@ -173,9 +199,9 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
             Couldn&apos;t find Splice&apos;s sounds.db automatically. If Splice is installed, you can
             point Ntwine at the file yourself.
           </Subtitle>
-          <LocateButton type="button" onClick={handleLocate}>
+          <SecondaryButton type="button" onClick={handleLocate}>
             Locate sounds.db…
-          </LocateButton>
+          </SecondaryButton>
         </>
       )}
       {pickError !== null && <ErrorLine data-testid="pick-splice-db-error">{pickError}</ErrorLine>}

@@ -182,8 +182,10 @@ Order matters; each step is resumable and idempotent.
 
 1. **Locate**: default library root `~/Splice`. The Splice DB base directory is
    resolved cross-platform via `app.getPath('appData')` + the Splice app's
-   per-OS subpath (`com.splice.Splice/users/default/*/sounds.db` on macOS is the
-   verified instance, §2.2; the username segment is globbed, never hardcoded).
+   per-OS location (`com.splice.Splice/users/default/*/sounds.db` under appData on
+   macOS, §2.2; `SpliceSettings/users/default/*/sounds.db` under LOCAL AppData on
+   Windows — both verified on real installs, Windows 2026-08-19; the username
+   segment is globbed, never hardcoded).
    Either location can be overridden by a picker. No macOS-only literal paths in
    the resolver.
 2. **Snapshot**: copy `sounds.db` into userData before reading anything. If the
