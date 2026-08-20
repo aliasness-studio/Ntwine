@@ -12,6 +12,7 @@ import type { NtwineApi } from '../../shared/ipcTypes';
 import { FilterPanel } from './FilterPanel';
 import { FirstRun } from './FirstRun';
 import { LibraryRail } from './LibraryRail';
+import { NavBar } from './NavBar';
 import { PackRail } from './PackRail';
 import { SampleList, type SampleListHandle } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
@@ -33,12 +34,16 @@ const Centered = styled.div`
   font-family: ${(p) => p.theme.font.family};
 `;
 
+// The `crumbs` row is `auto`: NavBar renders null whenever there's no history and no active
+// filter, which collapses that row to zero height — the default view keeps every pixel it had
+// before this bar existed, and the list only gives up space while something is narrowing it.
 const Grid = styled.div`
   display: grid;
   grid-template-columns: 240px 1fr;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: 48px auto 1fr;
   grid-template-areas:
     'rail topbar'
+    'rail crumbs'
     'rail list';
   width: 100%;
   height: 100%;
@@ -236,6 +241,16 @@ export function App() {
   // harmless no-op, not a case this needs to guard separately.
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent): void => {
+      // Alt+Left = back, the browser convention, on the same window-level capture listener and for
+      // the same reason: it has to work from inside popovers and text inputs, which blanket-
+      // stopPropagation on bubble. Checked BEFORE the Cmd/Ctrl+F guard below, which returns early
+      // for anything without a meta/ctrl modifier. Bare ArrowLeft is left alone — SampleList binds
+      // it to replay.
+      if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        library.back();
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key !== 'f' && e.key !== 'F') return;
       e.preventDefault();
@@ -243,7 +258,7 @@ export function App() {
     };
     window.addEventListener('keydown', handleGlobalKeyDown, true);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, []);
+  }, [library]);
 
   if (load.kind === 'loading') {
     return <Centered>Loading…</Centered>;
@@ -291,6 +306,7 @@ export function App() {
         </RailFooter>
       </Rail>
       <TopBar ref={topBarRef} onEscEmpty={() => sampleListRef.current?.focusList()} />
+      <NavBar />
       <SampleList ref={sampleListRef} />
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
     </Grid>

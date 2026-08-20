@@ -19,6 +19,50 @@ import type {
 // typist's keystrokes collapse into one query instead of one per character.
 const SEARCH_DEBOUNCE_MS = 50;
 
+// Back-stack depth. Deep enough that "back" always covers a real browsing session, bounded so a
+// long-lived window can't grow the stack without limit.
+const HISTORY_LIMIT = 50;
+
+/** One point in the browsing history — everything `back()` has to restore. `searchText` is
+ * separate from `filters.search` on purpose: the box's text is set synchronously on every
+ * keystroke while `filters.search` only lands after the debounce, so restoring one without the
+ * other would leave the input and the result set disagreeing. */
+export interface BrowseState {
+  filters: QueryFilters;
+  searchText: string;
+}
+
+function sameScope(a: Scope | undefined, b: Scope | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'pack' && b.kind === 'pack') return a.packId === b.packId;
+  if (a.kind === 'collection' && b.kind === 'collection') return a.collectionId === b.collectionId;
+  return true; // both 'favorites' — no payload to compare
+}
+
+/**
+ * Value equality over the whole filter set, so a re-click that changes nothing (the same pack
+ * twice, the same key from two different rows) can be dropped before it costs a history entry and
+ * a re-query. Every QueryFilters field is a primitive except `scope` (a small tagged union) and
+ * `tags` (an order-insensitive set), which get their own comparisons below. Exported for its own
+ * unit tests — the "back went nowhere" bug this prevents is invisible from the outside.
+ */
+export function sameFilters(a: QueryFilters, b: QueryFilters): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof QueryFilters>;
+  for (const key of keys) {
+    if (key === 'scope') {
+      if (!sameScope(a.scope, b.scope)) return false;
+    } else if (key === 'tags') {
+      const at = a.tags ?? [];
+      const bt = b.tags ?? [];
+      if (at.length !== bt.length || !at.every((t) => bt.includes(t))) return false;
+    } else if (a[key] !== b[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class LibraryStore {
   packs: PackRow[] = [];
   tags: TagFacet[] = [];
@@ -27,6 +71,17 @@ export class LibraryStore {
   searchText = '';
   loading = false;
   peaksCache = new Map<number, ArrayBuffer>();
+
+  // Browser-style back stack (QoL round 2, 2026-08-20): every filter-shaped change snapshots the
+  // state it replaced, so following a link out of a row — pack, key, bpm, tag — is always
+  // reversible. Oldest-first; `back()` pops the tail.
+  history: BrowseState[] = [];
+
+  // What produced the top history entry, so a run of same-kind changes collapses into ONE entry
+  // instead of one per event. Without it, typing "kick" leaves up to four entries behind and
+  // "back" has to be pressed four times to undo one search. Bookkeeping, not app state — but
+  // left observable (unlike `searchDebounceHandle`) since nothing needs it excluded.
+  historyCoalesceKey: string | null = null;
 
   // Debounce-timer bookkeeping, not app state — no UI ever reads it, so it's excluded from the
   // observable graph below (same reasoning as `api`). Not `private` — same
@@ -55,6 +110,25 @@ export class LibraryStore {
 
   get resultCount(): number {
     return this.rows.length;
+  }
+
+  get canGoBack(): boolean {
+    return this.history.length > 0;
+  }
+
+  /** How many dimensions are currently narrowing the view — each tag counts separately, since
+   * each is independently removable. Reads `filters.search` rather than `searchText` so it
+   * describes what the CURRENT rows were queried with, not a keystroke still inside the debounce. */
+  get activeFilterCount(): number {
+    const f = this.filters;
+    let count = 0;
+    if (f.scope !== undefined) count += 1;
+    if (f.sampleType !== undefined) count += 1;
+    if (f.audioKey !== undefined) count += 1;
+    if (f.bpmMin !== undefined || f.bpmMax !== undefined) count += 1; // one "BPM" dimension
+    if (f.search !== undefined) count += 1;
+    count += f.tags?.length ?? 0;
+    return count;
   }
 
   /**
@@ -99,6 +173,33 @@ export class LibraryStore {
     this.searchDebounceHandle = setTimeout(() => this.applyDebouncedSearch(s), SEARCH_DEBOUNCE_MS);
   }
 
+  /**
+   * Restores the previous browse state — the back button, Alt+Left, and the only way out of a
+   * link followed from a row. Restoring is NOT itself a history event (that would make back a
+   * no-op loop between two states), so it bypasses `patchFilters` entirely and re-queries directly.
+   */
+  back(): void {
+    const previous = this.history.pop();
+    if (previous === undefined) return;
+    // A search typed a moment ago may still have a timer in flight; letting it land would re-apply
+    // the very search this restore just undid.
+    this.cancelPendingSearch();
+    this.historyCoalesceKey = null;
+    this.filters = previous.filters;
+    this.searchText = previous.searchText;
+    void this.rerun();
+  }
+
+  /** Drops every filter at once (the "Clear all" affordance) as ONE reversible step. */
+  clearFilters(): void {
+    if (this.activeFilterCount === 0) return;
+    this.pushHistory(null);
+    this.cancelPendingSearch();
+    this.filters = {};
+    this.searchText = '';
+    void this.rerun();
+  }
+
   setScope(scope: Scope | null): void {
     this.patchFilters({ scope: scope ?? undefined });
   }
@@ -107,12 +208,21 @@ export class LibraryStore {
     this.patchFilters({ sampleType: this.filters.sampleType === t ? undefined : t });
   }
 
+  // Coalesced like search, and for the same reason: FilterPanel's number inputs fire per
+  // keystroke, so typing "128" would otherwise leave three history entries behind.
   setBpmRange(min: number | null, max: number | null): void {
-    this.patchFilters({ bpmMin: min ?? undefined, bpmMax: max ?? undefined });
+    this.patchFilters({ bpmMin: min ?? undefined, bpmMax: max ?? undefined }, 'bpm');
   }
 
   setKey(k: string | null): void {
     this.patchFilters({ audioKey: k ?? undefined });
+  }
+
+  /** Follow a row's BPM link: narrow to exactly that tempo. Separate from `setBpmRange` because
+   * it's one deliberate navigation rather than a keystroke inside a run — it must NOT coalesce,
+   * or following two different tempos in a row would collapse into a single back step. */
+  filterByBpm(bpm: number): void {
+    this.patchFilters({ bpmMin: bpm, bpmMax: bpm });
   }
 
   toggleTag(t: string): void {
@@ -140,7 +250,32 @@ export class LibraryStore {
   // without a separate `runInAction` wrapper at the call site.
   private applyDebouncedSearch(s: string): void {
     this.searchDebounceHandle = null;
-    this.patchFilters({ search: s === '' ? undefined : s });
+    // Coalesced: a run of typing leaves ONE history entry — the state before the user started
+    // typing — instead of one per debounce window.
+    this.patchFilters({ search: s === '' ? undefined : s }, 'search');
+  }
+
+  private cancelPendingSearch(): void {
+    if (this.searchDebounceHandle !== null) {
+      clearTimeout(this.searchDebounceHandle);
+      this.searchDebounceHandle = null;
+    }
+  }
+
+  /**
+   * Snapshots the state a change is about to replace. `coalesceKey` names the kind of change:
+   * consecutive pushes sharing a key keep the FIRST snapshot (the state before the run began) and
+   * discard the rest, which is what makes one back press undo one typed search rather than one
+   * keystroke. A null key never coalesces.
+   */
+  private pushHistory(coalesceKey: string | null): void {
+    if (coalesceKey !== null && coalesceKey === this.historyCoalesceKey) return;
+    this.historyCoalesceKey = coalesceKey;
+    // Copied, not referenced: `filters` is replaced wholesale by patchFilters (never mutated in
+    // place), but a snapshot that aliased the live object would still be a trap for any future
+    // in-place edit.
+    this.history.push({ filters: { ...this.filters }, searchText: this.searchText });
+    if (this.history.length > HISTORY_LIMIT) this.history.shift();
   }
 
   // Review round 1, Finding 1: a naive `{ ...this.filters, ...patch }` spread leaves a patch's
@@ -151,13 +286,18 @@ export class LibraryStore {
   // entry for every dimension the user has ever touched-then-cleared this session. Deleting is
   // legal here (unlike a generic `keyof T`-indexed delete, which TS sometimes rejects) because
   // EVERY field of the concrete `QueryFilters` type is declared optional.
-  private patchFilters(patch: Partial<QueryFilters>): void {
+  private patchFilters(patch: Partial<QueryFilters>, coalesceKey: string | null = null): void {
     const merged: QueryFilters = { ...this.filters, ...patch };
     for (const key of Object.keys(merged) as (keyof QueryFilters)[]) {
       if (merged[key] === undefined) {
         delete merged[key];
       }
     }
+    // A change that changes nothing (the same pack clicked twice, the same key followed from two
+    // rows) must not cost a history entry — otherwise "back" appears broken: the first press
+    // restores a state identical to the current one and the view doesn't move.
+    if (sameFilters(this.filters, merged)) return;
+    this.pushHistory(coalesceKey);
     this.filters = merged;
     void this.rerun();
   }

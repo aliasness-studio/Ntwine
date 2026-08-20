@@ -429,6 +429,199 @@ describe('LibraryStore', () => {
     });
   });
 
+  // Navigation (QoL round 2, 2026-08-20). Rows became link-navigable — pack/key/bpm/tag cells
+  // change the browse state on click — which is only safe if every such change is reversible.
+  describe('back stack', () => {
+    it('starts empty: there is nothing to go back to on arrival', () => {
+      const store = new LibraryStore(makeFakeApi());
+      expect(store.canGoBack).toBe(false);
+      store.back(); // a no-op, never a throw
+      expect(store.filters).toStrictEqual({});
+    });
+
+    it('back() restores the exact previous filter set and re-queries with it', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.setKey('c#');
+      expect(store.canGoBack).toBe(true);
+
+      store.back();
+
+      expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 } });
+      expect(api.querySamples).toHaveBeenLastCalledWith({ scope: { kind: 'pack', packId: 5 } });
+    });
+
+    it('unwinds one step per press, all the way back to the unfiltered view', () => {
+      const store = new LibraryStore(makeFakeApi());
+
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.toggleTag('kick');
+      store.filterByBpm(128);
+
+      store.back();
+      expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 }, tags: ['kick'] });
+      store.back();
+      expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 } });
+      store.back();
+      expect(store.filters).toStrictEqual({});
+      expect(store.canGoBack).toBe(false);
+    });
+
+    it('back() is not itself a history event — pressing it repeatedly never ping-pongs', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setKey('c#');
+
+      store.back();
+      expect(store.canGoBack).toBe(false);
+      store.back();
+      expect(store.filters).toStrictEqual({});
+    });
+
+    // The bug this prevents looks exactly like "back is broken": the first press restores a state
+    // identical to the current one, so nothing on screen moves.
+    it('a change that changes nothing costs neither a history entry nor a query', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setScope({ kind: 'pack', packId: 5 });
+      expect(api.querySamples).toHaveBeenCalledTimes(1);
+
+      store.setScope({ kind: 'pack', packId: 5 }); // the same pack, followed from another row
+      store.setKey(null); // clearing a key that was never set
+
+      expect(api.querySamples).toHaveBeenCalledTimes(1);
+      expect(store.history).toHaveLength(1);
+    });
+
+    it('caps the stack rather than growing without bound', () => {
+      const store = new LibraryStore(makeFakeApi());
+      for (let i = 0; i < 120; i++) store.filterByBpm(i + 1);
+      expect(store.history.length).toBeLessThanOrEqual(50);
+      // The OLDEST entries are the ones dropped, so the most recent steps stay reversible.
+      store.back();
+      expect(store.filters).toStrictEqual({ bpmMin: 119, bpmMax: 119 });
+    });
+
+    describe('coalescing (per-keystroke sources collapse into one step)', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('one typed search is ONE back step, not one per debounce window', () => {
+        const store = new LibraryStore(makeFakeApi());
+        store.setScope({ kind: 'pack', packId: 5 });
+
+        store.setSearch('k');
+        vi.advanceTimersByTime(50);
+        store.setSearch('ki');
+        vi.advanceTimersByTime(50);
+        store.setSearch('kick');
+        vi.advanceTimersByTime(50);
+        expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 }, search: 'kick' });
+
+        store.back();
+
+        expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 } });
+        expect(store.searchText).toBe('');
+      });
+
+      it('a search still inside its debounce window cannot land after back() undid it', () => {
+        const api = makeFakeApi();
+        const store = new LibraryStore(api);
+        store.setKey('c#');
+
+        store.setSearch('kick'); // timer armed, not yet applied
+        store.back();
+        vi.advanceTimersByTime(50); // the pending timer would fire here if it survived
+
+        expect(store.filters).toStrictEqual({});
+        expect(store.searchText).toBe('');
+      });
+
+      it('typing after a non-search change starts a NEW back step', () => {
+        const store = new LibraryStore(makeFakeApi());
+
+        store.setSearch('kick');
+        vi.advanceTimersByTime(50);
+        store.setKey('c#');
+        store.setSearch('snare');
+        vi.advanceTimersByTime(50);
+
+        store.back();
+        expect(store.filters).toStrictEqual({ search: 'kick', audioKey: 'c#' });
+      });
+    });
+  });
+
+  describe('clearFilters', () => {
+    it('drops every dimension at once and is reversible as a SINGLE step', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.setKey('c#');
+      store.toggleTag('kick');
+
+      store.clearFilters();
+      expect(store.filters).toStrictEqual({});
+      expect(store.searchText).toBe('');
+
+      store.back();
+      expect(store.filters).toStrictEqual({
+        scope: { kind: 'pack', packId: 5 },
+        audioKey: 'c#',
+        tags: ['kick'],
+      });
+    });
+
+    it('is a no-op with nothing active — it never pushes an empty step onto the stack', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.clearFilters();
+
+      expect(store.canGoBack).toBe(false);
+      expect(api.querySamples).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('activeFilterCount', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('counts each dimension once, each tag separately, and BPM bounds as one', () => {
+      const store = new LibraryStore(makeFakeApi());
+      expect(store.activeFilterCount).toBe(0);
+
+      store.setScope({ kind: 'favorites' });
+      store.toggleType('loop');
+      store.setKey('c#');
+      store.setBpmRange(90, 140); // two bounds, ONE dimension
+      store.toggleTag('kick');
+      store.toggleTag('snare');
+      store.setSearch('hat');
+      vi.advanceTimersByTime(50);
+
+      expect(store.activeFilterCount).toBe(7);
+    });
+
+    it('ignores a search still inside its debounce window (it describes the CURRENT rows)', () => {
+      const store = new LibraryStore(makeFakeApi());
+
+      store.setSearch('kick');
+
+      expect(store.searchText).toBe('kick');
+      expect(store.activeFilterCount).toBe(0);
+    });
+  });
+
   describe('fetchPeaks', () => {
     it('requests only ids not already cached, and merges the result into peaksCache', async () => {
       const bufA = new ArrayBuffer(8);
