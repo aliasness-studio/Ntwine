@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -212,7 +212,30 @@ describe('readSplice', () => {
 });
 
 describe('snapshotSpliceDb', () => {
-  it('is idempotent: identical repeated calls return the same path and byte-identical content', () => {
+  it('captures rows living only in an un-checkpointed WAL — the state a RUNNING Splice leaves on disk (proven live 2026-08-19: 46 rows differed; a raw file copy misses them)', () => {
+    const dir = tmp();
+    const dbPath = join(dir, 'sounds.db');
+    buildFixtureSpliceDb(dbPath, FIXTURE_ROWS);
+    const live = new Database(dbPath);
+    live.pragma('journal_mode = WAL');
+    live.pragma('wal_autocheckpoint = 0'); // keep the row in the WAL, exactly like mid-write Splice
+    live
+      .prepare(
+        `INSERT INTO samples (file_hash, local_path, filename, pack_uuid, sample_type, bpm, audio_key, chord_type, duration, tags)
+         VALUES ('hash-wal-only', '/lib/wal_only.wav', 'wal_only.wav', ?, 'oneshot', 0, NULL, NULL, 500, '')`,
+      )
+      .run(PACK_ONE_UUID);
+    try {
+      // Source connection stays OPEN across the snapshot — Splice is running in the real case.
+      const snapPath = snapshotSpliceDb(dbPath, join(dir, 'snapshot'));
+      const { samples } = readSplice(snapPath);
+      expect(samples.map((s) => s.filename)).toContain('wal_only.wav');
+    } finally {
+      live.close();
+    }
+  });
+
+  it('is idempotent: identical repeated calls return the same path and the same read-back rows', () => {
     const dir = tmp();
     const dbPath = join(dir, 'sounds.db');
     buildFixtureSpliceDb(dbPath, FIXTURE_ROWS);
@@ -222,8 +245,10 @@ describe('snapshotSpliceDb', () => {
     const path2 = snapshotSpliceDb(dbPath, destDir);
 
     expect(path2).toBe(path1);
-    expect(readFileSync(path1)).toEqual(readFileSync(dbPath));
-    expect(readFileSync(path2)).toEqual(readFileSync(dbPath));
+    // Semantic, not byte, equality: VACUUM INTO writes a freshly-packed file (that's the point —
+    // WAL applied, pages defragmented), so the bytes legitimately differ from the source while
+    // every row read back through readSplice is identical.
+    expect(readSplice(path2)).toEqual(readSplice(dbPath));
   });
 
   it('never refuses to overwrite — last write wins even over a newer-mtime stale snapshot', () => {
@@ -243,9 +268,9 @@ describe('snapshotSpliceDb', () => {
     const path2 = snapshotSpliceDb(dbPath, destDir);
 
     expect(path2).toBe(path1);
-    expect(readFileSync(path2)).toEqual(readFileSync(dbPath));
-    const { samples } = readSplice(path2); // proves the stale garbage was replaced, not just path-equal
-    expect(samples).toHaveLength(3);
+    // Semantic equality (VACUUM INTO repacks pages, so bytes differ from src by design); reading
+    // the rows back proves the stale garbage was replaced, not just path-equal.
+    expect(readSplice(path2)).toEqual(readSplice(dbPath));
   });
 });
 

@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative, sep } from 'node:path';
-import type { SpliceSample } from './spliceDb';
+import type { DownloadedSpliceSample } from './spliceDb';
 
 // Ntwine's normalized shape for one sample row — field names transcribed verbatim from the
 // brief's Interfaces line, same order.
@@ -110,7 +110,7 @@ export function relPathToAbs(libraryRoot: string, relPath: string): string {
  * verbatim, never rescaled (spec §2.3 pin). Throws — never guesses — on an unrecognized
  * sample_type/chord_type or a local_path outside the library root.
  */
-export function normalizeSample(s: SpliceSample, libraryRoot: string): NormalizedSample {
+export function normalizeSample(s: DownloadedSpliceSample, libraryRoot: string): NormalizedSample {
   return {
     fileHash: s.file_hash,
     relPath: toRelPath(s.local_path, libraryRoot),

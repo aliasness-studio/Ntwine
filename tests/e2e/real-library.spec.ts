@@ -29,7 +29,10 @@ test('@real the real Splice library imports completely', async () => {
   const appData = realAppData();
   const db = appData ? resolveSpliceDbCandidates(appData)[0] : undefined;
   test.skip(!db, 'no Splice sounds.db detected on this machine');
-  const expected = (new Database(db!, { readonly: true }).prepare('select count(*) as c from samples').get() as { c: number }).c;
+  // local_path IS NOT NULL: the app deliberately skips rows Splice hasn't downloaded yet
+  // (buildCatalog) — mid-sync, the DB really contains such rows, and the imported count must be
+  // compared against what the app CONTRACTS to import, not the raw row count.
+  const expected = (new Database(db!, { readonly: true }).prepare('select count(*) as c from samples where local_path is not null').get() as { c: number }).c;
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-real-'));
   const l = await launchNtwine({ userData: join(root, 'ud'), appData: appData!, libraryRoot: process.env.NTWINE_E2E_REAL_LIBRARY_ROOT ?? join(homedir(), 'Splice') });
   try {
