@@ -24,7 +24,32 @@ import { CollectionPopover } from './CollectionPopover';
 import { RowContextMenu } from './RowContextMenu';
 import { TagsPopover } from './TagsPopover';
 import { useStores } from './StoreContext';
-import { ROW_HEIGHT, SampleRow } from './SampleRow';
+import { ROW_HEIGHT, SampleRow, type RowLink } from './SampleRow';
+import type { LibraryStore } from '../stores/LibraryStore';
+
+/**
+ * Turns a row link (SampleRow's pack/key/bpm/tag cells) into a browse action. Module-level and
+ * store-in/void-out rather than a closure, so the whole mapping is one readable table: the row
+ * reports WHICH link was followed, this decides what following it means, and LibraryStore owns the
+ * history/query mechanics. Every arm is an ordinary filter action, which is what makes following
+ * a link reversible with `back()` for free.
+ */
+function followRowLink(library: LibraryStore, link: RowLink): void {
+  switch (link.kind) {
+    case 'pack':
+      library.setScope({ kind: 'pack', packId: link.packId });
+      return;
+    case 'key':
+      library.setKey(link.audioKey);
+      return;
+    case 'bpm':
+      library.filterByBpm(link.bpm);
+      return;
+    case 'tag':
+      library.toggleTag(link.name);
+      return;
+  }
+}
 
 const OVERSCAN = 12;
 // How long to wait after the LAST 'waveforms'-phase progress tick in a burst before re-checking
@@ -526,6 +551,7 @@ export const SampleList = observer(
                   userLayer.stopNicknameEdit();
                 }}
                 onCancelNicknameEdit={() => userLayer.stopNicknameEdit()}
+                onFollowLink={(link) => followRowLink(library, link)}
               />
             );
           })}

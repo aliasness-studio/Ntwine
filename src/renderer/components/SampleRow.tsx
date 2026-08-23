@@ -12,7 +12,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from 'react';
-import styled from 'styled-components';
+import styled, { css } from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
 import type { SampleRow as SampleRowData } from '../../shared/ipcTypes';
 import { armDragSource, clearDragSource } from '../dragSource';
@@ -168,6 +168,72 @@ const BpmCell = styled.span`
   text-align: right;
 `;
 
+// Cross-navigation cells (QoL round 2, 2026-08-20): pack / key / bpm / tag read as plain text but
+// behave as links — click one and the browse state follows it. Styled to be VISUALLY identical to
+// the span they replace (`font: inherit`, no chrome) so a row still reads as a row, with the
+// affordance appearing on hover only; a row full of obviously-buttonish cells would be noise at
+// 40px tall.
+//
+// `-webkit-user-drag: none` is the first of the same three drag guards HeartButton documents in
+// full: `Row` is `draggable` and arms a native OS file-drag on mousedown+move, a path entirely
+// separate from `click`. Without them, a click with slight cursor drift starts a real file drag
+// instead of following the link, and Chromium then suppresses the click that would have. The
+// other two (`draggable={false}`, `onMouseDown` stopPropagation) ride on every usage below via
+// `linkProps`.
+const cellLink = css`
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  -webkit-user-drag: none;
+
+  &:hover {
+    color: ${(p) => p.theme.color.accentStrong};
+    text-decoration: underline;
+  }
+`;
+
+// The pack column is wide and its name usually short, so the LINK hugs its text and the cell
+// around it stays inert: clicking the empty space to the right of a pack name still selects the
+// row (and previews it), the way clicking any other blank part of the row does. Only the name
+// itself navigates.
+const PackCell = styled.span`
+  flex: 1;
+  min-width: 0;
+  display: flex;
+`;
+
+const PackLink = styled.button`
+  ${cellLink}
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: ${(p) => p.theme.color.textMuted};
+  font-size: 12px;
+`;
+
+const KeyLink = styled.button`
+  ${cellLink}
+  width: 44px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: ${(p) => p.theme.color.textMuted};
+  text-align: left;
+`;
+
+const BpmLink = styled.button`
+  ${cellLink}
+  width: 40px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: ${(p) => p.theme.color.textMuted};
+  text-align: right;
+`;
+
 const DurationCell = styled.span`
   width: 48px;
   flex-shrink: 0;
@@ -184,20 +250,43 @@ const Tags = styled.div`
   overflow: hidden;
 `;
 
-const Chip = styled.span`
+const chipShape = css`
   padding: 1px 6px;
   border-radius: ${(p) => p.theme.radius.pill};
-  background: ${(p) => p.theme.color.bgPanel};
-  color: ${(p) => p.theme.color.textMuted};
   font-size: 10px;
   white-space: nowrap;
 `;
 
+// The +N overflow indicator — the one chip that stays inert, because "3 more tags" isn't a tag
+// anything could filter by.
+const Chip = styled.span`
+  ${chipShape}
+  background: ${(p) => p.theme.color.bgPanel};
+  color: ${(p) => p.theme.color.textMuted};
+`;
+
+// Splice tag chips, clickable since QoL round 2: one click adds the tag to the active filter (and
+// a second removes it — `toggleTag`). Same drag guards as the cell links above.
+const ChipButton = styled.button`
+  ${chipShape}
+  border: none;
+  background: ${(p) => p.theme.color.bgPanel};
+  color: ${(p) => p.theme.color.textMuted};
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-user-drag: none;
+
+  &:hover {
+    color: ${(p) => p.theme.color.text};
+  }
+`;
+
 // User tags (design spec §5.2: "accent-outlined, after Splice's within the same +N overflow
-// budget") — extends Chip's shape/padding/font-size, only the fill/border differ. Same
+// budget") — extends ChipButton's shape/padding/font-size, only the fill/border differ. Same
 // outline-on-accent idiom FilterPanel's active `TagChip` already uses for "this chip is
-// accent-relevant" (transparent fill, 1px accent border, accentStrong text).
-const UserChip = styled(Chip)`
+// accent-relevant" (transparent fill, 1px accent border, accentStrong text). Filterable on the
+// same footing as a Splice tag: querySamples' `tags` filter matches EITHER source per name.
+const UserChip = styled(ChipButton)`
   background: transparent;
   border: 1px solid ${(p) => p.theme.color.accent};
   color: ${(p) => p.theme.color.accentStrong};
@@ -270,6 +359,15 @@ function HeartIcon({ filled }: { filled: boolean }) {
   );
 }
 
+/** What a row's clickable cells mean, resolved into browse actions by SampleList (the one place
+ * that already holds the stores). A tagged union rather than four separate callback props: the
+ * row's job is to say WHICH link was followed, never to know what following it does. */
+export type RowLink =
+  | { kind: 'pack'; packId: number }
+  | { kind: 'key'; audioKey: string }
+  | { kind: 'bpm'; bpm: number }
+  | { kind: 'tag'; name: string };
+
 export interface SampleRowProps {
   row: SampleRowData;
   selected: boolean;
@@ -296,6 +394,9 @@ export interface SampleRowProps {
   /** Esc in the nickname input calls this. SampleList wires this to
    * `userLayer.stopNicknameEdit()`. */
   onCancelNicknameEdit: () => void;
+  /** A pack/key/bpm/tag cell was clicked. Like `onToggleFavorite`, this never changes selection or
+   * playback — following a link is navigation, not a row action. */
+  onFollowLink: (link: RowLink) => void;
 }
 
 export function SampleRow({
@@ -308,16 +409,44 @@ export function SampleRow({
   editingNickname,
   onCommitNickname,
   onCancelNicknameEdit,
+  onFollowLink,
 }: SampleRowProps) {
   const drawablePeaks = row.missing || row.peaksFailed ? null : peaks;
+
+  // The shared wiring every clickable cell needs: follow the link, and don't let the click reach
+  // `Row` (whose own onClick selects the row and starts a preview) or seed a native file drag.
+  // See `cellLink`'s doc comment for why the drag guards are three layers deep.
+  const linkProps = (link: RowLink) => ({
+    type: 'button' as const,
+    draggable: false,
+    onMouseDown: (e: MouseEvent<HTMLButtonElement>) => e.stopPropagation(),
+    onClick: (e: MouseEvent<HTMLButtonElement>) => {
+      e.stopPropagation();
+      onFollowLink(link);
+    },
+  });
 
   // Splice chips first, then user chips, SLICED TOGETHER against one MAX_INLINE_TAGS budget
   // (design spec §5.2: "after Splice's within the same +N overflow budget") — two independent
   // slices would let a row with 3 Splice tags AND 3 user tags show 6 chips before ever
   // overflowing, silently doubling the row's real budget.
-  const spliceChips = row.tags.map((t) => <Chip key={`splice-${t}`}>{t}</Chip>);
+  // Every link below carries an explicit `aria-label` rather than letting its visible text become
+  // the accessible name. Two reasons, one of them load-bearing: a chip reading just "bounce" would
+  // be indistinguishable by role+name from TagsPopover's own "bounce" suggestion button (an
+  // ambiguity that breaks any strict locator addressing either), and "Filter by tag bounce" says
+  // what the control DOES, which a bare tag name doesn't.
+  const spliceChips = row.tags.map((t) => (
+    <ChipButton key={`splice-${t}`} aria-label={`Filter by tag ${t}`} {...linkProps({ kind: 'tag', name: t })}>
+      {t}
+    </ChipButton>
+  ));
   const userChips = row.userTags.map((t) => (
-    <UserChip key={`user-${t}`} data-testid="user-tag-chip">
+    <UserChip
+      key={`user-${t}`}
+      data-testid="user-tag-chip"
+      aria-label={`Filter by tag ${t}`}
+      {...linkProps({ kind: 'tag', name: t })}
+    >
       {t}
     </UserChip>
   ));
@@ -425,10 +554,49 @@ export function SampleRow({
           {row.nickname !== null && <DimmedReal>{middleTruncate(row.filename, 24)}</DimmedReal>}
         </Filename>
       )}
-      <PackName title={row.packName ?? undefined}>{row.packName ?? '—'}</PackName>
-      <KeyCell>{formatKey(row.audioKey, row.chordType)}</KeyCell>
-      <BpmCell>{row.bpm ?? '—'}</BpmCell>
-      <DurationCell>{formatDuration(row.durationMs)}</DurationCell>
+      {/* Each cell is a link only when it has something to navigate TO — a sample with no pack,
+          no detected key, or no bpm keeps the inert span, so there's never a button that does
+          nothing when clicked. */}
+      {/* Each cell carries a stable testid on BOTH branches. Cells used to be addressable only by
+          child position (`:scope > span` + an index), which stopped working the moment a cell could
+          be either a span or a button depending on whether its value exists — the index then means
+          different things on different rows. */}
+      {row.packId !== null && row.packName !== null ? (
+        <PackCell data-testid="row-pack">
+          <PackLink
+            title={row.packName}
+            aria-label={`Show pack ${row.packName}`}
+            {...linkProps({ kind: 'pack', packId: row.packId })}
+          >
+            {row.packName}
+          </PackLink>
+        </PackCell>
+      ) : (
+        <PackName data-testid="row-pack">—</PackName>
+      )}
+      {row.audioKey !== null ? (
+        <KeyLink
+          data-testid="row-key"
+          aria-label={`Filter by key ${formatKey(row.audioKey, null)}`}
+          {...linkProps({ kind: 'key', audioKey: row.audioKey })}
+        >
+          {formatKey(row.audioKey, row.chordType)}
+        </KeyLink>
+      ) : (
+        <KeyCell data-testid="row-key">{formatKey(row.audioKey, row.chordType)}</KeyCell>
+      )}
+      {row.bpm !== null ? (
+        <BpmLink
+          data-testid="row-bpm"
+          aria-label={`Filter by ${row.bpm} BPM`}
+          {...linkProps({ kind: 'bpm', bpm: row.bpm })}
+        >
+          {row.bpm}
+        </BpmLink>
+      ) : (
+        <BpmCell data-testid="row-bpm">—</BpmCell>
+      )}
+      <DurationCell data-testid="row-duration">{formatDuration(row.durationMs)}</DurationCell>
       <Tags>
         {allChips.slice(0, MAX_INLINE_TAGS)}
         {extraChipCount > 0 && <Chip>+{extraChipCount}</Chip>}

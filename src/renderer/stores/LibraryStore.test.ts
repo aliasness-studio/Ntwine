@@ -1,7 +1,7 @@
 import { autorun, isObservable } from 'mobx';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
-import { LibraryStore } from './LibraryStore';
+import { LibraryStore, sameFilters } from './LibraryStore';
 
 // Full `NtwineApi`-shaped fake (all 23 bridge methods), built from plain `vi.fn()`s so the
 // returned object satisfies `NtwineApi` structurally when passed into `new LibraryStore(...)` —
@@ -426,6 +426,305 @@ describe('LibraryStore', () => {
       store.setScope(null); // clear only the scope
 
       expect(store.filters).toStrictEqual({ audioKey: 'c#' });
+    });
+  });
+
+  // Guards the "a change that changes nothing costs nothing" rule below. A false NEGATIVE here
+  // (equal filters reported different) silently adds a dead history entry, which surfaces as a
+  // back press that appears to do nothing at all.
+  describe('sameFilters', () => {
+    it('treats an empty filter set as equal to itself', () => {
+      expect(sameFilters({}, {})).toBe(true);
+    });
+
+    it('compares scope by kind AND payload, not by reference', () => {
+      expect(sameFilters({ scope: { kind: 'pack', packId: 5 } }, { scope: { kind: 'pack', packId: 5 } })).toBe(true);
+      expect(sameFilters({ scope: { kind: 'pack', packId: 5 } }, { scope: { kind: 'pack', packId: 6 } })).toBe(false);
+      expect(sameFilters({ scope: { kind: 'favorites' } }, { scope: { kind: 'favorites' } })).toBe(true);
+      expect(sameFilters({ scope: { kind: 'favorites' } }, { scope: { kind: 'pack', packId: 5 } })).toBe(false);
+      expect(sameFilters({ scope: { kind: 'collection', collectionId: 'a' } }, { scope: { kind: 'collection', collectionId: 'b' } })).toBe(false);
+      expect(sameFilters({ scope: { kind: 'pack', packId: 5 } }, {})).toBe(false);
+    });
+
+    it('treats tags as a set — order does not matter, membership does', () => {
+      expect(sameFilters({ tags: ['kick', 'snare'] }, { tags: ['snare', 'kick'] })).toBe(true);
+      expect(sameFilters({ tags: ['kick'] }, { tags: ['kick', 'snare'] })).toBe(false);
+      expect(sameFilters({ tags: [] }, {})).toBe(true); // an empty list narrows nothing
+    });
+
+    it('compares the scalar dimensions by value', () => {
+      expect(sameFilters({ bpmMin: 90, bpmMax: 140 }, { bpmMin: 90, bpmMax: 140 })).toBe(true);
+      expect(sameFilters({ bpmMin: 90 }, { bpmMin: 91 })).toBe(false);
+      expect(sameFilters({ audioKey: 'c#' }, { audioKey: 'c' })).toBe(false);
+      expect(sameFilters({ search: 'kick' }, {})).toBe(false);
+    });
+  });
+
+  // Navigation (QoL round 2, 2026-08-20). Rows became link-navigable — pack/key/bpm/tag cells
+  // change the browse state on click — which is only safe if every such change is reversible.
+  describe('back stack', () => {
+    it('starts empty: there is nothing to go back to on arrival', () => {
+      const store = new LibraryStore(makeFakeApi());
+      expect(store.canGoBack).toBe(false);
+      store.back(); // a no-op, never a throw
+      expect(store.filters).toStrictEqual({});
+    });
+
+    it('back() restores the exact previous filter set and re-queries with it', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.setKey('c#');
+      expect(store.canGoBack).toBe(true);
+
+      store.back();
+
+      expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 } });
+      expect(api.querySamples).toHaveBeenLastCalledWith({ scope: { kind: 'pack', packId: 5 } });
+    });
+
+    it('unwinds one step per press, all the way back to the unfiltered view', () => {
+      const store = new LibraryStore(makeFakeApi());
+
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.toggleTag('kick');
+      store.filterByBpm(128);
+
+      store.back();
+      expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 }, tags: ['kick'] });
+      store.back();
+      expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 } });
+      store.back();
+      expect(store.filters).toStrictEqual({});
+      expect(store.canGoBack).toBe(false);
+    });
+
+    it('back() is not itself a history event — pressing it repeatedly never ping-pongs', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setKey('c#');
+
+      store.back();
+      expect(store.canGoBack).toBe(false);
+      store.back();
+      expect(store.filters).toStrictEqual({});
+    });
+
+    // The bug this prevents looks exactly like "back is broken": the first press restores a state
+    // identical to the current one, so nothing on screen moves.
+    it('a change that changes nothing costs neither a history entry nor a query', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.setScope({ kind: 'pack', packId: 5 });
+      expect(api.querySamples).toHaveBeenCalledTimes(1);
+
+      store.setScope({ kind: 'pack', packId: 5 }); // the same pack, followed from another row
+      store.setKey(null); // clearing a key that was never set
+
+      expect(api.querySamples).toHaveBeenCalledTimes(1);
+      expect(store.history).toHaveLength(1);
+    });
+
+    it('caps the stack rather than growing without bound', () => {
+      const store = new LibraryStore(makeFakeApi());
+      for (let i = 0; i < 120; i++) store.filterByBpm(i + 1);
+      expect(store.history.length).toBeLessThanOrEqual(50);
+      // The OLDEST entries are the ones dropped, so the most recent steps stay reversible.
+      store.back();
+      expect(store.filters).toStrictEqual({ bpmMin: 119, bpmMax: 119 });
+    });
+
+    describe('coalescing (per-keystroke sources collapse into one step)', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('one typed search is ONE back step, not one per debounce window', () => {
+        const store = new LibraryStore(makeFakeApi());
+        store.setScope({ kind: 'pack', packId: 5 });
+
+        store.setSearch('k');
+        vi.advanceTimersByTime(50);
+        store.setSearch('ki');
+        vi.advanceTimersByTime(50);
+        store.setSearch('kick');
+        vi.advanceTimersByTime(50);
+        expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 }, search: 'kick' });
+
+        store.back();
+
+        expect(store.filters).toStrictEqual({ scope: { kind: 'pack', packId: 5 } });
+        expect(store.searchText).toBe('');
+      });
+
+      it('a search still inside its debounce window cannot land after back() undid it', () => {
+        const api = makeFakeApi();
+        const store = new LibraryStore(api);
+        store.setKey('c#');
+
+        store.setSearch('kick'); // timer armed, not yet applied
+        store.back();
+        vi.advanceTimersByTime(50); // the pending timer would fire here if it survived
+
+        expect(store.filters).toStrictEqual({});
+        expect(store.searchText).toBe('');
+      });
+
+      it('typing after a non-search change starts a NEW back step', () => {
+        const store = new LibraryStore(makeFakeApi());
+
+        store.setSearch('kick');
+        vi.advanceTimersByTime(50);
+        store.setKey('c#');
+        store.setSearch('snare');
+        vi.advanceTimersByTime(50);
+
+        store.back();
+        expect(store.filters).toStrictEqual({ search: 'kick', audioKey: 'c#' });
+      });
+    });
+  });
+
+  // Review, PR #14: a snapshot must be an inert value. A shallow spread left `tags`/`scope`
+  // aliased to the live filters and stored MobX proxies in the history, so a future in-place edit
+  // of a nested filter value could reach back and rewrite the past.
+  describe('history snapshots are inert values', () => {
+    it('does not alias nested filter values, and stores no observables', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.toggleTag('kick');
+      store.setScope({ kind: 'pack', packId: 5 }); // snapshots the tags-only state
+
+      const snapshot = store.history[store.history.length - 1];
+      expect(snapshot).toEqual({ tags: ['kick'] });
+      expect(isObservable(snapshot)).toBe(false);
+      expect(snapshot.tags).not.toBe(store.filters.tags); // a copy, not the live array
+    });
+
+    it('a snapshot survives later edits to the same dimensions untouched', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.toggleTag('kick');
+      const afterScope = store.history[store.history.length - 1];
+
+      store.toggleTag('snare');
+      store.setScope({ kind: 'favorites' });
+
+      expect(afterScope).toEqual({ scope: { kind: 'pack', packId: 5 } });
+    });
+  });
+
+  describe('clearSearch', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('clears box and filter on the spot, without waiting out the debounce', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+      store.setSearch('kick');
+      vi.advanceTimersByTime(50);
+      expect(store.filters).toStrictEqual({ search: 'kick' });
+
+      store.clearSearch();
+
+      // No timer advance: the crumb's ✕ is a discrete control, not a keystroke.
+      expect(store.filters).toStrictEqual({});
+      expect(store.searchText).toBe('');
+      expect(api.querySamples).toHaveBeenLastCalledWith({});
+    });
+
+    it('is its own back step rather than coalescing into the typing that preceded it', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setSearch('kick');
+      vi.advanceTimersByTime(50);
+
+      store.clearSearch();
+      store.back();
+
+      expect(store.filters).toStrictEqual({ search: 'kick' });
+      expect(store.searchText).toBe('kick');
+    });
+
+    it('cancels a still-pending keystroke so it cannot re-apply afterwards', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setSearch('kick'); // timer armed, never allowed to land
+
+      store.clearSearch();
+      vi.advanceTimersByTime(50);
+
+      expect(store.filters).toStrictEqual({});
+      expect(store.searchText).toBe('');
+    });
+  });
+
+  describe('clearFilters', () => {
+    it('drops every dimension at once and is reversible as a SINGLE step', () => {
+      const store = new LibraryStore(makeFakeApi());
+      store.setScope({ kind: 'pack', packId: 5 });
+      store.setKey('c#');
+      store.toggleTag('kick');
+
+      store.clearFilters();
+      expect(store.filters).toStrictEqual({});
+      expect(store.searchText).toBe('');
+
+      store.back();
+      expect(store.filters).toStrictEqual({
+        scope: { kind: 'pack', packId: 5 },
+        audioKey: 'c#',
+        tags: ['kick'],
+      });
+    });
+
+    it('is a no-op with nothing active — it never pushes an empty step onto the stack', () => {
+      const api = makeFakeApi();
+      const store = new LibraryStore(api);
+
+      store.clearFilters();
+
+      expect(store.canGoBack).toBe(false);
+      expect(api.querySamples).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('activeFilterCount', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('counts each dimension once, each tag separately, and BPM bounds as one', () => {
+      const store = new LibraryStore(makeFakeApi());
+      expect(store.activeFilterCount).toBe(0);
+
+      store.setScope({ kind: 'favorites' });
+      store.toggleType('loop');
+      store.setKey('c#');
+      store.setBpmRange(90, 140); // two bounds, ONE dimension
+      store.toggleTag('kick');
+      store.toggleTag('snare');
+      store.setSearch('hat');
+      vi.advanceTimersByTime(50);
+
+      expect(store.activeFilterCount).toBe(7);
+    });
+
+    it('ignores a search still inside its debounce window (it describes the CURRENT rows)', () => {
+      const store = new LibraryStore(makeFakeApi());
+
+      store.setSearch('kick');
+
+      expect(store.searchText).toBe('kick');
+      expect(store.activeFilterCount).toBe(0);
     });
   });
 

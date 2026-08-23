@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { emptyStateText } from '../../src/renderer/emptyState';
-import { importAndWait, readCount, rowByFilename } from './harness/actions';
+import { clickRow, importAndWait, readCount, rowByFilename } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 import { launchNtwine } from './harness/launch';
 
@@ -85,7 +85,9 @@ test('create/duplicate/rename/delete round-trip through the rail and the row con
   // suggestion, and "Crate" is both with nothing typed. CollectionPopover's `addExisting` clears
   // the input but does NOT close the popover on success, so Escape closes it explicitly after. ---
   const rowA = rowByFilename(page, 'AD_Kick_01.wav');
-  await rowA.click();
+  // clickRow, not rowA.click() — a row's pack/key/bpm/tag cells navigate on click now, and the
+  // row's geometric midpoint can land on one of them depending on window width (actions.ts).
+  await clickRow(page, 'AD_Kick_01.wav');
   await list.focus();
   await page.keyboard.press('c');
   await page.getByLabel('Add to collection').waitFor();
@@ -101,7 +103,7 @@ test('create/duplicate/rename/delete round-trip through the rail and the row con
 
   // --- Delete removes it from the collection (never the file) -> collection empty state, rail
   // count back to 0 ---
-  await rowA.click();
+  await clickRow(page, 'AD_Kick_01.wav');
   await list.focus();
   await page.keyboard.press('Delete');
   await expect(list.getByRole('option')).toHaveCount(0);
