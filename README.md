@@ -15,7 +15,9 @@ covered by the CI matrix. Private/personal tooling for now.
   After install, the app and test suite run under Electron's own bundled Node, so the host Node
   version stops mattering — see [Verification](#verification).
 - yarn (classic)
-- macOS
+- macOS or Windows. On Windows, prefer Node 24: `better-sqlite3`'s install runs an
+  (always-no-op) `node-gyp rebuild`, and gyp configure still has to *find* Visual Studio —
+  the node-gyp bundled with Node 22's npm can't parse VS 2026 and the install fails.
 
 The first-run import reads the Splice desktop app's leftover `sounds.db`
 (auto-detected) plus the sample folder itself — you need a real Splice library on
