@@ -258,3 +258,135 @@ describe('PlayerStore', () => {
     warnSpy.mockRestore();
   });
 });
+
+// Transport dock (2026-08-23). Two gestures the v1 design deliberately left out, added because
+// both failure modes are real in live use: a long sample you triggered by accident could only be
+// RESTARTED (every action that changes "current" plays; nothing ever called `playPort.stop()`),
+// and browsing with the arrow keys sounds every row it lands on whether you wanted that or not.
+describe('PlayerStore — transport', () => {
+  describe('stop', () => {
+    it('calls through to the port — the gesture v1 had no caller for', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.select(7);
+
+      store.stop();
+
+      expect(port.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the selection alone, so ArrowLeft/Space can still replay what was stopped', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.select(7);
+
+      store.stop();
+
+      expect(store.selectedId).toBe(7);
+      store.replay();
+      expect(port.play).toHaveBeenLastCalledWith(7);
+    });
+
+    it('is safe with nothing selected — Stop is a panic button, never conditionally disabled', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+
+      expect(() => store.stop()).not.toThrow();
+      expect(port.stop).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('autoplay preference', () => {
+    it('defaults to on — the v1 behaviour is unchanged until you turn it off', () => {
+      expect(new PlayerStore(makeFakePlayPort()).autoplay).toBe(true);
+    });
+
+    it('toggleAutoplay flips it', () => {
+      const store = new PlayerStore(makeFakePlayPort());
+
+      store.toggleAutoplay();
+      expect(store.autoplay).toBe(false);
+      store.toggleAutoplay();
+      expect(store.autoplay).toBe(true);
+    });
+
+    it('off: a row click still SELECTS, it just does not sound', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.toggleAutoplay();
+
+      store.select(7);
+
+      expect(store.selectedId).toBe(7);
+      expect(port.play).not.toHaveBeenCalled();
+    });
+
+    it('off: arrow keys still walk the list silently', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.toggleAutoplay();
+
+      store.moveSelection(1, [1, 2, 3]);
+      store.moveSelection(1, [1, 2, 3]);
+
+      expect(store.selectedId).toBe(2);
+      expect(port.play).not.toHaveBeenCalled();
+    });
+
+    // The whole point of the toggle: browsing goes quiet, but asking still works. ArrowLeft and
+    // Space both route here (SampleList.tsx), and pressing either IS the explicit request.
+    it('off: replay STILL plays — the preference gates landings, not explicit asks', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.select(7);
+      store.toggleAutoplay();
+
+      store.replay();
+
+      expect(port.play).toHaveBeenCalledWith(7);
+    });
+
+    it('back on: landings sound again', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+      store.toggleAutoplay();
+      store.select(1);
+      store.toggleAutoplay();
+
+      store.select(2);
+
+      expect(port.play).toHaveBeenCalledTimes(1);
+      expect(port.play).toHaveBeenCalledWith(2);
+    });
+
+    // The per-call opt-out predates the preference (restoring a prior selection on mount must not
+    // sound). Neither overrides the other: either one saying "no" is enough.
+    it('on: an explicit { autoplay: false } still wins', () => {
+      const port = makeFakePlayPort();
+      const store = new PlayerStore(port);
+
+      store.select(3, { autoplay: false });
+
+      expect(store.selectedId).toBe(3);
+      expect(port.play).not.toHaveBeenCalled();
+    });
+  });
+
+  it('the new mutations trigger no MobX enforceActions warning under a live observer', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new PlayerStore(makeFakePlayPort());
+    const seen: boolean[] = [];
+    const dispose = autorun(() => {
+      seen.push(store.autoplay);
+    });
+
+    store.toggleAutoplay();
+    store.stop();
+    store.toggleAutoplay();
+
+    dispose();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(seen).toEqual([true, false, true]);
+    warnSpy.mockRestore();
+  });
+});

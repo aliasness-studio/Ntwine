@@ -1,7 +1,7 @@
 import type { E2ESnapshot } from '../shared/e2eTypes';
 import type { PlayPort } from './stores/PlayerStore';
 
-export interface PlayCounters { playCount: number; lastPlayedId: number | null }
+export interface PlayCounters { playCount: number; lastPlayedId: number | null; stopCount: number }
 
 /**
  * E2E mode (armed by preload when main passed --ntwine-e2e): count plays BEFORE delegating, so a
@@ -12,11 +12,14 @@ export interface PlayCounters { playCount: number; lastPlayedId: number | null }
 export function wrapPlayPort(base: PlayPort, armed: boolean): { port: PlayPort; counters: () => PlayCounters } {
   let playCount = 0;
   let lastPlayedId: number | null = null;
-  const counters = (): PlayCounters => ({ playCount, lastPlayedId });
+  let stopCount = 0;
+  const counters = (): PlayCounters => ({ playCount, lastPlayedId, stopCount });
   if (!armed) return { port: base, counters };
   const port: PlayPort = {
     play: (id) => { playCount++; lastPlayedId = id; base.play(id); },
-    stop: () => base.stop(),
+    // Counted for the same reason plays are: a stop leaves no trace in the DOM or the store, so
+    // this counter is the only evidence an e2e spec can assert on.
+    stop: () => { stopCount++; base.stop(); },
     setVolume: (v) => base.setVolume(v),
   };
   return { port, counters };

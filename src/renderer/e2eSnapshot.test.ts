@@ -10,14 +10,14 @@ describe('wrapPlayPort', () => {
     const { port, counters } = wrapPlayPort(base, false);
     expect(port).toBe(base);
     port.play(7);
-    expect(counters()).toStrictEqual({ playCount: 0, lastPlayedId: null });
+    expect(counters()).toStrictEqual({ playCount: 0, lastPlayedId: null, stopCount: 0 });
   });
   it('armed: counts plays and records the last id, then delegates every method', () => {
     const base = fakePort();
     const { port, counters } = wrapPlayPort(base, true);
     expect(port).not.toBe(base);
     port.play(3); port.play(9); port.stop(); port.setVolume(0.3);
-    expect(counters()).toStrictEqual({ playCount: 2, lastPlayedId: 9 });
+    expect(counters()).toStrictEqual({ playCount: 2, lastPlayedId: 9, stopCount: 1 });
     expect(base.play).toHaveBeenNthCalledWith(1, 3);
     expect(base.play).toHaveBeenNthCalledWith(2, 9);
     expect(base.stop).toHaveBeenCalledOnce();

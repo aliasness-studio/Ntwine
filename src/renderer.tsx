@@ -76,6 +76,7 @@ installE2ESnapshot(window, e2eArmed, () => ({
   importPhase: stores.importStore.phase,
   running: stores.importStore.running,
   peaksCached: stores.library.peaksCache.size,
+  autoplay: stores.player.autoplay,
   ...counters(),
 }));
 

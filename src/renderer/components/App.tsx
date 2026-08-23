@@ -16,6 +16,7 @@ import { NavBar } from './NavBar';
 import { PackRail } from './PackRail';
 import { SampleList, type SampleListHandle } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
+import { TransportControls } from './TransportControls';
 import { useStores } from './StoreContext';
 import { TopBar, type TopBarHandle } from './TopBar';
 
@@ -136,7 +137,12 @@ const FILTERS_COLLAPSED_KEY = 'ntwine.filtersCollapsed';
 const RailFooter = styled.div`
   flex-shrink: 0;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  /* Was flex-end when the gear was the only occupant. The transport dock takes the left edge and
+     the gear stays pinned right, so the settings affordance doesn't move from where it has always
+     been (spec §7, "small gear, bottom of the rail"). */
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px;
   border-top: 1px solid ${(p) => p.theme.color.border};
 `;
@@ -295,6 +301,7 @@ export function App() {
           )}
         </FilterDock>
         <RailFooter>
+          <TransportControls />
           <GearButton
             type="button"
             title="Settings"
