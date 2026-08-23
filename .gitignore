@@ -4,6 +4,8 @@ out/
 dist/
 .vite/
 .DS_Store
+Thumbs.db
+desktop.ini
 *.log
 playwright-report/
 test-results/

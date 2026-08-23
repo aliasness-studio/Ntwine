@@ -12,8 +12,8 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       CI: 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           # Host Node runs yarn/Forge/Vite only; app + tests run under Electron's Node. 24 (not 22)
           # because better-sqlite3 v13's install runs an (always-no-op, prebuilds ship in the
@@ -32,7 +32,7 @@ jobs:
       - run: yarn typecheck
       - run: yarn lint
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-${{ matrix.os }}
           path: |

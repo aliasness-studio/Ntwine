@@ -5,9 +5,9 @@ preview, and drag samples straight into your DAW — no subscription required.
 
 ## Status
 
-v1, macOS-first (Windows/Linux later — nothing in the design bakes in macOS-only
-assumptions, but only macOS has been built and QA'd so far). Private/personal tooling
-for now.
+v1, macOS and Windows (Linux later — nothing in the design bakes in platform-specific
+assumptions). Both have been built and QA'd against a real Splice library, and both are
+covered by the CI matrix. Private/personal tooling for now.
 
 ## Prerequisites
 
@@ -15,7 +15,9 @@ for now.
   After install, the app and test suite run under Electron's own bundled Node, so the host Node
   version stops mattering — see [Verification](#verification).
 - yarn (classic)
-- macOS
+- macOS or Windows. On Windows, prefer Node 24: `better-sqlite3`'s install runs an
+  (always-no-op) `node-gyp rebuild`, and gyp configure still has to *find* Visual Studio —
+  the node-gyp bundled with Node 22's npm can't parse VS 2026 and the install fails.
 
 The first-run import reads the Splice desktop app's leftover `sounds.db`
 (auto-detected) plus the sample folder itself — you need a real Splice library on
@@ -76,7 +78,7 @@ sample file → download pack cover art → kick off a background waveform pass.
 there it's the library view — a pack rail down the left, filters for
 type/key/BPM/tags, full-text search across filename/tags/pack name, waveform
 thumbnails that fill in as the background pass catches up, click-or-arrow-key
-preview, and drag-out straight to a DAW or Finder.
+preview, and drag-out straight to a DAW, Finder, or File Explorer.
 
 ## Where data lives
 
