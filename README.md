@@ -5,9 +5,9 @@ preview, and drag samples straight into your DAW — no subscription required.
 
 ## Status
 
-v1, macOS-first (Windows/Linux later — nothing in the design bakes in macOS-only
-assumptions, but only macOS has been built and QA'd so far). Private/personal tooling
-for now.
+v1, macOS and Windows (Linux later — nothing in the design bakes in platform-specific
+assumptions). Both have been built and QA'd against a real Splice library, and both are
+covered by the CI matrix. Private/personal tooling for now.
 
 ## Prerequisites
 
@@ -76,7 +76,7 @@ sample file → download pack cover art → kick off a background waveform pass.
 there it's the library view — a pack rail down the left, filters for
 type/key/BPM/tags, full-text search across filename/tags/pack name, waveform
 thumbnails that fill in as the background pass catches up, click-or-arrow-key
-preview, and drag-out straight to a DAW or Finder.
+preview, and drag-out straight to a DAW, Finder, or File Explorer.
 
 ## Where data lives
 
