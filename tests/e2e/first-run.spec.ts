@@ -25,30 +25,73 @@ test('the same detection reads "not found" against an empty appData (the glob is
   }
 });
 
-// The first-run library-root picker (Option A, 2026-08-20): the DEFAULT root (~/Splice) is wrong
-// on machines where Splice puts samples elsewhere (the owner's real Windows box: Documents\
-// Splice\Samples), and Settings' picker only exists AFTER a successful import — without this
-// button a wrong default wedges first-run entirely (normalizeSample refuses out-of-root paths).
-// Launched WITHOUT the NTWINE_LIBRARY_ROOT override on purpose: this drives the exact flow a real
-// user performs — see the wrong default, change it, import successfully.
-test('the Change… button re-points the library root pre-import, and the import then lands the full fixture', async () => {
+// Both tests below launch WITHOUT the NTWINE_LIBRARY_ROOT override on purpose — that override is
+// exactly what would mask the production default-resolution path they exist to drive.
+const withUnoverriddenLaunch = async (
+  body: (l: Awaited<ReturnType<typeof launchNtwine>>, fixture: ReturnType<typeof buildFixtureLibrary>) => Promise<void>,
+): Promise<void> => {
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-rootpick-'));
   const fixture = buildFixtureLibrary(join(root, 'fixture'));
   const l = await launchNtwine({ userData: fixture.userData, appData: fixture.appData });
+
+  // The body's own failure is captured rather than thrown, so teardown always runs AND the real
+  // assertion error still wins over any cleanup error below — a `finally` that throws would
+  // otherwise replace the failure you actually need to read.
+  let bodyError: unknown = null;
   try {
-    const { page, app } = l;
-    await expect(page.getByTestId('first-run-library-root')).toHaveText('~/Splice (default)');
-    await app.evaluate(({ dialog }, dir) => {
-      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog;
-    }, fixture.libraryRoot);
-    await page.getByRole('button', { name: 'Change…' }).click();
+    await body(l, fixture);
+  } catch (err) {
+    bodyError = err;
+  }
+  await l.close();
+
+  // Windows holds the just-closed app's SQLite handles for a moment — retry rather than fail on a
+  // transient EBUSY. But a directory that is STILL locked after every attempt is a real defect (a
+  // leaked handle), so the last error surfaces instead of being swallowed (review, PR #13):
+  // silently leaving temp data behind is exactly how a handle leak hides.
+  let cleanupError: unknown = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      cleanupError = null;
+      break;
+    } catch (err) {
+      cleanupError = err;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  if (bodyError !== null) throw bodyError;
+  if (cleanupError !== null) throw cleanupError;
+};
+
+// Library-root auto-detection (2026-08-20): first-run used to show a hardcoded "~/Splice
+// (default)", which is wrong on Windows (real install: Documents\Splice) and made the owner's
+// first real import refuse EVERY row — normalizeSample throws on any local_path outside the root.
+// Main now reads Splice's own `splice_folder` from the settings.json beside sounds.db, which the
+// fixture plants like a real install does. No picking, no typing: the shown root is the root the
+// import actually uses, and the import lands the whole fixture.
+test('the library root is detected from Splice\'s own settings, and importing needs no picking', async () => {
+  await withUnoverriddenLaunch(async ({ page }, fixture) => {
     await expect(page.getByTestId('first-run-library-root')).toHaveText(fixture.libraryRoot);
     await importAndWait(page);
     await expect.poll(() => readCount(page)).toBe(fixture.totalSamples);
-  } finally {
-    await l.close();
-    for (let i = 0; i < 5; i++) {
-      try { rmSync(root, { recursive: true, force: true }); break; } catch { await new Promise((r) => setTimeout(r, 200)); }
-    }
-  }
+  });
+});
+
+// The escape hatch for everything detection can't cover (a library Splice doesn't know about, an
+// unreadable settings.json). Picks the fixture's PARENT — a different path from the detected one,
+// so the assertion can't pass by accident, while still containing every sample so the import that
+// follows proves the picked root is the one main actually imported against.
+test('the Change… button overrides the detected root pre-import, and the import then lands the full fixture', async () => {
+  await withUnoverriddenLaunch(async ({ page, app }, fixture) => {
+    await expect(page.getByTestId('first-run-library-root')).toHaveText(fixture.libraryRoot);
+    await app.evaluate(({ dialog }, dir) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog;
+    }, fixture.root);
+    await page.getByRole('button', { name: 'Change…' }).click();
+    await expect(page.getByTestId('first-run-library-root')).toHaveText(fixture.root);
+    await importAndWait(page);
+    await expect.poll(() => readCount(page)).toBe(fixture.totalSamples);
+  });
 });

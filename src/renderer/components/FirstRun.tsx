@@ -127,14 +127,16 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
   const [dbFound, setDbFound] = useState(state.spliceDbFound);
   const [pickError, setPickError] = useState<string | null>(null);
 
-  // First-run library-root picker (Option A, 2026-08-20): the shipped default (~/Splice) is
-  // wrong wherever Splice puts samples elsewhere (the owner's real box: Documents\Splice\
-  // Samples), and Settings' re-pick only exists AFTER a successful import — importing with a
-  // wrong root refuses every row (normalizeSample's out-of-root throw), a first-run wedge.
-  // Reuses the exact pickLibraryRoot IPC Settings uses (persists meta.library_root + stat pass;
-  // the stat over a pre-import empty catalog is a no-op). Local state, same rationale as
-  // dbFound above. Option B (derive the root from sounds.db's own local_paths) is filed as a
-  // later QoL improvement.
+  // First-run library-root picker (Option A, 2026-08-20). `state.libraryRoot` is now the
+  // EFFECTIVE root main would import with — Splice's own reported splice_folder when readable,
+  // else the platform's stock location (ipc.ts's currentLibraryRoot) — so this row shows a real
+  // path from the first paint instead of a hardcoded "~/Splice (default)" that was wrong on
+  // Windows. The button remains for the cases detection can't cover (a library Splice doesn't
+  // know about, an unreadable settings.json): Settings' re-pick only exists AFTER a successful
+  // import, and importing with a wrong root refuses every row (normalizeSample's out-of-root
+  // throw), so without it a wrong default still wedges first-run. Reuses the exact
+  // pickLibraryRoot IPC Settings uses (persists meta.library_root + stat pass; the stat over a
+  // pre-import empty catalog is a no-op). Local state, same rationale as dbFound above.
   const [libraryRoot, setLibraryRoot] = useState(state.libraryRoot);
 
   const handleChangeRoot = (): void => {
@@ -179,8 +181,8 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
       <DetectedList>
         <DetectedRow>
           <span>Library folder</span>
-          <DetectedValue data-testid="first-run-library-root" title={libraryRoot ?? undefined}>
-            {libraryRoot ?? '~/Splice (default)'}
+          <DetectedValue data-testid="first-run-library-root" title={libraryRoot}>
+            {libraryRoot}
           </DetectedValue>
           <InlineButton type="button" onClick={handleChangeRoot}>
             Change…

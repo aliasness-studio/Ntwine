@@ -14,7 +14,7 @@ function makeFakeApi(
   }> = {},
 ) {
   return {
-    getState: vi.fn(async () => ({ imported: false, libraryRoot: null, spliceDbFound: false })),
+    getState: vi.fn(async () => ({ imported: false, libraryRoot: '/lib', spliceDbFound: false })),
     runImport: vi.fn(over.runImport ?? (async () => {})),
     // Zero-arity fallback (rather than a named-but-unused `_cb` parameter): TS allows a function
     // with fewer declared params to satisfy a type expecting more, and it sidesteps

@@ -1,34 +1,67 @@
 import { app, dialog, ipcMain, net, utilityProcess } from 'electron';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { Catalog } from './catalog/db';
 import { getPeaks, listPacks, listTags, pendingPeakIds, querySamples } from './catalog/queries';
 import type { E2EEmit } from './e2e';
 import { runImport as runImportPipeline, statPass, type ImportDeps } from './importer/importer';
 import { validateSpliceDb } from './importer/spliceDb';
-import { resolveSpliceDbCandidates } from './paths';
+import { resolveDefaultLibraryRoot, resolveSpliceDbCandidates } from './paths';
 import { resolveSampleAbsPath } from './protocol';
 import type { UserDb } from './user/userDb';
 import { runPeaksQueue, WORKER_PATH, type WorkerLike } from './waveforms/queue';
 import type { ImportProgress, QueryFilters } from '../shared/ipcTypes';
 
-// spec §5 step 1: "default library root ~/Splice" — used only when `meta.library_root` hasn't
-// been set yet (first launch, before any import or pickLibraryRoot has run).
-const DEFAULT_LIBRARY_ROOT = join(homedir(), 'Splice');
+export interface LibraryRootDeps {
+  /** `app.getPath('appData')` — where Splice-DB detection starts (resolveSpliceDb below). */
+  appDataDir: string;
+  /** `app.getPath('documents')` — the win32 stock-location fallback's parent. */
+  documentsDir: string;
+  /** E2E's `NTWINE_LIBRARY_ROOT` (main.ts's `e2e?.libraryRoot`), null/undefined in production. */
+  e2eDefault?: string | null;
+  homeDir?: string;
+}
 
 /**
- * The current effective library root: whatever's persisted in `meta.library_root`, or a default —
- * the spec's `~/Splice` unless a caller supplies its own (Task 1: E2E mode's `NTWINE_LIBRARY_ROOT`
- * override, main.ts's `e2e?.libraryRoot`). A persisted root always wins over EITHER default — an
- * E2E run must not silently override a library root the user already picked via pickLibraryRoot
- * inside that same E2E userData dir. Exported so main.ts can build the SAME live getter it hands
- * to `registerProtocols`/`registerDragHandler` — one definition of "what's the current root"
- * (owner's "one question, two gates" rule), not three independently-computed ones that could
- * drift the moment a fourth consumer forgets the default.
+ * The current effective library root, in strict precedence order:
+ *
+ *   1. `meta.library_root` — what an import or the Change…/Settings picker persisted. A persisted
+ *      root always wins over EITHER default below, including E2E's: a run must not silently
+ *      override a root the user already picked via pickLibraryRoot inside that same userData dir.
+ *   2. The E2E override, so a test's library root stays hermetic and can never be displaced by
+ *      whatever Splice install happens to exist on the machine running the suite.
+ *   3. `resolveDefaultLibraryRoot` — Splice's own reported `splice_folder`, else the platform's
+ *      stock location (paths.ts).
+ *
+ * Step 3 replaced a hardcoded `~/Splice`, which was simply wrong on Windows (real install:
+ * `Documents\Splice`) and made first-run refuse every row until the user re-pointed the folder by
+ * hand. Exported so main.ts builds the SAME live getter it hands to `registerProtocols`/
+ * `registerDragHandler` — one definition of "what's the current root" (owner's "one question, two
+ * gates" rule), not several that could drift the moment a consumer forgets the default.
  */
-export function currentLibraryRoot(catalog: Catalog, defaultRoot: string = DEFAULT_LIBRARY_ROOT): string {
-  return catalog.getMeta('library_root') ?? defaultRoot;
+export function currentLibraryRoot(catalog: Catalog, deps: LibraryRootDeps): string {
+  const persisted = catalog.getMeta('library_root');
+  if (persisted !== null) return persisted;
+  if (deps.e2eDefault !== undefined && deps.e2eDefault !== null) return deps.e2eDefault;
+  return resolveDefaultLibraryRoot({
+    spliceDbPath: resolveSpliceDb(catalog, deps.appDataDir),
+    homeDir: deps.homeDir ?? homedir(),
+    documentsDir: deps.documentsDir,
+  });
+}
+
+/**
+ * The production `LibraryRootDeps` — the ONE place that names which Electron paths feed root
+ * resolution, so ipc.ts's four call sites and main.ts's protocol/drag getter can't drift apart.
+ * Reads `app` at call time (never at module load): both `getPath` values are only valid after
+ * `whenReady`, and every caller is downstream of it.
+ */
+export function libraryRootDeps(e2eDefault?: string | null): LibraryRootDeps {
+  return {
+    appDataDir: app.getPath('appData'),
+    documentsDir: app.getPath('documents'),
+    e2eDefault: e2eDefault ?? null,
+  };
 }
 
 // Splice DB discovery (spec §5 step 1) answered once here and reused by both `getState`'s
@@ -216,12 +249,16 @@ export function runWaveformsInBackground(
 export function registerIpc(deps: RegisterIpcDeps): void {
   const { catalog, userDb } = deps;
 
+  // Re-resolved per call, never cached: the root changes at runtime (pickLibraryRoot, an import
+  // stamping meta.library_root) and detection's answer can change with it — see
+  // currentLibraryRoot's own doc comment.
+  const liveRoot = (): string => currentLibraryRoot(catalog, libraryRootDeps(deps.defaultLibraryRoot));
+
   // One definition of "the deps runWaveformsInBackground needs," built fresh at each call site
-  // (libraryRoot is re-read live, not cached — see currentLibraryRoot's own doc comment) rather
-  // than duplicated inline at both the runImport handler and the startup-resume block below.
+  // rather than duplicated inline at both the runImport handler and the startup-resume block below.
   const waveformDeps = (): RunWaveformsInBackgroundDeps => ({
     catalog,
-    libraryRoot: currentLibraryRoot(catalog, deps.defaultLibraryRoot),
+    libraryRoot: liveRoot(),
     sendProgress: deps.sendProgress,
     forkWorker: () => utilityProcess.fork(WORKER_PATH),
   });
@@ -230,14 +267,18 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     // Reads the exact meta keys `runImport` writes (importer.ts) — 'imported' and
     // 'library_root' — so this can never drift from what a successful import actually stamped.
     imported: catalog.getMeta('imported') === '1',
-    libraryRoot: catalog.getMeta('library_root'),
+    // The EFFECTIVE root, not the raw meta key: pre-import there is no persisted value, and the
+    // first-run screen's whole job is to show the folder the import is actually about to use.
+    // Showing a bare null there (rendered as a hardcoded "~/Splice (default)") is what let the
+    // owner's first real import fail against a path the app was never going to read.
+    libraryRoot: liveRoot(),
     spliceDbFound: resolveSpliceDb(catalog, app.getPath('appData')) !== null,
   }));
 
   ipcMain.handle('ntwine:runImport', async () => {
     const importDeps: ImportDeps = {
       catalog,
-      libraryRoot: currentLibraryRoot(catalog, deps.defaultLibraryRoot),
+      libraryRoot: liveRoot(),
       spliceDbPath: resolveSpliceDb(catalog, app.getPath('appData')),
       snapshotDir: deps.snapshotDir,
       coversDir: deps.coversDir,
@@ -294,7 +335,7 @@ export function registerIpc(deps: RegisterIpcDeps): void {
   ipcMain.handle('ntwine:decodePreviewPcm', async (_event, sampleId: number) => {
     const result = await decodePreviewPcm(
       {
-        resolvePath: (id) => resolveSampleAbsPath(catalog, currentLibraryRoot(catalog, deps.defaultLibraryRoot), id),
+        resolvePath: (id) => resolveSampleAbsPath(catalog, liveRoot(), id),
         forkWorker: () => utilityProcess.fork(WORKER_PATH),
       },
       sampleId,

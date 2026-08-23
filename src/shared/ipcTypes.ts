@@ -92,7 +92,9 @@ export interface ImportProgress {
 // directly — the renderer never touches Electron IPC APIs or the filesystem/SQLite itself (spec
 // §4). Field order/signatures transcribed verbatim from the Task 11 brief's Interfaces block.
 export interface NtwineApi {
-  getState(): Promise<{ imported: boolean; libraryRoot: string | null; spliceDbFound: boolean }>;
+  // `libraryRoot` is the EFFECTIVE root (ipc.ts's currentLibraryRoot), never null and never the
+  // raw meta key: pre-import it's Splice's own reported folder, or the platform's stock location.
+  getState(): Promise<{ imported: boolean; libraryRoot: string; spliceDbFound: boolean }>;
   runImport(): Promise<void>; // resolves when catalog+stat+covers done; waveforms continue
   onImportProgress(cb: (p: ImportProgress) => void): () => void;
   pickLibraryRoot(): Promise<string | null>;
