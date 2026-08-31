@@ -12,9 +12,11 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from 'react';
-import styled, { css } from 'styled-components';
+import styled, { css, useTheme } from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
-import type { SampleRow as SampleRowData } from '../../shared/ipcTypes';
+import type { DragIcon, SampleRow as SampleRowData } from '../../shared/ipcTypes';
+import { sharedCoverCache } from '../coverCache';
+import { dragCardMeta, renderDragCard } from '../dragImage';
 import { armDragSource, clearDragSource } from '../dragSource';
 import { api } from '../stores/api';
 import { WaveformThumb } from './WaveformThumb';
@@ -412,6 +414,10 @@ export function SampleRow({
   onFollowLink,
 }: SampleRowProps) {
   const drawablePeaks = row.missing || row.peaksFailed ? null : peaks;
+  // Read here rather than inside `buildDragIcon` so the drag card is painted in the SAME palette
+  // the row is currently rendered in — the card is drawn on a bare canvas with no CSS cascade to
+  // inherit from, so every color it uses has to be handed over explicitly.
+  const theme = useTheme();
 
   // The shared wiring every clickable cell needs: follow the link, and don't let the click reach
   // `Row` (whose own onClick selects the row and starts a preview) or seed a native file drag.
@@ -469,6 +475,38 @@ export function SampleRow({
     };
   }, []);
 
+  // The drag card (dragImage.ts), painted from what this row is ALREADY showing: the same peaks
+  // `WaveformThumb` just drew, the same name/pack/bpm/key the cells hold, and the pack art
+  // SampleList warmed for the visible range. Everything is read synchronously — by the time an
+  // `<img>` could load or an IPC round-trip could answer, the OS drag session has already begun
+  // with whatever icon it was handed, so anything not ready right now is simply left off the card
+  // (a coverless pack gets the lettered tile, an undecoded sample gets the flat line).
+  //
+  // Never allowed to break the drag: `renderDragCard` touches `document`/canvas, and a null return
+  // just means main uses its own generated square instead (`resolveDragIcon`, drag.ts).
+  const buildDragIcon = (): DragIcon | null => {
+    try {
+      return renderDragCard(
+        {
+          title: row.nickname ?? row.filename,
+          subtitle: row.packName ?? '',
+          meta: dragCardMeta(row),
+          peaks: drawablePeaks,
+          cover: row.packId === null ? null : sharedCoverCache().get(row.packId),
+          colors: theme.color,
+        },
+        window.devicePixelRatio || 1,
+      );
+    } catch (e) {
+      // Degrading silently is the right BEHAVIOUR (main's plain square still drags the file), but
+      // silently is not the right way to find out: this exact catch hid a canvas-taint failure for
+      // a whole debugging session (2026-08-31) because a fallback icon looks identical to a card
+      // that was never attempted.
+      console.warn('[ntwine] drag card render failed; falling back to the plain icon', e);
+      return null;
+    }
+  };
+
   // spec §8 / brief Step 1: cancel the HTML5 drag unconditionally (the documented Electron
   // pattern — `preventDefault` stops the browser's own drag-and-drop so the NATIVE
   // `webContents.startDrag` can take over instead), then either start the real drag or, for a
@@ -492,12 +530,13 @@ export function SampleRow({
     const token = armDragSource(row.id);
     void (async () => {
       try {
-        await api.startDrag(row.id);
+        await api.startDrag(row.id, buildDragIcon());
       } finally {
         clearDragSource(token);
       }
     })();
   };
+
 
   // Row's own onClick (below) would otherwise select the row on bubble — favoriting must not
   // move the selection or touch playback (design spec §5.2).

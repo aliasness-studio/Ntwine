@@ -2,7 +2,7 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { ImportProgress, NtwineApi, QueryFilters } from './shared/ipcTypes';
+import type { DragIcon, ImportProgress, NtwineApi, QueryFilters } from './shared/ipcTypes';
 
 // THE typed IPC bridge (Task 11 — grown from the Task 2 spike's bare `startDrag`; Task 6 grows it
 // again, 12 -> 23 methods, design spec §4; the Splice-DB picker fallback, 23 -> 24). Every method but two is a plain
@@ -42,7 +42,8 @@ const api: NtwineApi = {
 
   decodePreviewPcm: (sampleId: number) => ipcRenderer.invoke('ntwine:decodePreviewPcm', sampleId),
 
-  startDrag: (sampleId: number) => ipcRenderer.invoke('ntwine:drag-start', sampleId),
+  startDrag: (sampleId: number, icon?: DragIcon | null) =>
+    ipcRenderer.invoke('ntwine:drag-start', sampleId, icon ?? null),
 
   sampleUrl: (sampleId: number) => `sample://s/${sampleId}`,
 
