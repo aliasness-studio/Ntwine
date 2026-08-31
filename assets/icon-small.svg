@@ -1,23 +1,27 @@
 <!--
-  The same mark, redrawn for the frames Windows renders tiny: 16, 24 and 32px (Explorer's list
-  view, the small taskbar, Alt-Tab). Not a scaled copy of icon.svg — a scaled copy is exactly what
-  fails here. At 16px, icon.svg's 13-unit stroke lands under one physical pixel and its 24-unit
-  gutter lands under two, so the two glyphs grey together into a smudge.
+  The mark at 16 and 24px — Explorer's list view, the small taskbar, Alt-Tab. Everything from 32px
+  up uses icon.svg, which was checked at that size and holds together; at 24 it muddies (its 13-unit
+  stroke lands on about one physical pixel and the A's counter closes to a speck), which is where
+  this drawing takes over.
 
-  Three changes, all in service of surviving that: strokes go 13 -> 22, the marks grow to fill more
-  of the tile (x 22..234, y 76..180), and the gutter widens to 23 so the A and the N stay visibly
-  separate. The A's crossbar also drops lower than in icon.svg (0.63 of the way down, not 0.58):
-  with a brush this fat the counter above it is the first thing to close up, so it is given the
-  room. Same colours, same two waveforms, same idea — just built with a bigger brush.
+  NO CROSSBAR, and that is the point of this file existing. The A's counter — the hole the crossbar
+  closes off — is the first thing to go as the frame shrinks, and a filled-in counter turns the A
+  into a solid purple wedge with a stray line through it. Dropping the crossbar leaves a clean
+  sawtooth period (ramp up, fall) that is still unmistakably this mark and stays sharp.
+
+  Otherwise: a much bigger brush (13 -> 24), shorter marks, and a wide gutter. The A's fall stops at
+  x 92 and the N's first rise starts at 146, so 30 units of clear space separate the glyphs; an
+  earlier draft left 7 and the two merged into one blob at 16px.
+
+  Every one of those calls came from rendering the actual frame magnified with nearest-neighbour
+  rather than from reasoning about it — the whole file is the residue of looking at pixels.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <rect width="256" height="256" rx="52" fill="#2A2E37" />
-  <g fill="none" stroke-width="22" stroke-linecap="butt" stroke-linejoin="miter">
-    <!-- Triangle wave "A": ramp up to the peak, ramp back down. -->
-    <path d="M22 180 L70 76 L118 180" stroke="#8B5CF6" />
-    <!-- ...and its baseline, which doubles as the A's crossbar. -->
-    <path d="M42 142 L98 142" stroke="#8B5CF6" />
+  <g fill="none" stroke-width="24" stroke-linecap="butt" stroke-linejoin="miter">
+    <!-- Sawtooth "A": one period — ramp up to the peak, then fall straight back to the baseline. -->
+    <path d="M26 176 L92 80 L92 176" stroke="#8B5CF6" />
     <!-- Square wave "N": rise, run, fall, run, rise. -->
-    <path d="M141 180 L141 76 L187.5 76 L187.5 180 L234 180 L234 76" stroke="#F7B32B" />
+    <path d="M146 176 L146 80 L190 80 L190 176 L234 176 L234 80" stroke="#F7B32B" />
   </g>
 </svg>

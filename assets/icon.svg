@@ -1,29 +1,30 @@
 <!--
-  AliasNess mark: a triangle wave that reads as A, a square wave that reads as N. Ntwine ships
+  AliasNess mark: a sawtooth wave that reads as A, a square wave that reads as N. Ntwine ships
   under the studio's mark as its intro product.
 
   THE SOURCE OF TRUTH for every app icon. `yarn icons` (scripts/build-icons.mjs) rasterizes this
-  file to icon.ico's 48px-and-up frames and to icon.png; the committed binaries are generated, this
-  is the file to edit. Sizes 32 and below come from icon-small.svg instead — two thin glyphs side
-  by side turn to mush at 16px, so the small frames get their own, blunter drawing.
+  file to icon.ico's 32px-and-up frames and to icon.png; the committed binaries are generated, this
+  is the file to edit. The 16 and 24px frames come from icon-small.svg instead — this drawing's
+  strokes fall under a physical pixel down there and the glyphs mush together.
 
   Geometry is deliberately plain integers on a 256 grid: the marks span x 30..226 and y 72..184,
-  split into two 86-wide glyphs with a 24 gutter. Anyone re-proportioning this can do it by reading
-  the numbers rather than by reverse-engineering a curve.
+  split into two glyphs with a 24 gutter. Anyone re-proportioning this can do it by reading the
+  numbers rather than by reverse-engineering a curve.
 
-  The A is a TRIANGLE wave, not the sawtooth of the original mockup. A sawtooth's vertical fall
-  sits flush against the next ramp, so two cycles render as a capital M — measured, not guessed: a
-  side-by-side render of four sawtooth interpretations all read M. A triangle wave's rise-and-fall
-  IS the letter's two legs, and the crossbar is just the waveform's own baseline, so the glyph
-  reads as both a wave and an A at once.
+  The A is exactly ONE sawtooth period, and that is the whole trick: a sawtooth's slow ramp and
+  instant vertical fall ARE the two legs of an A, and the wave's baseline is the crossbar. TWO
+  periods does not work — the fall lands flush against the next ramp and the glyph reads as a
+  capital M (checked by rendering four sawtooth interpretations side by side; all four read M).
+  A symmetrical triangle wave reads as a plain font A with no wave left in it. One period keeps
+  both readings at once, and its vertical fall rhymes with the square wave's verticals.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <rect width="256" height="256" rx="56" fill="#2A2E37" />
   <g fill="none" stroke-width="13" stroke-linecap="butt" stroke-linejoin="miter">
-    <!-- Triangle wave "A": ramp up to the peak, ramp back down. -->
-    <path d="M30 184 L73 72 L116 184" stroke="#8B5CF6" />
-    <!-- ...and its baseline, which doubles as the A's crossbar. -->
-    <path d="M52 137 L94 137" stroke="#8B5CF6" />
+    <!-- Sawtooth "A": one period — ramp up to the peak, then fall straight back to the baseline. -->
+    <path d="M30 184 L110 72 L110 184" stroke="#8B5CF6" />
+    <!-- ...and the wave's baseline, which doubles as the A's crossbar. -->
+    <path d="M66 137 L110 137" stroke="#8B5CF6" />
     <!-- Square wave "N": rise, run, fall, run, rise. -->
     <path d="M140 184 L140 72 L183 72 L183 184 L226 184 L226 72" stroke="#F7B32B" />
   </g>

@@ -20,13 +20,15 @@ import { packIco, readIcoSizes } from './ico.mjs';
 const ASSETS = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 
 /**
- * Which drawing serves which frame. 48 is the crossover: at 48px and up the detailed mark holds
- * together, below it the blunter one is the only one that stays legible (see icon-small.svg).
+ * Which drawing serves which frame. 32 is the crossover, established by rendering both drawings at
+ * both sizes magnified: at 32px the detailed mark is thin but crisp and its A still has a counter,
+ * at 24px that counter closes to a speck and the strokes wash out. Below the crossover the blunter,
+ * crossbar-free drawing is the one that stays legible (see icon-small.svg).
  */
 const FRAMES = [
   { size: 16, source: 'icon-small.svg' },
   { size: 24, source: 'icon-small.svg' },
-  { size: 32, source: 'icon-small.svg' },
+  { size: 32, source: 'icon.svg' },
   { size: 48, source: 'icon.svg' },
   { size: 64, source: 'icon.svg' },
   { size: 128, source: 'icon.svg' },
