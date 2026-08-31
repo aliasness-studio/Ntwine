@@ -4,12 +4,10 @@
   stroke lands on about one physical pixel and the A's counter closes to a speck), which is where
   this drawing takes over.
 
-  NO CROSSBAR, and that is the point of this file existing. The A's counter — the hole the crossbar
-  closes off — is the first thing to go as the frame shrinks, and a filled-in counter turns the A
-  into a solid purple wedge with a stray line through it. Dropping the crossbar leaves a clean
-  sawtooth period (ramp up, fall) that is still unmistakably this mark and stays sharp.
+  This file exists purely for WEIGHT and SPACING now — icon.svg has no crossbar either, so the two
+  drawings are the same design, and the only differences are the ones the pixel grid forces.
 
-  Otherwise: a much bigger brush (13 -> 24), shorter marks, and a wide gutter. The A's fall stops at
+  A much bigger brush (13 -> 24), shorter marks, and a wide gutter. The A's fall stops at
   x 92 and the N's first rise starts at 146, so 30 units of clear space separate the glyphs; an
   earlier draft left 7 and the two merged into one blob at 16px.
 
