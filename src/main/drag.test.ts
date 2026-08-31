@@ -21,15 +21,18 @@ vi.mock('electron', () => ({
 }));
 
 /** A NativeImage-alike that reports itself non-empty, i.e. a successful decode. */
-function goodImage() {
-  return { tag: 'decoded', isEmpty: () => false, getSize: () => ({ width: 336, height: 90 }) };
+function goodImage(scaleFactor?: number) {
+  return { tag: 'decoded', scaleFactor, isEmpty: () => false, getSize: () => ({ width: 192, height: 96 }) };
 }
 
 const PNG_DATA_URL = 'data:image/png;base64,aGVsbG8=';
 
+/** The wire shape, at an arbitrary valid scale factor, for the cases that don't care about it. */
+const icon2x = (dataUrl: string) => ({ dataUrl, scaleFactor: 2 });
+
 beforeEach(() => {
   vi.clearAllMocks();
-  decoded.mockImplementation(() => goodImage());
+  decoded.mockImplementation((_buf: Buffer, opts: { scaleFactor?: number }) => goodImage(opts?.scaleFactor));
 });
 
 describe('resolveDragIcon', () => {
@@ -41,32 +44,30 @@ describe('resolveDragIcon', () => {
   });
 
   it('decodes the card straight from its bytes', () => {
-    const icon = resolveDragIcon(PNG_DATA_URL, makeDragIcon());
+    const icon = resolveDragIcon(icon2x(PNG_DATA_URL), makeDragIcon());
 
     expect(icon).toMatchObject({ tag: 'decoded' });
     const [buffer] = vi.mocked(nativeImage.createFromBuffer).mock.calls[0];
     expect(buffer.toString('utf8')).toBe('hello');
   });
 
-  // The bug this pins was visible only in a real OS drag (Windows, 2026-08-31): a card drawn at
-  // devicePixelRatio 1.5 and tagged `scaleFactor: 1.5` is 336x90 real pixels that REPORTS itself
-  // as 224x60. Windows sizes the drag window from the reported size and blits the raw pixels into
-  // it, so a third of the card — its padding, its rounded corners and the whole meta line — landed
-  // outside the window. Tagging no scale factor at all keeps pixel size and logical size equal,
-  // which is the only relationship an OS drag image can't get wrong.
-  it('tags the image with no scale factor, so its pixel size IS its logical size', () => {
-    resolveDragIcon(PNG_DATA_URL, makeDragIcon());
+  // What the OS draws is `bitmap_pixels x display_scale / tagged_scale`. The renderer sends its own
+  // devicePixelRatio precisely so those cancel and the card lands at its bitmap size — which is the
+  // premise the card's 192px width is chosen under, given Windows clips a drag image near 210px
+  // (dragImage.ts's DRAG_CARD). Dropping the factor on the floor here would silently draw the card
+  // at 1.5x on this machine and put it straight back over the clip.
+  it('forwards the renderer scale factor to the decoder rather than dropping it', () => {
+    resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 1.5 }, makeDragIcon());
 
-    expect(nativeImage.createFromBuffer).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(nativeImage.createFromBuffer).mock.calls[0]).toHaveLength(1);
+    expect(nativeImage.createFromBuffer).toHaveBeenCalledWith(expect.any(Buffer), { scaleFactor: 1.5 });
   });
 
   it('falls back rather than decoding anything that is not a base64 png data url', () => {
     const fallback = makeDragIcon();
 
-    expect(resolveDragIcon('data:text/html;base64,aGk=', fallback)).toBe(fallback);
-    expect(resolveDragIcon('https://example.com/x.png', fallback)).toBe(fallback);
-    expect(resolveDragIcon('', fallback)).toBe(fallback);
+    expect(resolveDragIcon(icon2x('data:text/html;base64,aGk='), fallback)).toBe(fallback);
+    expect(resolveDragIcon(icon2x('https://example.com/x.png'), fallback)).toBe(fallback);
+    expect(resolveDragIcon(icon2x(''), fallback)).toBe(fallback);
     expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
   });
 
@@ -74,7 +75,7 @@ describe('resolveDragIcon', () => {
     const fallback = makeDragIcon();
     const huge = `data:image/png;base64,${'A'.repeat(DRAG_ICON_MAX_BYTES + 1)}`;
 
-    expect(resolveDragIcon(huge, fallback)).toBe(fallback);
+    expect(resolveDragIcon(icon2x(huge), fallback)).toBe(fallback);
     expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
   });
 
@@ -82,7 +83,7 @@ describe('resolveDragIcon', () => {
     const fallback = makeDragIcon();
     decoded.mockReturnValue({ tag: 'decoded', isEmpty: () => true });
 
-    expect(resolveDragIcon(PNG_DATA_URL, fallback)).toBe(fallback);
+    expect(resolveDragIcon(icon2x(PNG_DATA_URL), fallback)).toBe(fallback);
   });
 
   it('falls back when the decoder throws instead of letting the drag fail', () => {
@@ -91,7 +92,15 @@ describe('resolveDragIcon', () => {
       throw new Error('corrupt png');
     });
 
-    expect(resolveDragIcon(PNG_DATA_URL, fallback)).toBe(fallback);
+    expect(resolveDragIcon(icon2x(PNG_DATA_URL), fallback)).toBe(fallback);
+  });
+
+  it('rejects a non-positive or absurd scale factor rather than resizing the drag image by it', () => {
+    const fallback = makeDragIcon();
+
+    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 0 }, fallback)).toBe(fallback);
+    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: -2 }, fallback)).toBe(fallback);
+    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 99 }, fallback)).toBe(fallback);
   });
 });
 
@@ -108,7 +117,7 @@ describe('registerDragHandler', () => {
   it('hands the OS drag the card the renderer drew, not the generated square', async () => {
     registerDragHandler(() => __filename);
 
-    const { startDrag, done } = invokeHandler([1, PNG_DATA_URL]);
+    const { startDrag, done } = invokeHandler([1, icon2x(PNG_DATA_URL)]);
     await done;
 
     expect(startDrag).toHaveBeenCalledWith({
@@ -133,7 +142,7 @@ describe('registerDragHandler', () => {
     const emit = vi.fn();
     registerDragHandler(() => __filename, emit);
 
-    await invokeHandler([1, PNG_DATA_URL]).done;
+    await invokeHandler([1, icon2x(PNG_DATA_URL)]).done;
     await invokeHandler([1]).done;
 
     expect(emit.mock.calls.map((c) => (c[1] as { icon: string }).icon)).toEqual(['card', 'fallback']);
@@ -147,15 +156,15 @@ describe('registerDragHandler', () => {
     const emit = vi.fn();
     registerDragHandler(() => __filename, emit);
 
-    await invokeHandler([1, PNG_DATA_URL]).done;
+    await invokeHandler([1, icon2x(PNG_DATA_URL)]).done;
 
-    expect(emit.mock.calls[0][1]).toMatchObject({ iconSize: { width: 336, height: 90 } });
+    expect(emit.mock.calls[0][1]).toMatchObject({ iconSize: { width: 192, height: 96 } });
   });
 
   it('refuses a sample it cannot resolve without ever decoding the card', async () => {
     registerDragHandler(() => null);
 
-    const { startDrag, done } = invokeHandler([1, PNG_DATA_URL]);
+    const { startDrag, done } = invokeHandler([1, icon2x(PNG_DATA_URL)]);
     await done;
 
     expect(startDrag).not.toHaveBeenCalled();

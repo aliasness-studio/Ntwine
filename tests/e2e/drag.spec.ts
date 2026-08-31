@@ -41,17 +41,15 @@ test('drag runs a real row through IPC to main resolution, and the missing row r
   // every link in it is invisible from the DOM.
   expect(first.icon).toBe('card');
 
-  // The card's LOGICAL size must equal the pixel size the renderer painted. When it didn't — the
-  // card was drawn at devicePixelRatio and tagged with that factor — Windows sized the drag window
-  // from the smaller logical size and blitted the raw pixels into it, so the padding, the rounded
-  // corners and the whole meta line fell off the edges. Nothing in the DOM or in `icon` above
-  // shows that; only these two numbers disagreeing do. Found by dragging into a real DAW
-  // (2026-08-31), because no test can start an OS drag session.
-  const drawnAt = await page.evaluate(() => window.devicePixelRatio);
-  expect(first.iconSize).toEqual({
-    width: Math.round(DRAG_CARD.width * drawnAt),
-    height: Math.round(DRAG_CARD.height * drawnAt),
-  });
+  // What the OS actually draws is `logical_size x display_scale`, and the card is sized on the
+  // promise that this equals its bitmap — the premise DRAG_CARD's 192px width is chosen under,
+  // given Windows clips a drag image near 210px. Asserting the product (rather than the logical
+  // size directly) is what keeps this true on a display of any ratio. Two earlier attempts at this
+  // feature shipped a card the OS cut the edges off, and nothing in the DOM or in `icon` above
+  // could see it — only these numbers can.
+  const displayScale = await page.evaluate(() => window.devicePixelRatio);
+  expect(first.iconSize.width * displayScale).toBeCloseTo(DRAG_CARD.width, 0);
+  expect(first.iconSize.height * displayScale).toBeCloseTo(DRAG_CARD.height, 0);
 
   // --- the missing row is never actually draggable (draggable={!row.missing}); a synthetically
   // dispatched dragstart still invokes the listener (the only way to mechanically drive an

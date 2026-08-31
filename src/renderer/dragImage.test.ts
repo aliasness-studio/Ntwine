@@ -199,29 +199,20 @@ describe('drawDragCard', () => {
     expect(textDrawn(calls)).toEqual(expect.arrayContaining(['kick.wav', 'Astral Drums', '120 · A']));
   });
 
-  // The meta line shares the card's second line with the pack name (right-aligned against it), so
-  // that the waveform below gets the card's FULL content width. That only works if the pack name
-  // yields the space: a 52px meta budget squeezed beside a 96px waveform is what truncated
-  // "128 · A min" down to "128 · A m…" in the first cut of this card.
-  it('gives the meta line its full width and shrinks the pack name to make room', () => {
+  // Pack name and meta each own a full-width line. On the earlier 60px-tall card they shared one,
+  // right-aligned against each other, and a 52px meta budget truncated a perfectly ordinary
+  // "128 · A min" to "128 · A m…". The tall card has the room not to ration it.
+  it('gives the pack name and the meta line a full-width line each', () => {
     const { ctx, calls } = recordingCtx();
 
-    drawDragCard(
-      ctx,
-      input({ subtitle: 'A Pack With A Very Long Name Indeed', meta: '128 · A min · 2.0s' }),
-    );
+    drawDragCard(ctx, input({ subtitle: 'Astral Drums', meta: '128 · A min · 2.0s' }));
 
     const written = textDrawn(calls);
     expect(written).toContain('128 · A min · 2.0s');
-    // The pack name is the only thing on this card long enough to be cut, so a truncated string
-    // that is a prefix of it identifies it without depending on how many characters survived.
-    const packLine = written.find(
-      (t) => t.endsWith('…') && 'A Pack With A Very Long Name Indeed'.startsWith(t.slice(0, -1)),
-    );
-    expect(packLine).toBeDefined();
+    expect(written).toContain('Astral Drums');
   });
 
-  it('spends the whole content width on the waveform, since nothing shares its line', () => {
+  it('spans the waveform across the whole card, past the cover column', () => {
     const { ctx, calls } = recordingCtx();
 
     drawDragCard(ctx, input({ peaks: peaksOf(2) }));
@@ -230,11 +221,21 @@ describe('drawDragCard', () => {
     const [firstX] = bars[0].args as number[];
     const [lastX, , lastW] = bars[1].args as number[];
     const rightEdge = DRAG_CARD.width - DRAG_CARD.pad;
-    expect(firstX).toBe(DRAG_CARD.pad + DRAG_CARD.coverSize + DRAG_CARD.gap);
+    // Starts at the card's own padding, NOT at the text column — the waveform is the one element
+    // that ignores the cover and uses the full width, which is where its detail comes from.
+    expect(firstX).toBe(DRAG_CARD.pad);
     // Reaches the right edge without crossing it. Not exact: every bar is drawn 0.5px narrower
     // than its pitch, which is the gap that keeps adjacent bars legible as bars.
     expect(lastX + lastW).toBeGreaterThan(rightEdge - 1);
     expect(lastX + lastW).toBeLessThanOrEqual(rightEdge);
+  });
+
+  // A guard on a number that cost a diagnostic build to establish. Windows clips the drag image
+  // near 210 device pixels wide, and the card is drawn 1:1 at these dimensions — so widening
+  // DRAG_CARD is not a cosmetic change, it silently cuts the cover art off one side of a real drag
+  // and the meta off the other, in a place no other test can see. Re-measure before raising this.
+  it('stays clear of the width at which Windows clips a drag image', () => {
+    expect(DRAG_CARD.width).toBeLessThanOrEqual(200);
   });
 
   it('truncates a title too long for the card instead of letting it overrun the edge', () => {
