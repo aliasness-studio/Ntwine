@@ -1,0 +1,23 @@
+<!--
+  The same mark, redrawn for the frames Windows renders tiny: 16, 24 and 32px (Explorer's list
+  view, the small taskbar, Alt-Tab). Not a scaled copy of icon.svg — a scaled copy is exactly what
+  fails here. At 16px, icon.svg's 13-unit stroke lands under one physical pixel and its 24-unit
+  gutter lands under two, so the two glyphs grey together into a smudge.
+
+  Three changes, all in service of surviving that: strokes go 13 -> 22, the marks grow to fill more
+  of the tile (x 22..234, y 76..180), and the gutter widens to 23 so the A and the N stay visibly
+  separate. The A's crossbar also drops lower than in icon.svg (0.63 of the way down, not 0.58):
+  with a brush this fat the counter above it is the first thing to close up, so it is given the
+  room. Same colours, same two waveforms, same idea — just built with a bigger brush.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="52" fill="#2A2E37" />
+  <g fill="none" stroke-width="22" stroke-linecap="butt" stroke-linejoin="miter">
+    <!-- Triangle wave "A": ramp up to the peak, ramp back down. -->
+    <path d="M22 180 L70 76 L118 180" stroke="#8B5CF6" />
+    <!-- ...and its baseline, which doubles as the A's crossbar. -->
+    <path d="M42 142 L98 142" stroke="#8B5CF6" />
+    <!-- Square wave "N": rise, run, fall, run, rise. -->
+    <path d="M141 180 L141 76 L187.5 76 L187.5 180 L234 180 L234 76" stroke="#F7B32B" />
+  </g>
+</svg>

@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import globals from 'globals';
 
 export default tseslint.config(
   // playwright-report/ and test-results/ are gitignored (Playwright's own HTML report + trace
@@ -21,4 +22,8 @@ export default tseslint.config(
   // other fixtures (Playwright statically parses the first parameter's destructuring to build the
   // dependency graph), so it's not a stray no-op destructure `no-empty-pattern` is meant to catch.
   { files: ['tests/e2e/harness/fixtures.ts'], rules: { 'no-empty-pattern': 'off' } },
+  // scripts/ is developer tooling, not app code: plain ESM JavaScript that runs directly under
+  // `electron scripts/…` with no build step, so it needs Node's globals declared (`no-undef` is a
+  // no-op in .ts files, where the compiler already owns that question, but it is live here).
+  { files: ['scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
 );
