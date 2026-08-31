@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { SampleRow } from '../shared/ipcTypes';
-import { DRAG_CARD, dragCardMeta, drawDragCard, fitText, type DragCardCtx } from './dragImage';
+import { DRAG_CARD_STYLES } from './dragCardStyle';
+import {
+  DRAG_CARD,
+  DRAG_CARD_LAYOUTS,
+  dragCardMeta,
+  drawDragCard,
+  fitText,
+  type DragCardCtx,
+} from './dragImage';
 
 function row(over: Partial<SampleRow> = {}): SampleRow {
   return {
@@ -230,12 +238,82 @@ describe('drawDragCard', () => {
     expect(lastX + lastW).toBeLessThanOrEqual(rightEdge);
   });
 
+});
+
+describe('the drag card styles', () => {
   // A guard on a number that cost a diagnostic build to establish. Windows clips the drag image
-  // near 210 device pixels wide, and the card is drawn 1:1 at these dimensions — so widening
-  // DRAG_CARD is not a cosmetic change, it silently cuts the cover art off one side of a real drag
-  // and the meta off the other, in a place no other test can see. Re-measure before raising this.
-  it('stays clear of the width at which Windows clips a drag image', () => {
-    expect(DRAG_CARD.width).toBeLessThanOrEqual(200);
+  // near 210 device pixels wide, and cards are drawn 1:1 at their declared dimensions — so
+  // widening one is not a cosmetic change, it silently cuts the cover art off one side of a real
+  // drag and the meta off the other, in a place no other test can see. Every style is checked, not
+  // just the default, since a new style is exactly where this would be forgotten. Re-measure
+  // before raising it.
+  it('every style stays clear of the width at which Windows clips a drag image', () => {
+    for (const style of DRAG_CARD_STYLES) {
+      expect(DRAG_CARD_LAYOUTS[style].width).toBeLessThanOrEqual(200);
+    }
+  });
+
+  it('offers a layout for every style the preference can hold', () => {
+    for (const style of DRAG_CARD_STYLES) {
+      expect(typeof DRAG_CARD_LAYOUTS[style]?.draw).toBe('function');
+    }
+  });
+
+  it('draws the waveform edge to edge in every style, whatever else the style shows', () => {
+    for (const style of DRAG_CARD_STYLES) {
+      const layout = DRAG_CARD_LAYOUTS[style];
+      const { ctx, calls } = recordingCtx();
+
+      layout.draw(ctx, input({ peaks: peaksOf(2) }));
+
+      const bars = calls.filter((c) => c.method === 'fillRect' && c.fillStyle === COLORS.accent);
+      const [firstX] = bars[0].args as number[];
+      const [lastX, , lastW] = bars[bars.length - 1].args as number[];
+      expect(firstX, style).toBe(DRAG_CARD.pad);
+      expect(lastX + lastW, style).toBeGreaterThan(layout.width - DRAG_CARD.pad - 1);
+    }
+  });
+
+  // The point of the bare style: no name, no pack, no art, no numbers — just the shape of the
+  // sound. A cover is passed in anyway to prove the style IGNORES it rather than merely coping
+  // with its absence.
+  it('the waveform style draws nothing but the waveform', () => {
+    const cover = { tag: 'cover-image' } as unknown as CanvasImageSource;
+    const { ctx, calls } = recordingCtx();
+
+    DRAG_CARD_LAYOUTS.waveform.draw(
+      ctx,
+      input({ cover, peaks: peaksOf(8), meta: '128 · A min', subtitle: 'Astral Drums' }),
+    );
+
+    expect(textDrawn(calls)).toEqual([]);
+    expect(calls.some((c) => c.method === 'drawImage')).toBe(false);
+  });
+
+  it('the waveform-text style adds the sample name, and still no art', () => {
+    const cover = { tag: 'cover-image' } as unknown as CanvasImageSource;
+    const { ctx, calls } = recordingCtx();
+
+    DRAG_CARD_LAYOUTS['waveform-text'].draw(
+      ctx,
+      input({ cover, title: 'kick.wav', peaks: peaksOf(8), subtitle: 'Astral Drums' }),
+    );
+
+    expect(textDrawn(calls)).toEqual(['kick.wav']);
+    expect(calls.some((c) => c.method === 'drawImage')).toBe(false);
+  });
+
+  it('the card style is the one that shows everything', () => {
+    const cover = { tag: 'cover-image' } as unknown as CanvasImageSource;
+    const { ctx, calls } = recordingCtx();
+
+    DRAG_CARD_LAYOUTS.card.draw(
+      ctx,
+      input({ cover, title: 'kick.wav', subtitle: 'Astral Drums', meta: '128 · A min' }),
+    );
+
+    expect(textDrawn(calls)).toEqual(expect.arrayContaining(['kick.wav', 'Astral Drums', '128 · A min']));
+    expect(calls.some((c) => c.method === 'drawImage')).toBe(true);
   });
 
   it('truncates a title too long for the card instead of letting it overrun the edge', () => {
