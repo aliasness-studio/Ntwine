@@ -16,6 +16,7 @@
 // three-line wrapper that makes the canvas and reads the pixels back out.
 import type { SampleRow } from '../shared/ipcTypes';
 import { formatDuration, formatKey } from '../shared/keyDisplay';
+import type { DragCardStyle } from './dragCardStyle';
 import { theme } from './components/theme';
 
 /**
@@ -57,7 +58,6 @@ const CONTENT_RIGHT = DRAG_CARD.width - DRAG_CARD.pad;
 const CONTENT_WIDTH = CONTENT_RIGHT - CONTENT_X;
 /** The waveform is the one element that ignores the cover column and spans the whole card. */
 const WAVE_X = DRAG_CARD.pad;
-const WAVE_WIDTH = CONTENT_RIGHT - WAVE_X;
 
 const TITLE_FONT = `600 12px ${theme.font.family}`;
 const SUBTITLE_FONT = `10px ${theme.font.family}`;
@@ -163,11 +163,11 @@ export interface DragCardInput {
  * Ntwine's own background. The outline is also the thing that makes clipping visible at a glance:
  * if an edge is missing, you can see it is missing.
  */
-function drawBackground(ctx: DragCardCtx, colors: DragCardColors): void {
+function drawBackground(ctx: DragCardCtx, colors: DragCardColors, width: number, height: number): void {
   ctx.beginPath();
   // Inset by half the stroke width so the 1px border lands ON the card edge rather than
   // straddling it and coming out blurry.
-  ctx.roundRect(0.5, 0.5, DRAG_CARD.width - 1, DRAG_CARD.height - 1, DRAG_CARD.radius);
+  ctx.roundRect(0.5, 0.5, width - 1, height - 1, DRAG_CARD.radius);
   ctx.fillStyle = colors.bg;
   ctx.fill();
   ctx.strokeStyle = colors.borderStrong;
@@ -215,8 +215,14 @@ function drawCover(ctx: DragCardCtx, input: DragCardInput): void {
  * `WaveformThumb` uses, so the silhouette matches the row exactly. `null` peaks (never decoded, or
  * a `peaksFailed` row the caller refused to hand over) get the flat centre line rather than a gap.
  */
-function drawWaveform(ctx: DragCardCtx, peaks: ArrayBuffer | null, colors: DragCardColors): void {
-  const { waveTop, waveHeight } = DRAG_CARD;
+function drawWaveform(
+  ctx: DragCardCtx,
+  peaks: ArrayBuffer | null,
+  colors: DragCardColors,
+  band: { top: number; height: number; width: number },
+): void {
+  const { top: waveTop, height: waveHeight } = band;
+  const right = band.width - DRAG_CARD.pad;
   const centre = waveTop + waveHeight / 2;
 
   if (peaks === null) {
@@ -224,7 +230,7 @@ function drawWaveform(ctx: DragCardCtx, peaks: ArrayBuffer | null, colors: DragC
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(WAVE_X, centre);
-    ctx.lineTo(CONTENT_RIGHT, centre);
+    ctx.lineTo(right, centre);
     ctx.stroke();
     return;
   }
@@ -233,7 +239,7 @@ function drawWaveform(ctx: DragCardCtx, peaks: ArrayBuffer | null, colors: DragC
   const buckets = Math.floor(view.length / 2);
   if (buckets <= 0) return;
 
-  const barPitch = WAVE_WIDTH / buckets;
+  const barPitch = (right - WAVE_X) / buckets;
   ctx.fillStyle = colors.accent;
   for (let i = 0; i < buckets; i++) {
     const min = view[i * 2];
@@ -282,13 +288,84 @@ function drawText(ctx: DragCardCtx, input: DragCardInput): void {
   }
 }
 
-/** Paints the whole card. Draw order is back-to-front: panel, cover, waveform, then text. */
+/** The default style: everything the row knows. Back-to-front: panel, cover, waveform, then text. */
 export function drawDragCard(ctx: DragCardCtx, input: DragCardInput): void {
-  drawBackground(ctx, input.colors);
+  drawBackground(ctx, input.colors, DRAG_CARD.width, DRAG_CARD.height);
   drawCover(ctx, input);
-  drawWaveform(ctx, input.peaks, input.colors);
+  drawWaveform(ctx, input.peaks, input.colors, {
+    top: DRAG_CARD.waveTop,
+    height: DRAG_CARD.waveHeight,
+    width: DRAG_CARD.width,
+  });
   drawText(ctx, input);
 }
+
+/**
+ * Geometry for the two waveform-led styles. Both keep `DRAG_CARD`'s width — that number is a hard
+ * OS constraint, not a per-style choice (see `DRAG_CARD`) — and differ only in how much height
+ * they need, which the OS does not restrict.
+ */
+export const WAVE_CARD = { height: 48, waveTop: 6, waveHeight: 36 } as const;
+export const WAVE_TEXT_CARD = { height: 72, waveTop: 6, waveHeight: 38, titleBaseline: 63 } as const;
+
+/** Just the shape of the sound: no name, no pack, no art, no numbers. */
+export function drawWaveformCard(ctx: DragCardCtx, input: DragCardInput): void {
+  drawBackground(ctx, input.colors, DRAG_CARD.width, WAVE_CARD.height);
+  drawWaveform(ctx, input.peaks, input.colors, {
+    top: WAVE_CARD.waveTop,
+    height: WAVE_CARD.waveHeight,
+    width: DRAG_CARD.width,
+  });
+}
+
+/** The waveform, with the sample's name under it — enough to tell two drags apart. */
+export function drawWaveformTextCard(ctx: DragCardCtx, input: DragCardInput): void {
+  drawBackground(ctx, input.colors, DRAG_CARD.width, WAVE_TEXT_CARD.height);
+  drawWaveform(ctx, input.peaks, input.colors, {
+    top: WAVE_TEXT_CARD.waveTop,
+    height: WAVE_TEXT_CARD.waveHeight,
+    width: DRAG_CARD.width,
+  });
+
+  // The title spans the FULL width here, not the card style's text column: with no cover beside it
+  // there is no column to respect, and the extra 44px is the difference between a readable
+  // filename and a truncated one.
+  const budget = DRAG_CARD.width - DRAG_CARD.pad * 2;
+  ctx.font = TITLE_FONT;
+  ctx.fillStyle = input.colors.text;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(
+    fitText(input.title, budget, (t) => {
+      ctx.font = TITLE_FONT;
+      return ctx.measureText(t).width;
+    }),
+    DRAG_CARD.pad,
+    WAVE_TEXT_CARD.titleBaseline,
+  );
+}
+
+export interface DragCardLayout {
+  width: number;
+  height: number;
+  draw(ctx: DragCardCtx, input: DragCardInput): void;
+}
+
+/**
+ * Every style the drag image can take, keyed by the stored preference (dragCardStyle.ts). A
+ * registry rather than a switch because "pick how your library looks" is the product, not a
+ * feature: adding a style should be one entry here plus one entry in `DRAG_CARD_STYLES`, with
+ * nothing in SampleRow, the IPC bridge or main needing to know it happened.
+ */
+export const DRAG_CARD_LAYOUTS: Record<DragCardStyle, DragCardLayout> = {
+  card: { width: DRAG_CARD.width, height: DRAG_CARD.height, draw: drawDragCard },
+  waveform: { width: DRAG_CARD.width, height: WAVE_CARD.height, draw: drawWaveformCard },
+  'waveform-text': {
+    width: DRAG_CARD.width,
+    height: WAVE_TEXT_CARD.height,
+    draw: drawWaveformTextCard,
+  },
+};
 
 /** What `startDrag` carries to main: the PNG bytes, and the factor they must be tagged with. */
 export interface DragImage {
@@ -297,7 +374,7 @@ export interface DragImage {
 }
 
 /**
- * Renders the card 1:1 into a `DRAG_CARD.width x DRAG_CARD.height` bitmap and pairs it with
+ * Renders `style`'s layout 1:1 into a bitmap of that layout's own size, and pairs it with
  * `scaleFactor` (the display's `devicePixelRatio`), which main hands to `createFromBuffer`.
  *
  * That pairing is what pins the card's on-screen size, and the reasoning runs backwards from a
@@ -313,12 +390,17 @@ export interface DragImage {
  *
  * `null` when the canvas has no 2D context (`startDrag` then falls back to main's generated icon).
  */
-export function renderDragCard(input: DragCardInput, scaleFactor: number): DragImage | null {
+export function renderDragCard(
+  input: DragCardInput,
+  scaleFactor: number,
+  style: DragCardStyle,
+): DragImage | null {
+  const layout = DRAG_CARD_LAYOUTS[style];
   const canvas = document.createElement('canvas');
-  canvas.width = DRAG_CARD.width;
-  canvas.height = DRAG_CARD.height;
+  canvas.width = layout.width;
+  canvas.height = layout.height;
   const ctx = canvas.getContext('2d');
   if (ctx === null) return null;
-  drawDragCard(ctx, input);
+  layout.draw(ctx, input);
   return { dataUrl: canvas.toDataURL('image/png'), scaleFactor };
 }

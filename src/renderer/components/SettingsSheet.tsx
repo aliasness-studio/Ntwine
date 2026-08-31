@@ -5,6 +5,12 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
+import {
+  DRAG_CARD_STYLES,
+  readDragCardStyle,
+  writeDragCardStyle,
+  type DragCardStyle,
+} from '../dragCardStyle';
 import { api } from '../stores/api';
 import { useStores } from './StoreContext';
 
@@ -88,6 +94,43 @@ const StatusLine = styled.div`
   color: ${(p) => p.theme.color.textMuted};
 `;
 
+// A segmented picker rather than a dropdown: three short options that are worth seeing all at
+// once, and the choice is visual, so a list you have to open hides two thirds of it. Same shape
+// language as `Button` above (borrowed padding/radius/border) with the accent carrying "this is
+// the one you're on", the way `FilterPanel`'s active tag chip already reads app-wide.
+const ChoiceRow = styled.div`
+  display: flex;
+  gap: 6px;
+`;
+
+const ChoiceButton = styled.button<{ $active: boolean }>`
+  padding: 6px 10px;
+  border-radius: ${(p) => p.theme.radius.sm};
+  border: 1px solid ${(p) => (p.$active ? p.theme.color.accent : p.theme.color.border)};
+  background: ${(p) => (p.$active ? p.theme.color.bgRowSelected : p.theme.color.bgRail)};
+  color: ${(p) => (p.$active ? p.theme.color.accentStrong : p.theme.color.textMuted)};
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+
+  &:hover {
+    color: ${(p) => p.theme.color.text};
+  }
+`;
+
+const FieldHint = styled.div`
+  font-size: 11px;
+  color: ${(p) => p.theme.color.textFaint};
+`;
+
+// Human labels for the stored style ids. Kept beside the UI that shows them rather than in
+// dragCardStyle.ts, which stays free of presentation so it can be tested with no DOM.
+const DRAG_STYLE_LABELS: Record<DragCardStyle, string> = {
+  card: 'Card',
+  waveform: 'Waveform',
+  'waveform-text': 'Waveform + name',
+};
+
 export interface SettingsSheetProps {
   onClose: () => void;
 }
@@ -97,6 +140,12 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
   const [root, setRoot] = useState<string | null>(null);
   const [loadingRoot, setLoadingRoot] = useState(true);
   const [repicking, setRepicking] = useState(false);
+  // Lazy initializer, the same idiom App.tsx uses for `ntwine.filtersCollapsed`: read the stored
+  // preference once on open rather than on every render. SampleRow re-reads storage at drag time,
+  // so this state exists only to keep the picker's own highlight honest.
+  const [dragStyle, setDragStyle] = useState<DragCardStyle>(() =>
+    readDragCardStyle(window.localStorage),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +185,11 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
     }
   };
 
+  const chooseDragStyle = (style: DragCardStyle): void => {
+    writeDragCardStyle(window.localStorage, style);
+    setDragStyle(style);
+  };
+
   const handleReimport = async (): Promise<void> => {
     await importStore.run();
     if (importStore.phase !== 'error') {
@@ -172,6 +226,24 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
             {reimporting ? 'Importing…' : 'Re-run import'}
           </Button>
         </ButtonRow>
+        <FieldRow>
+          <FieldLabel>Drag image</FieldLabel>
+          <ChoiceRow role="group" aria-label="Drag image" data-testid="settings-drag-style">
+            {DRAG_CARD_STYLES.map((style) => (
+              <ChoiceButton
+                key={style}
+                type="button"
+                $active={style === dragStyle}
+                aria-pressed={style === dragStyle}
+                data-testid={`drag-style-${style}`}
+                onClick={() => chooseDragStyle(style)}
+              >
+                {DRAG_STYLE_LABELS[style]}
+              </ChoiceButton>
+            ))}
+          </ChoiceRow>
+          <FieldHint>What hangs off the cursor when you drag a sample into your DAW.</FieldHint>
+        </FieldRow>
         {importStore.phase !== null && (
           <StatusLine>
             {importStore.phase}

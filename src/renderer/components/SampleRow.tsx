@@ -16,6 +16,7 @@ import styled, { css, useTheme } from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
 import type { DragIcon, SampleRow as SampleRowData } from '../../shared/ipcTypes';
 import { sharedCoverCache } from '../coverCache';
+import { readDragCardStyle } from '../dragCardStyle';
 import { dragCardMeta, renderDragCard } from '../dragImage';
 import { armDragSource, clearDragSource } from '../dragSource';
 import { api } from '../stores/api';
@@ -496,6 +497,11 @@ export function SampleRow({
           colors: theme.color,
         },
         window.devicePixelRatio || 1,
+        // Read at drag time, not held in state: the preference lives in `localStorage` and changes
+        // from the Settings sheet, which has no path to this virtualized row. One synchronous
+        // `getItem` per drag gesture is cheaper than propagating a value through the list, and it
+        // can never be stale.
+        readDragCardStyle(window.localStorage),
       );
     } catch (e) {
       // Degrading silently is the right BEHAVIOUR (main's plain square still drags the file), but
