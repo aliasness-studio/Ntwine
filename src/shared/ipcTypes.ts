@@ -86,20 +86,6 @@ export interface ImportProgress {
   message?: string;
 }
 
-// The picture that hangs off the cursor during a drag-out (2026-08-31). The renderer paints it —
-// it is the only side with the waveform peaks, the pack art, the theme and a text-shaping engine
-// (src/renderer/dragImage.ts) — and main only decodes it into a `NativeImage`
-// (`resolveDragIcon`, src/main/drag.ts). A PNG data URL rather than a raw buffer because that is
-// what `canvas.toDataURL` yields and what survives structured-clone across the bridge unchanged.
-//
-// `scaleFactor` travels WITH the pixels: the card is drawn at `devicePixelRatio` x its CSS
-// geometry, and main must be told that factor or a hidpi bitmap lays out at twice its intended
-// size. Neither side may assume the other's ratio.
-export interface DragIcon {
-  dataUrl: string;
-  scaleFactor: number;
-}
-
 // THE bridge contract (Task 11): everything the renderer can reach main through crosses this one
 // object, exposed on `window.ntwine` by preload.ts's `contextBridge.exposeInMainWorld`. Every
 // later renderer task (12-15) imports this interface rather than reaching for ipcRenderer
@@ -127,10 +113,14 @@ export interface NtwineApi {
   // (drag.ts) blocks the main process until the OS drag session ends, so this invoke's resolution
   // IS the drag-end signal the drag-into-collection slot (spec §7) needs.
   //
-  // `icon` (2026-08-31) is the drag card the renderer painted for this sample — see `DragIcon`.
-  // Optional on purpose: main falls back to its own generated square for any caller that omits it
-  // (or sends something it won't decode), so a drag never fails over its picture.
-  startDrag(sampleId: number, icon?: DragIcon | null): Promise<void>;
+  // `iconDataUrl` (2026-08-31) is the drag card the renderer painted for this sample, as a PNG
+  // data URL (`canvas.toDataURL`, src/renderer/dragImage.ts). The renderer paints it because it is
+  // the only side with the peaks, the pack art, the theme and a text-shaping engine; main only
+  // decodes it (`resolveDragIcon`). Deliberately just the bytes — no accompanying scale factor,
+  // since a drag image whose logical size differs from its pixel size gets clipped by the OS
+  // (drag.ts has the full account). Optional: main falls back to its own generated square for any
+  // caller that omits it or sends something it won't decode, so a drag never fails over its picture.
+  startDrag(sampleId: number, iconDataUrl?: string | null): Promise<void>;
   sampleUrl(sampleId: number): string; // `sample://s/${id}` — pure string helper
   coverUrl(packId: number): string; // `cover://p/${id}`
 

@@ -14,7 +14,7 @@ import {
 } from 'react';
 import styled, { css, useTheme } from 'styled-components';
 import { formatDuration, formatKey } from '../../shared/keyDisplay';
-import type { DragIcon, SampleRow as SampleRowData } from '../../shared/ipcTypes';
+import type { SampleRow as SampleRowData } from '../../shared/ipcTypes';
 import { sharedCoverCache } from '../coverCache';
 import { dragCardMeta, renderDragCard } from '../dragImage';
 import { armDragSource, clearDragSource } from '../dragSource';
@@ -484,7 +484,7 @@ export function SampleRow({
   //
   // Never allowed to break the drag: `renderDragCard` touches `document`/canvas, and a null return
   // just means main uses its own generated square instead (`resolveDragIcon`, drag.ts).
-  const buildDragIcon = (): DragIcon | null => {
+  const buildDragIcon = (): string | null => {
     try {
       return renderDragCard(
         {

@@ -123,6 +123,8 @@ export interface DragCardCtx {
 export interface DragCardColors {
   bg: string;
   border: string;
+  /** The card's outline. Stronger than `border` on purpose — see `drawBackground`. */
+  borderStrong: string;
   text: string;
   textMuted: string;
   textFaint: string;
@@ -143,15 +145,23 @@ export interface DragCardInput {
   colors: DragCardColors;
 }
 
-/** Rounded panel + hairline border: the card reads as one of the app's own surfaces, not a screenshot. */
+/**
+ * Rounded panel + outline: the card reads as one of the app's own surfaces, not a screenshot.
+ *
+ * `borderStrong` rather than the `border` a panel inside the app would use. This surface floats
+ * over whatever the user is dragging INTO — its own dark list, a DAW, a file manager — with no
+ * guarantee of contrast behind it, and the app's hairline border disappeared entirely against
+ * Ntwine's own background. The outline is also the thing that makes clipping visible at a glance:
+ * if an edge is missing, you can see it is missing.
+ */
 function drawBackground(ctx: DragCardCtx, colors: DragCardColors): void {
   ctx.beginPath();
   // Inset by half the stroke width so the 1px border lands ON the card edge rather than
-  // straddling it and coming out blurry at scaleFactor 1.
+  // straddling it and coming out blurry.
   ctx.roundRect(0.5, 0.5, DRAG_CARD.width - 1, DRAG_CARD.height - 1, DRAG_CARD.radius);
   ctx.fillStyle = colors.bg;
   ctx.fill();
-  ctx.strokeStyle = colors.border;
+  ctx.strokeStyle = colors.borderStrong;
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -274,27 +284,25 @@ export function drawDragCard(ctx: DragCardCtx, input: DragCardInput): void {
   drawText(ctx, input);
 }
 
-/** What `startDrag` carries to main: a PNG data URL plus the factor it was drawn at. */
-export interface DragImage {
-  dataUrl: string;
-  scaleFactor: number;
-}
-
 /**
- * Renders the card to a PNG data URL at `scaleFactor x` its CSS geometry. Main rebuilds the
- * `NativeImage` with the SAME factor (`resolveDragIcon`, drag.ts), so a 2x bitmap stays a 224x60
- * drag image on screen instead of a 448x120 one — the reason the factor travels with the pixels
- * rather than being assumed on either side.
+ * Renders the card to a PNG data URL, `pixelRatio` device pixels per unit of the CSS geometry
+ * above. Returns `null` when the canvas has no 2D context (`startDrag` then falls back to main's
+ * generated icon).
  *
- * `null` when the canvas has no 2D context (`startDrag` then falls back to the generated icon).
+ * The bitmap is handed over as plain pixels with NO scale factor attached, and that is the whole
+ * trick: an OS drag image is laid out at its LOGICAL size but blitted from its raw pixels, so any
+ * image claiming to be smaller than it is gets clipped. Drawing at `pixelRatio` and declaring
+ * nothing means the card occupies `width x pixelRatio` DEVICE pixels — which is exactly its
+ * intended CSS size on that display, and crisp, because it was drawn at that resolution. See
+ * `resolveDragIcon` (src/main/drag.ts) for the failure this replaced.
  */
-export function renderDragCard(input: DragCardInput, scaleFactor: number): DragImage | null {
+export function renderDragCard(input: DragCardInput, pixelRatio: number): string | null {
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(DRAG_CARD.width * scaleFactor);
-  canvas.height = Math.round(DRAG_CARD.height * scaleFactor);
+  canvas.width = Math.round(DRAG_CARD.width * pixelRatio);
+  canvas.height = Math.round(DRAG_CARD.height * pixelRatio);
   const ctx = canvas.getContext('2d');
   if (ctx === null) return null;
-  ctx.setTransform(scaleFactor, 0, 0, scaleFactor, 0, 0);
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   drawDragCard(ctx, input);
-  return { dataUrl: canvas.toDataURL('image/png'), scaleFactor };
+  return canvas.toDataURL('image/png');
 }

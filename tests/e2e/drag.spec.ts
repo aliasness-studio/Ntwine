@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { DRAG_CARD } from '../../src/renderer/dragImage';
 import { importAndWait, rowByFilename } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
@@ -13,6 +14,8 @@ interface DragPayload {
    * 24x24 square. A headless run starts no OS drag session, so this label is the only way to
    * observe the icon at all. */
   icon: 'card' | 'fallback';
+  /** The resolved `NativeImage`'s LOGICAL size — what the OS sizes the drag window to. */
+  iconSize: { width: number; height: number };
 }
 
 test('drag runs a real row through IPC to main resolution, and the missing row refuses both at the renderer guard and via a direct IPC bypass', async ({
@@ -38,6 +41,18 @@ test('drag runs a real row through IPC to main resolution, and the missing row r
   // every link in it is invisible from the DOM.
   expect(first.icon).toBe('card');
 
+  // The card's LOGICAL size must equal the pixel size the renderer painted. When it didn't — the
+  // card was drawn at devicePixelRatio and tagged with that factor — Windows sized the drag window
+  // from the smaller logical size and blitted the raw pixels into it, so the padding, the rounded
+  // corners and the whole meta line fell off the edges. Nothing in the DOM or in `icon` above
+  // shows that; only these two numbers disagreeing do. Found by dragging into a real DAW
+  // (2026-08-31), because no test can start an OS drag session.
+  const drawnAt = await page.evaluate(() => window.devicePixelRatio);
+  expect(first.iconSize).toEqual({
+    width: Math.round(DRAG_CARD.width * drawnAt),
+    height: Math.round(DRAG_CARD.height * drawnAt),
+  });
+
   // --- the missing row is never actually draggable (draggable={!row.missing}); a synthetically
   // dispatched dragstart still invokes the listener (the only way to mechanically drive an
   // "attempt" — see SampleRow.tsx's own comment on handleDragStart), but the handler returns
@@ -59,6 +74,6 @@ test('drag runs a real row through IPC to main resolution, and the missing row r
   await page.evaluate((id) => window.ntwine.startDrag(id), missingId);
   await expect.poll(() => seam.count('ntwine:e2e:drag')).toBe(3);
   expect(await seam.drain<DragPayload>('ntwine:e2e:drag')).toEqual([
-    { sampleId: missingId, file: null, icon: 'fallback' },
+    { sampleId: missingId, file: null, icon: 'fallback', iconSize: { width: 24, height: 24 } },
   ]);
 });

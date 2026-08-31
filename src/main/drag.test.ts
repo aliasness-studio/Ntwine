@@ -11,21 +11,25 @@ const decoded = vi.fn();
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() },
   nativeImage: {
-    createFromBitmap: vi.fn(() => ({ tag: 'generated-square', isEmpty: () => false })),
+    createFromBitmap: vi.fn(() => ({
+      tag: 'generated-square',
+      isEmpty: () => false,
+      getSize: () => ({ width: 24, height: 24 }),
+    })),
     createFromBuffer: vi.fn((...args: unknown[]) => decoded(...args)),
   },
 }));
 
 /** A NativeImage-alike that reports itself non-empty, i.e. a successful decode. */
-function goodImage(scaleFactor?: number) {
-  return { tag: 'decoded', scaleFactor, isEmpty: () => false };
+function goodImage() {
+  return { tag: 'decoded', isEmpty: () => false, getSize: () => ({ width: 336, height: 90 }) };
 }
 
 const PNG_DATA_URL = 'data:image/png;base64,aGVsbG8=';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  decoded.mockImplementation((_buf: Buffer, opts: { scaleFactor?: number }) => goodImage(opts?.scaleFactor));
+  decoded.mockImplementation(() => goodImage());
 });
 
 describe('resolveDragIcon', () => {
@@ -36,20 +40,33 @@ describe('resolveDragIcon', () => {
     expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
   });
 
-  it('decodes the card at the scale factor the renderer drew it with', () => {
-    const icon = resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 2 }, makeDragIcon());
+  it('decodes the card straight from its bytes', () => {
+    const icon = resolveDragIcon(PNG_DATA_URL, makeDragIcon());
 
-    expect(icon).toMatchObject({ tag: 'decoded', scaleFactor: 2 });
+    expect(icon).toMatchObject({ tag: 'decoded' });
     const [buffer] = vi.mocked(nativeImage.createFromBuffer).mock.calls[0];
     expect(buffer.toString('utf8')).toBe('hello');
+  });
+
+  // The bug this pins was visible only in a real OS drag (Windows, 2026-08-31): a card drawn at
+  // devicePixelRatio 1.5 and tagged `scaleFactor: 1.5` is 336x90 real pixels that REPORTS itself
+  // as 224x60. Windows sizes the drag window from the reported size and blits the raw pixels into
+  // it, so a third of the card — its padding, its rounded corners and the whole meta line — landed
+  // outside the window. Tagging no scale factor at all keeps pixel size and logical size equal,
+  // which is the only relationship an OS drag image can't get wrong.
+  it('tags the image with no scale factor, so its pixel size IS its logical size', () => {
+    resolveDragIcon(PNG_DATA_URL, makeDragIcon());
+
+    expect(nativeImage.createFromBuffer).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(nativeImage.createFromBuffer).mock.calls[0]).toHaveLength(1);
   });
 
   it('falls back rather than decoding anything that is not a base64 png data url', () => {
     const fallback = makeDragIcon();
 
-    expect(resolveDragIcon({ dataUrl: 'data:text/html;base64,aGk=', scaleFactor: 2 }, fallback)).toBe(fallback);
-    expect(resolveDragIcon({ dataUrl: 'https://example.com/x.png', scaleFactor: 2 }, fallback)).toBe(fallback);
-    expect(resolveDragIcon({ dataUrl: '', scaleFactor: 2 }, fallback)).toBe(fallback);
+    expect(resolveDragIcon('data:text/html;base64,aGk=', fallback)).toBe(fallback);
+    expect(resolveDragIcon('https://example.com/x.png', fallback)).toBe(fallback);
+    expect(resolveDragIcon('', fallback)).toBe(fallback);
     expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
   });
 
@@ -57,7 +74,7 @@ describe('resolveDragIcon', () => {
     const fallback = makeDragIcon();
     const huge = `data:image/png;base64,${'A'.repeat(DRAG_ICON_MAX_BYTES + 1)}`;
 
-    expect(resolveDragIcon({ dataUrl: huge, scaleFactor: 2 }, fallback)).toBe(fallback);
+    expect(resolveDragIcon(huge, fallback)).toBe(fallback);
     expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
   });
 
@@ -65,7 +82,7 @@ describe('resolveDragIcon', () => {
     const fallback = makeDragIcon();
     decoded.mockReturnValue({ tag: 'decoded', isEmpty: () => true });
 
-    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 2 }, fallback)).toBe(fallback);
+    expect(resolveDragIcon(PNG_DATA_URL, fallback)).toBe(fallback);
   });
 
   it('falls back when the decoder throws instead of letting the drag fail', () => {
@@ -74,15 +91,7 @@ describe('resolveDragIcon', () => {
       throw new Error('corrupt png');
     });
 
-    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 2 }, fallback)).toBe(fallback);
-  });
-
-  it('rejects a non-positive or absurd scale factor rather than passing it through', () => {
-    const fallback = makeDragIcon();
-
-    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 0 }, fallback)).toBe(fallback);
-    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: -2 }, fallback)).toBe(fallback);
-    expect(resolveDragIcon({ dataUrl: PNG_DATA_URL, scaleFactor: 99 }, fallback)).toBe(fallback);
+    expect(resolveDragIcon(PNG_DATA_URL, fallback)).toBe(fallback);
   });
 });
 
@@ -99,12 +108,12 @@ describe('registerDragHandler', () => {
   it('hands the OS drag the card the renderer drew, not the generated square', async () => {
     registerDragHandler(() => __filename);
 
-    const { startDrag, done } = invokeHandler([1, { dataUrl: PNG_DATA_URL, scaleFactor: 2 }]);
+    const { startDrag, done } = invokeHandler([1, PNG_DATA_URL]);
     await done;
 
     expect(startDrag).toHaveBeenCalledWith({
       file: __filename,
-      icon: expect.objectContaining({ tag: 'decoded', scaleFactor: 2 }),
+      icon: expect.objectContaining({ tag: 'decoded' }),
     });
   });
 
@@ -124,16 +133,29 @@ describe('registerDragHandler', () => {
     const emit = vi.fn();
     registerDragHandler(() => __filename, emit);
 
-    await invokeHandler([1, { dataUrl: PNG_DATA_URL, scaleFactor: 2 }]).done;
+    await invokeHandler([1, PNG_DATA_URL]).done;
     await invokeHandler([1]).done;
 
     expect(emit.mock.calls.map((c) => (c[1] as { icon: string }).icon)).toEqual(['card', 'fallback']);
   });
 
+  // `icon` alone says the card survived the trip; it says nothing about the size it will be drawn
+  // at, which is the dimension the Windows clipping bug lived in. Reporting the resolved image's
+  // LOGICAL size lets drag.spec.ts compare it against the pixel size the renderer actually drew —
+  // the one comparison that fails loudly if a scale factor ever creeps back in.
+  it('reports the resolved icon logical size, the dimension the OS lays the drag image out at', async () => {
+    const emit = vi.fn();
+    registerDragHandler(() => __filename, emit);
+
+    await invokeHandler([1, PNG_DATA_URL]).done;
+
+    expect(emit.mock.calls[0][1]).toMatchObject({ iconSize: { width: 336, height: 90 } });
+  });
+
   it('refuses a sample it cannot resolve without ever decoding the card', async () => {
     registerDragHandler(() => null);
 
-    const { startDrag, done } = invokeHandler([1, { dataUrl: PNG_DATA_URL, scaleFactor: 2 }]);
+    const { startDrag, done } = invokeHandler([1, PNG_DATA_URL]);
     await done;
 
     expect(startDrag).not.toHaveBeenCalled();

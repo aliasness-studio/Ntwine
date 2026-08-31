@@ -76,6 +76,7 @@ function recordingCtx(charWidth = 6): { ctx: DragCardCtx; calls: Call[] } {
 const COLORS = {
   bg: '#211d18',
   border: '#332e27',
+  borderStrong: '#463f34',
   text: '#ece6da',
   textMuted: '#a39a8c',
   textFaint: '#655d51',
