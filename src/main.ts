@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import started from 'electron-squirrel-startup';
 import { openCatalog } from './main/catalog/db';
+import { resolveWindowIcon } from './main/appIcon';
 import { computeDefaultBounds } from './main/defaultBounds';
 import { registerDragHandler } from './main/drag';
 import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
@@ -61,6 +62,10 @@ const e2eEmit = makeE2EEmitter(app, e2e);
 
 let mainWindow: BrowserWindow | null = null;
 
+// Resolved once: app.getAppPath() is the project root unpackaged and app.asar packaged, and
+// neither moves while the app runs.
+const windowIcon = resolveWindowIcon(app.getAppPath());
+
 const createWindow = (): BrowserWindow => {
   // 90% of the work area, centered (BrowserWindow centers itself when x/y are omitted). Only
   // callable after app ready — the `screen` module throws before that, and createWindow's one
@@ -89,6 +94,8 @@ const createWindow = (): BrowserWindow => {
   const win = new BrowserWindow({
     width,
     height,
+    // Dev-run only; a packaged build gets its icon from the executable itself (appIcon.ts).
+    ...(windowIcon ? { icon: windowIcon } : {}),
     // Quiet mode creates unshown then presents via showInactive() below; headed e2e and
     // production keep the default constructor show — the unarmed app stays byte-for-byte v1.
     ...(e2e?.hidden ? { show: false, x: -32000, y: -32000, opacity: 0, skipTaskbar: true } : {}),

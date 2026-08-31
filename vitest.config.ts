@@ -3,7 +3,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // `scripts/` holds developer tooling (the icon pipeline), not app code, so it is plain ESM
+    // JavaScript rather than TypeScript — it runs directly under `electron scripts/…` with no
+    // build step. Its pure parts still get the same test treatment as everything else.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     // 30 s, not vitest's default 5 s. These are disk-bound tests, not slow logic: the catalog
     // and importer suites mkdtemp a fresh directory and build REAL SQLite files per test —
     // queries.test.ts does it 44 times over, three temp dirs at a time. Locally that file

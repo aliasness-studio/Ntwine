@@ -1,0 +1,25 @@
+<!--
+  The mark at 16 and 24px — Explorer's list view, the small taskbar, Alt-Tab. Everything from 32px
+  up uses icon.svg, which was checked at that size and holds together; at 24 it muddies (its 13-unit
+  stroke lands on about one physical pixel and the A's counter closes to a speck), which is where
+  this drawing takes over.
+
+  This file exists purely for WEIGHT and SPACING now — icon.svg has no crossbar either, so the two
+  drawings are the same design, and the only differences are the ones the pixel grid forces.
+
+  A much bigger brush (13 -> 24), shorter marks, and a wide gutter. The A's fall stops at
+  x 92 and the N's first rise starts at 146, so 30 units of clear space separate the glyphs; an
+  earlier draft left 7 and the two merged into one blob at 16px.
+
+  Every one of those calls came from rendering the actual frame magnified with nearest-neighbour
+  rather than from reasoning about it — the whole file is the residue of looking at pixels.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="52" fill="#2A2E37" />
+  <g fill="none" stroke-width="24" stroke-linecap="butt" stroke-linejoin="miter">
+    <!-- Sawtooth "A": one period — ramp up to the peak, then fall straight back to the baseline. -->
+    <path d="M26 176 L92 80 L92 176" stroke="#8B5CF6" />
+    <!-- Square wave "N": rise, run, fall, run, rise. -->
+    <path d="M146 176 L146 80 L190 80 L190 176 L234 176 L234 80" stroke="#F7B32B" />
+  </g>
+</svg>

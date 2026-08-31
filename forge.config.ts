@@ -11,6 +11,10 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // Extension-less on purpose: @electron/packager appends the one the platform wants (.ico on
+    // Windows, .icns on macOS) and ignores this on Linux, where the icon comes from the maker
+    // options below instead. Both files are generated from assets/icon.svg by `yarn icons`.
+    icon: 'assets/icon',
     // F7, part 2: @electron-forge/plugin-vite's own resolveForgeConfig sets packagerConfig.ignore
     // to `(file) => !file.startsWith('/.vite')` whenever ignore is still unset when it runs — i.e.
     // it excludes node_modules from the packaged app entirely, on the assumption Vite bundles
@@ -48,10 +52,14 @@ const config: ForgeConfig = {
   // onlyModules list rebuilds no modules, so no VS is required to package on Windows at all.
   rebuildConfig: { onlyModules: [] },
   makers: [
-    new MakerSquirrel({}),
+    // setupIcon dresses the installer .exe itself. Squirrel's other icon knob, `iconUrl`, is the
+    // Add/Remove-Programs icon and must be an http(s) URL Windows can fetch — it is deliberately
+    // left at the default until there is a stable public URL to point it at.
+    new MakerSquirrel({ setupIcon: 'assets/icon.ico' }),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    // The Linux packagers want one plain raster, not an .ico container.
+    new MakerRpm({ options: { icon: 'assets/icon.png' } }),
+    new MakerDeb({ options: { icon: 'assets/icon.png' } }),
   ],
   plugins: [
     // F7: better-sqlite3 is a native runtime dep (vite.main.config.ts externalizes it — see the
