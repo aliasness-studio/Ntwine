@@ -16,6 +16,7 @@ import {
 import styled from 'styled-components';
 import type { SampleRow as SampleRowData, Scope } from '../../shared/ipcTypes';
 import { api } from '../stores/api';
+import { sharedCoverCache } from '../coverCache';
 import { emptyStateText } from '../emptyState';
 import { landingIdAfterRemoval, listKeyAction } from '../keymap';
 import { menuItemsFor, type RowMenuItemId } from '../rowMenu';
@@ -151,16 +152,27 @@ export const SampleList = observer(
     // on every sub-pixel scroll re-render.
     const firstIndex = virtualItems[0]?.index;
     const lastIndex = virtualItems[virtualItems.length - 1]?.index;
+    //
+    // Pack cover art rides along on the same pass (2026-08-31). SampleRow paints its drag card
+    // synchronously inside `dragstart` — there is no moment later at which an `<img>` could finish
+    // loading and still make it onto the picture — so the art for everything on screen has to
+    // already be decoded before the user grabs anything. `warm` is idempotent per pack and latches
+    // failures permanently (coverCache.ts), which is what makes calling it on every range change
+    // free rather than a repeated 404 storm for packs whose art was never downloaded.
     useEffect(() => {
       if (firstIndex === undefined || lastIndex === undefined) return;
       const ids: number[] = [];
+      const packIds: number[] = [];
       for (let i = firstIndex; i <= lastIndex; i++) {
         const row = library.rows[i];
-        if (row && !row.missing && !row.peaksFailed && !library.peaksCache.has(row.id)) {
+        if (!row) continue;
+        if (!row.missing && !row.peaksFailed && !library.peaksCache.has(row.id)) {
           ids.push(row.id);
         }
+        if (!row.missing && row.packId !== null) packIds.push(row.packId);
       }
       if (ids.length > 0) void library.fetchPeaks(ids);
+      if (packIds.length > 0) sharedCoverCache().warm(packIds);
     }, [firstIndex, lastIndex, library]);
 
     // Peaks progressive-fill gotcha (Task 13 brief): `hasPeaks`/`peaksCache` are query-time

@@ -8,6 +8,11 @@ import { expect, test } from './harness/fixtures';
 interface DragPayload {
   sampleId: number;
   file: string | null;
+  /** Which image `webContents.startDrag` would have carried — see drag.ts's `registerDragHandler`.
+   * 'card' is the renderer-painted drag card (dragImage.ts); 'fallback' is main's own generated
+   * 24x24 square. A headless run starts no OS drag session, so this label is the only way to
+   * observe the icon at all. */
+  icon: 'card' | 'fallback';
 }
 
 test('drag runs a real row through IPC to main resolution, and the missing row refuses both at the renderer guard and via a direct IPC bypass', async ({
@@ -27,6 +32,11 @@ test('drag runs a real row through IPC to main resolution, and the missing row r
   expect(first.file).not.toBeNull();
   expect(first.file!.startsWith(fixture.libraryRoot)).toBe(true);
   expect(existsSync(first.file!)).toBe(true);
+  // The drag goes out under the renderer's own card, not main's placeholder square. This is the
+  // only end-to-end proof of the whole chain — SampleRow painting a real canvas, the PNG data URL
+  // surviving the bridge, and `resolveDragIcon` decoding it to a non-empty NativeImage — since
+  // every link in it is invisible from the DOM.
+  expect(first.icon).toBe('card');
 
   // --- the missing row is never actually draggable (draggable={!row.missing}); a synthetically
   // dispatched dragstart still invokes the listener (the only way to mechanically drive an
@@ -48,5 +58,7 @@ test('drag runs a real row through IPC to main resolution, and the missing row r
   );
   await page.evaluate((id) => window.ntwine.startDrag(id), missingId);
   await expect.poll(() => seam.count('ntwine:e2e:drag')).toBe(3);
-  expect(await seam.drain<DragPayload>('ntwine:e2e:drag')).toEqual([{ sampleId: missingId, file: null }]);
+  expect(await seam.drain<DragPayload>('ntwine:e2e:drag')).toEqual([
+    { sampleId: missingId, file: null, icon: 'fallback' },
+  ]);
 });

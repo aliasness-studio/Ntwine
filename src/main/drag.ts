@@ -1,7 +1,13 @@
 import { ipcMain, nativeImage, type NativeImage } from 'electron';
 import { existsSync } from 'node:fs';
+import type { DragIcon } from '../shared/ipcTypes';
 import type { E2EEmit } from './e2e';
 
+/**
+ * The floor under every drag: a flat 24x24 square. It exists because macOS refuses an EMPTY drag
+ * icon, not because it communicates anything — which is exactly why the renderer now draws a real
+ * card (src/renderer/dragImage.ts) and this is only the fallback for when it can't.
+ */
 export function makeDragIcon(): NativeImage {
   const size = 24;
   const buf = Buffer.alloc(size * size * 4);
@@ -10,7 +16,53 @@ export function makeDragIcon(): NativeImage {
 }
 
 /**
- * Wires `ntwine:drag-start` (renderer `startDrag(sampleId)`, preload.ts) to
+ * Ceiling on the base64 payload of a renderer-supplied drag card. The real card is a ~224x60 PNG —
+ * a few KB at scaleFactor 2 — so this is orders of magnitude of headroom, present only so a bug (or
+ * a compromised renderer) can't hand the main process an unbounded string to base64-decode inside a
+ * synchronous IPC handler.
+ */
+export const DRAG_ICON_MAX_BYTES = 4 * 1024 * 1024;
+
+/** Chromium tops out around 3x; anything outside this range is a bug, not a display we support. */
+const MAX_SCALE_FACTOR = 4;
+
+// Deliberately strict: `nativeImage.createFromBuffer` is fed the decoded bytes, so the only shape
+// worth accepting is the one `renderDragCard` produces (`canvas.toDataURL('image/png')`). Anything
+// else — an http url, an svg data url, a bare string — is not a near-miss to be repaired, it is a
+// sign the argument didn't come from the card renderer at all.
+const PNG_DATA_URL_RE = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/;
+
+/**
+ * Turns the renderer's drag card into the `NativeImage` `webContents.startDrag` wants, or returns
+ * `fallback` if it can't. NEVER throws and never refuses the drag itself: a drag that goes out
+ * under the plain square is a cosmetic regression, whereas a drag that fails to start is the app's
+ * make-or-break feature breaking, so every failure mode here degrades instead of propagating.
+ *
+ * `scaleFactor` travels with the pixels rather than being assumed: the renderer draws the card at
+ * `devicePixelRatio` x its CSS geometry, and passing that factor back to `createFromBuffer` is what
+ * keeps a 448x120 bitmap laid out as the 224x60 drag image it represents.
+ */
+export function resolveDragIcon(icon: DragIcon | null | undefined, fallback: NativeImage): NativeImage {
+  if (!icon) return fallback;
+  const { dataUrl, scaleFactor } = icon;
+  if (!Number.isFinite(scaleFactor) || scaleFactor <= 0 || scaleFactor > MAX_SCALE_FACTOR) return fallback;
+  if (typeof dataUrl !== 'string' || dataUrl.length > DRAG_ICON_MAX_BYTES) return fallback;
+
+  const match = PNG_DATA_URL_RE.exec(dataUrl);
+  if (match === null) return fallback;
+
+  try {
+    const image = nativeImage.createFromBuffer(Buffer.from(match[1], 'base64'), { scaleFactor });
+    // A NativeImage that failed to decode is empty rather than null — the same "empty icon is
+    // rejected on macOS" hazard makeDragIcon exists for, so it must never reach startDrag.
+    return image.isEmpty() ? fallback : image;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Wires `ntwine:drag-start` (renderer `startDrag(sampleId, icon)`, preload.ts) to
  * `webContents.startDrag`. `resolvePath` is the injection seam: Task 2's spike closed over one
  * hardcoded file; Task 11 re-points it at `resolveSampleAbsPath` (protocol.ts) closed over the
  * live catalog + current library root — the SAME resolution core (row must exist, `missing = 0`,
@@ -26,17 +78,22 @@ export function makeDragIcon(): NativeImage {
  * IS the drag-end signal the drag-into-collection slot (spec §7) needs, with no separate push
  * event required.
  *
+ * `icon` (2026-08-31) is the renderer's drag card. It is resolved only AFTER the path resolves,
+ * so a refused drag never spends time base64-decoding a card nothing will use.
+ *
  * `e2eEmit` (Task 1, e2e spec §3.1): when armed, observes the exact startDrag decision instead of
  * calling `webContents.startDrag` and returns immediately — an OS drag session blocks the main
  * process until mouse-up, which no headless run can deliver, so under e2e the invoke's
- * resolution carries no drag-end meaning (spec §7's E2E note).
+ * resolution carries no drag-end meaning (spec §7's E2E note). The payload's `icon` field is the
+ * only way a headless spec can observe WHICH icon a drag would have carried: no native drag runs,
+ * so the image itself never reaches an OS the test could inspect.
  */
 export function registerDragHandler(
   resolvePath: (sampleId: number) => string | null,
   e2eEmit: E2EEmit | null = null,
 ): void {
-  const icon = makeDragIcon();
-  ipcMain.handle('ntwine:drag-start', async (event, sampleId: number) => {
+  const fallbackIcon = makeDragIcon();
+  ipcMain.handle('ntwine:drag-start', async (event, sampleId: number, icon?: DragIcon | null) => {
     const resolved = resolvePath(Number(sampleId));
     // resolvePath only checks the DB row (missing flag) and path containment — not the
     // filesystem itself, so a file deleted since the last statPass (importer.ts) can still
@@ -44,14 +101,16 @@ export function registerDragHandler(
     // re-stat of its own, so this existsSync is it. A vanished file is a silent no-op, same as
     // any other resolvePath null (spec §8: "Drag of missing file -> Drag refused").
     const file = resolved && existsSync(resolved) ? resolved : null;
-    // E2E mode observes the exact startDrag decision and SKIPS the native drag: an OS drag session
-    // blocks until mouse-up, which no headless run can deliver (e2e spec §3.1). Resolves
-    // immediately — spec §7's e2e note.
     if (e2eEmit) {
-      e2eEmit('ntwine:e2e:drag', { sampleId: Number(sampleId), file });
+      const dragIcon = file ? resolveDragIcon(icon, fallbackIcon) : fallbackIcon;
+      e2eEmit('ntwine:e2e:drag', {
+        sampleId: Number(sampleId),
+        file,
+        icon: file && dragIcon !== fallbackIcon ? 'card' : 'fallback',
+      });
       return;
     }
     // Blocks until the OS drag session ends; the handler's resolution IS drag-end.
-    if (file) event.sender.startDrag({ file, icon });
+    if (file) event.sender.startDrag({ file, icon: resolveDragIcon(icon, fallbackIcon) });
   });
 }
