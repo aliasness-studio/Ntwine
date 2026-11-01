@@ -7,10 +7,12 @@ import {
   UPDATE_INTERVAL_MS,
   classifyUpdateError,
   createUpdater,
+  feedArchFor,
   feedUrlFor,
   registerUpdaterIpc,
   shouldRunUpdater,
   type Updater,
+  UPDATE_REPO,
 } from './updater';
 
 // Stand-in for Electron's `autoUpdater`: a real EventEmitter (so tests drive it with `emit`,
@@ -43,6 +45,21 @@ describe('updater helpers', () => {
     expect(feedUrlFor({ platform: 'win32', arch: 'x64', version: '1.2.3' })).toBe(
       'https://update.electronjs.org/aliasness-studio/Ntwine/win32-x64/1.2.3',
     );
+  });
+
+  it('the feed and RELEASES_URL share the one UPDATE_REPO slug (re-exported from shared)', () => {
+    expect(UPDATE_REPO).toBe('aliasness-studio/Ntwine');
+    expect(RELEASES_URL).toBe(`https://github.com/${UPDATE_REPO}/releases/latest`);
+    expect(feedUrlFor({ platform: 'darwin', arch: 'universal', version: '0.1.0' })).toContain(
+      `/${UPDATE_REPO}/`,
+    );
+  });
+
+  it('feedArchFor asks for the universal feed on every Mac, the process arch elsewhere', () => {
+    expect(feedArchFor('darwin', 'arm64')).toBe('universal');
+    expect(feedArchFor('darwin', 'x64')).toBe('universal');
+    expect(feedArchFor('win32', 'x64')).toBe('x64');
+    expect(feedArchFor('win32', 'arm64')).toBe('arm64');
   });
 
   it('shouldRunUpdater is false unpackaged, under NTWINE_E2E=1, and on linux', () => {

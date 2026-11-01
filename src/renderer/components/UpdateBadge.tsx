@@ -101,7 +101,9 @@ export const UpdateBadge = observer(function UpdateBadge() {
           aria-label="Restart to update"
           title={`${state.version} is ready — restart to update`}
           data-testid="update-restart"
-          onClick={() => void update.install()}
+          onClick={() =>
+            update.install().catch((err) => console.error('UpdateBadge: install failed', err))
+          }
         >
           <UpdateIcon />
         </BadgeButton>
@@ -111,7 +113,11 @@ export const UpdateBadge = observer(function UpdateBadge() {
           aria-label="Download the new version"
           title="This update must be installed by hand — opens the download page"
           data-testid="update-download"
-          onClick={() => void update.openReleases()}
+          onClick={() =>
+            update
+              .openReleases()
+              .catch((err) => console.error('UpdateBadge: openReleases failed', err))
+          }
         >
           <UpdateIcon />
         </BadgeButton>

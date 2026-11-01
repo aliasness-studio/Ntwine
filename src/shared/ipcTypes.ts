@@ -177,4 +177,7 @@ export type UpdateState =
   | { kind: 'idle' }
   | { kind: 'ready'; version: string } // downloaded; restart installs
   | { kind: 'failed'; reason: 'signature'; downloadUrl: string }; // D7 only
-export const RELEASES_URL = 'https://github.com/aliasness-studio/Ntwine/releases/latest';
+// The single GitHub repo slug: the update feed (src/main/updater.ts) and RELEASES_URL both derive
+// from it. forge.config.ts's iconUrl repeats it as a literal (build config cannot import app source).
+export const UPDATE_REPO = 'aliasness-studio/Ntwine';
+export const RELEASES_URL = `https://github.com/${UPDATE_REPO}/releases/latest`;

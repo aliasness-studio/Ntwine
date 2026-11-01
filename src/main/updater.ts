@@ -1,4 +1,4 @@
-import { RELEASES_URL, type UpdateState } from '../shared/ipcTypes';
+import { RELEASES_URL, UPDATE_REPO, type UpdateState } from '../shared/ipcTypes';
 
 /**
  * Self-update state machine over Electron's built-in `autoUpdater`, fed by update.electronjs.org.
@@ -8,7 +8,15 @@ import { RELEASES_URL, type UpdateState } from '../shared/ipcTypes';
 
 export const UPDATE_INITIAL_DELAY_MS = 30_000;
 export const UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000;
-export const UPDATE_REPO = 'aliasness-studio/Ntwine';
+// One slug for the feed and the Releases page: defined in shared (RELEASES_URL derives from it),
+// re-exported here so the updater's own callers and tests keep importing it from this module.
+export { UPDATE_REPO };
+
+/** darwin always asks for the universal feed — the only Mac asset published (make:mac) —
+ * whatever arch this process runs as; every other platform asks for its own arch. */
+export function feedArchFor(platform: string, arch: string): string {
+  return platform === 'darwin' ? 'universal' : arch;
+}
 
 export function feedUrlFor(a: { platform: string; arch: string; version: string }): string {
   return `https://update.electronjs.org/${UPDATE_REPO}/${a.platform}-${a.arch}/${a.version}`;
