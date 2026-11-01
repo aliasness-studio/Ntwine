@@ -20,6 +20,7 @@ import { api } from './renderer/stores/api';
 import { ImportStore } from './renderer/stores/ImportStore';
 import { LibraryStore } from './renderer/stores/LibraryStore';
 import { PlayerStore } from './renderer/stores/PlayerStore';
+import { UpdateStore } from './renderer/stores/UpdateStore';
 import { UserLayerStore } from './renderer/stores/UserLayerStore';
 
 // Task 14: the real WebAudio PlayPort, replacing Task 13's no-op stub. `fetchBytes` is the one
@@ -54,6 +55,7 @@ const stores: Stores = {
   player: new PlayerStore(playPort),
   importStore: new ImportStore(api),
   userLayer: new UserLayerStore(api, library),
+  update: new UpdateStore(api),
 };
 
 // Fire-and-forget, same posture as `library.init()`'s own call site (App.tsx) — a rejection here
@@ -65,6 +67,9 @@ const stores: Stores = {
 // answerable — pre-import they just resolve to the zero values (Task 1: an empty user.db is a
 // valid, fully-migrated database, not a missing one).
 void stores.userLayer.init();
+// Self-update (release pipeline PR 2): same unconditional, fire-and-forget posture — main answers
+// the update bridge in every run mode (dev/e2e/Linux just report a permanent `idle`).
+void stores.update.init();
 
 // Synchronous, before any async work — the harness waits on typeof === 'function'.
 installE2ESnapshot(window, e2eArmed, () => ({

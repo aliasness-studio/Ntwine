@@ -136,7 +136,7 @@ export interface SettingsSheetProps {
 }
 
 export const SettingsSheet = observer(function SettingsSheet({ onClose }: SettingsSheetProps) {
-  const { library, importStore, userLayer } = useStores();
+  const { library, importStore, userLayer, update } = useStores();
   const [root, setRoot] = useState<string | null>(null);
   const [loadingRoot, setLoadingRoot] = useState(true);
   const [repicking, setRepicking] = useState(false);
@@ -243,6 +243,13 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
             ))}
           </ChoiceRow>
           <FieldHint>What hangs off the cursor when you drag a sample into your DAW.</FieldHint>
+        </FieldRow>
+        <FieldRow>
+          <FieldLabel>Version</FieldLabel>
+          <FieldValue data-testid="settings-version">{update.version ?? '…'}</FieldValue>
+          {update.state.kind === 'ready' && (
+            <FieldHint>Update downloaded — restart to install.</FieldHint>
+          )}
         </FieldRow>
         {importStore.phase !== null && (
           <StatusLine>

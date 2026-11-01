@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackRow, QueryFilters, SampleRow, TagFacet } from '../../shared/ipcTypes';
 import { LibraryStore, sameFilters } from './LibraryStore';
 
-// Full `NtwineApi`-shaped fake (all 23 bridge methods), built from plain `vi.fn()`s so the
+// Full `NtwineApi`-shaped fake (all 29 bridge methods), built from plain `vi.fn()`s so the
 // returned object satisfies `NtwineApi` structurally when passed into `new LibraryStore(...)` —
 // no cast needed. Individual methods LibraryStore actually calls (`listPacks`/`listTags`/
 // `querySamples`/`getPeaks`) are overridable per test; the rest are inert defaults LibraryStore
@@ -54,6 +54,12 @@ function makeFakeApi(
     deleteCollection: vi.fn(async () => {}),
     addToCollection: vi.fn(async () => {}),
     removeFromCollection: vi.fn(async () => {}),
+    // Self-update (release pipeline PR 2): 5 bridge methods, inert here.
+    getUpdateState: vi.fn(async () => ({ kind: 'idle' as const })),
+    onUpdateState: vi.fn(() => () => {}),
+    installUpdate: vi.fn(async () => {}),
+    openReleasesPage: vi.fn(async () => {}),
+    getAppVersion: vi.fn(async () => '0.0.0'),
   };
 }
 

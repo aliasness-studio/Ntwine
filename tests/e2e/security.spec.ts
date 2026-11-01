@@ -5,6 +5,9 @@ import { expect, test } from './harness/fixtures';
 // than a vague count mismatch. Task 6 (design spec §4) grew this from 12 to 23: the 11 user-layer
 // methods below, plus `startDrag` promoted from `send` to `invoke` (same method, unchanged count).
 // The Splice-DB picker fallback (Windows-port audit blocker) grew it 23 -> 24: `pickSpliceDb`.
+// Self-update (release pipeline PR 2) grew it 24 -> 29: `getAppVersion`, `getUpdateState`,
+// `installUpdate`, `onUpdateState`, `openReleasesPage` (present even though e2e never runs the
+// updater — the bridge surface does not depend on shouldRunUpdater).
 const NTWINE_API_METHODS = [
   'addToCollection',
   'addUserTag',
@@ -12,13 +15,18 @@ const NTWINE_API_METHODS = [
   'createCollection',
   'decodePreviewPcm',
   'deleteCollection',
+  'getAppVersion',
   'getPeaks',
   'getState',
+  'getUpdateState',
+  'installUpdate',
   'listLibraryRail',
   'listPacks',
   'listTags',
   'listUserTags',
   'onImportProgress',
+  'onUpdateState',
+  'openReleasesPage',
   'pickLibraryRoot',
   'pickSpliceDb',
   'querySamples',
@@ -32,7 +40,7 @@ const NTWINE_API_METHODS = [
   'startDrag',
 ];
 
-test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 24 methods', async ({
+test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 29 methods', async ({
   ntwine,
 }) => {
   const { app, page, seam } = ntwine;

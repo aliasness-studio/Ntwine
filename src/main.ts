@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,10 +9,18 @@ import { computeDefaultBounds } from './main/defaultBounds';
 import { registerDragHandler } from './main/drag';
 import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
+import { MOVE_DECLINED_META, offerMove, shouldOfferMove } from './main/moveToApplications';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
+import {
+  createUpdater,
+  feedArchFor,
+  feedUrlFor,
+  registerUpdaterIpc,
+  shouldRunUpdater,
+} from './main/updater';
 import { openUserDb } from './main/user/userDb';
-import type { ImportProgress } from './shared/ipcTypes';
+import type { ImportProgress, UpdateState } from './shared/ipcTypes';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -61,6 +69,22 @@ if (e2e?.hidden) {
 const e2eEmit = makeE2EEmitter(app, e2e);
 
 let mainWindow: BrowserWindow | null = null;
+// Set by whenReady immediately before it creates the first window; until then `activate` is a
+// no-op. Electron can fire `activate` during first launch while whenReady is still awaiting the
+// move-to-Applications prompt or its failure warning (both modal, both before any window).
+let startupDone = false;
+
+// Every main -> renderer broadcast goes through this guard, not a bare
+// `mainWindow?.webContents.send(...)`: a still-running background pass (e.g. queue.ts's peaks
+// queue) or an update check can deliver well after the window is gone — closing the WINDOW on
+// macOS leaves the app (and these callbacks) alive, and `.webContents` on a destroyed
+// BrowserWindow throws. Uncaught inside a worker-message callback, that would wedge
+// runPeaksQueue: it never resolves, workers never get killed, 'done' never fires.
+const sendToWindow = (channel: string, payload: unknown): void => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+};
 
 // Resolved once: app.getAppPath() is the project root unpackaged and app.asar packaged, and
 // neither moves while the app runs.
@@ -182,7 +206,7 @@ const createWindow = (): BrowserWindow => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // All catalog state lives in a subdirectory of userData (spec §4): catalog.db (incl. waveform
   // peaks, spec §6), the Splice DB snapshot, and downloaded cover art. better-sqlite3's Database
   // constructor does NOT create missing parent directories (unlike snapshotSpliceDb/
@@ -204,6 +228,60 @@ app.whenReady().then(() => {
   // the current value at request time instead of resolving against a startup snapshot.
   const getLibraryRoot = () => currentLibraryRoot(catalog, libraryRootDeps(e2e?.libraryRoot));
 
+  // Move-to-Applications offer (release pipeline D6): a bundle run from ~/Downloads is App
+  // Translocated and Squirrel.Mac cannot update it. Asked before any window exists. The
+  // macOS-only app.isInApplicationsFolder / moveToApplicationsFolder never run on win32: the
+  // first is darwin-gated inline, the second runs only once shouldOfferMove (darwin-only) passed.
+  // Any rejection here (a dialog, the catalog meta write) is logged and startup falls through to
+  // createWindow() — never a headless process with no window. Only 'moved' returns early.
+  try {
+    if (
+      shouldOfferMove({
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+        inApplications: process.platform === 'darwin' && app.isInApplicationsFolder(),
+        declined: catalog.getMeta(MOVE_DECLINED_META) === '1',
+        e2e: e2e !== null,
+      })
+    ) {
+      const outcome = await offerMove({
+        ask: async () => {
+          // Esc presses cancelId ("Don't Move"), so dismissing the prompt is a remembered decline
+          // too — intended: an unwanted question is never asked again (Task 14 notes the reset).
+          const { response } = await dialog.showMessageBox({
+            type: 'question',
+            buttons: ['Move to Applications', "Don't Move"],
+            defaultId: 0,
+            cancelId: 1,
+            message: 'Move Ntwine to your Applications folder?',
+            detail: 'Ntwine updates itself only when it runs from Applications.',
+          });
+          return response === 0 ? 'move' : 'later';
+        },
+        move: () => app.moveToApplicationsFolder({ conflictHandler: () => true }),
+        remember: () => catalog.setMeta(MOVE_DECLINED_META, '1'),
+        log: console.error,
+      });
+      // Electron relaunches from /Applications and quits this instance itself — no window, IPC
+      // or updater for a process that is about to exit.
+      if (outcome === 'moved') return;
+      if (outcome === 'failed') {
+        await dialog.showMessageBox({
+          type: 'warning',
+          message: "Ntwine couldn't move itself.",
+          detail: 'Drag Ntwine to your Applications folder and open it from there.',
+          buttons: ['OK'],
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[move-to-applications]', err);
+  }
+
+  // From here on `activate` may create windows; before this, whenReady may still be awaiting the
+  // move prompt or the "couldn't move itself" warning, and Electron can fire `activate` during a
+  // first launch — a window opened then would race (or outlive) the one created here.
+  startupDone = true;
   mainWindow = createWindow();
 
   registerProtocols({ catalog, getLibraryRoot, coversDir, e2eEmit });
@@ -211,7 +289,10 @@ app.whenReady().then(() => {
   // Re-points Task 2's hardcoded resolvePath at the real catalog lookup (drag.ts's own doc
   // comment has the full rationale) — registerDragHandler itself is not temporary and doesn't
   // change.
-  registerDragHandler((sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId), e2eEmit);
+  registerDragHandler(
+    (sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId),
+    e2eEmit,
+  );
 
   registerIpc({
     catalog,
@@ -220,17 +301,36 @@ app.whenReady().then(() => {
     coversDir,
     defaultLibraryRoot: e2e?.libraryRoot ?? undefined,
     e2eEmit,
-    // Guarded, not a bare `mainWindow?.webContents.send(...)`: a still-running background pass
-    // (e.g. queue.ts's peaks queue) can deliver a worker reply well after the window is gone —
-    // closing the WINDOW on macOS leaves the app (and this callback) alive, and `.webContents` on
-    // a destroyed BrowserWindow throws. Uncaught inside a worker-message callback, that would
-    // wedge runPeaksQueue: it never resolves, workers never get killed, 'done' never fires.
-    sendProgress: (p: ImportProgress) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('ntwine:import-progress', p);
-      }
-    },
+    sendProgress: (p: ImportProgress) => sendToWindow('ntwine:import-progress', p),
   });
+
+  // Self-update (release pipeline PR 2): packaged darwin/win32 only (shouldRunUpdater) — dev,
+  // e2e and Linux runs never construct it, never touch `autoUpdater`, and the bridge's update
+  // methods answer from `updater: null` (permanent idle). feedArchFor maps every Mac to the
+  // universal feed (the only Mac asset published).
+  const version = app.getVersion();
+  const updater = shouldRunUpdater({
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    env: process.env,
+  })
+    ? createUpdater({
+        autoUpdater,
+        feedUrl: feedUrlFor({
+          platform: process.platform,
+          arch: feedArchFor(process.platform, process.arch),
+          version,
+        }),
+        onState: (s: UpdateState) => sendToWindow('ntwine:update-state', s),
+      })
+    : null;
+  registerUpdaterIpc({
+    handle: ipcMain.handle.bind(ipcMain),
+    updater,
+    openExternal: (url) => shell.openExternal(url),
+    version,
+  });
+  updater?.start();
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -243,6 +343,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
+  // Ignored until whenReady has finished its awaits (see startupDone): whenReady creates the
+  // first window itself, and a pending 'moved' outcome must not get a window at all.
+  if (!startupDone) return;
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {

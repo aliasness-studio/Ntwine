@@ -156,4 +156,28 @@ export interface NtwineApi {
   deleteCollection(id: string): Promise<void>; // items cascade; samples untouched
   addToCollection(collectionId: string, sampleId: number): Promise<void>;
   removeFromCollection(collectionId: string, sampleId: number): Promise<void>;
+
+  // Self-update (release pipeline PR 2): the bridge grows from 24 to 29 methods here. Main owns
+  // the updater (src/main/updater.ts); in dev, e2e and Linux runs it never starts, and these
+  // still answer — `getUpdateState` is a permanent `idle`, `installUpdate` a no-op.
+  getUpdateState(): Promise<UpdateState>;
+  onUpdateState(cb: (s: UpdateState) => void): () => void; // 'ntwine:update-state' broadcast, once per transition
+  installUpdate(): Promise<void>; // quits and installs only when `ready`; otherwise a no-op
+  openReleasesPage(): Promise<void>; // opens RELEASES_URL — fixed in main, never renderer-supplied
+  getAppVersion(): Promise<string>; // app.getVersion()
 }
+
+// Self-update (release pipeline PR 2): what the renderer is told about Electron's `autoUpdater`,
+// as decided by the pure state machine in src/main/updater.ts. Deliberately coarse — checking,
+// downloading and ordinary network failures are all `idle` (silent, retried on the next tick);
+// the user only ever hears "an update is ready, restart to install" or, for the one failure a
+// retry can never fix (a code-signature mismatch, D7), "download it yourself" with a link to
+// `RELEASES_URL`.
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'ready'; version: string } // downloaded; restart installs
+  | { kind: 'failed'; reason: 'signature'; downloadUrl: string }; // D7 only
+// The single GitHub repo slug: the update feed (src/main/updater.ts) and RELEASES_URL both derive
+// from it. forge.config.ts's iconUrl repeats it as a literal (build config cannot import app source).
+export const UPDATE_REPO = 'aliasness-studio/Ntwine';
+export const RELEASES_URL = `https://github.com/${UPDATE_REPO}/releases/latest`;

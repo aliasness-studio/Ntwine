@@ -2,15 +2,18 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { DragIcon, ImportProgress, NtwineApi, QueryFilters } from './shared/ipcTypes';
+import type { DragIcon, ImportProgress, NtwineApi, QueryFilters, UpdateState } from './shared/ipcTypes';
 
 // THE typed IPC bridge (Task 11 — grown from the Task 2 spike's bare `startDrag`; Task 6 grows it
-// again, 12 -> 23 methods, design spec §4; the Splice-DB picker fallback, 23 -> 24). Every method but two is a plain
-// `ipcMain.handle`/`ipcRenderer.invoke` round-trip on the `ntwine:<method>` channel ipc.ts (or,
-// for `startDrag`, drag.ts) registers. The two exceptions:
+// again, 12 -> 23 methods, design spec §4; the Splice-DB picker fallback, 23 -> 24; self-update,
+// 24 -> 29). Every method but the exceptions below is a plain `ipcMain.handle`/`ipcRenderer.invoke`
+// round-trip on the `ntwine:<method>` channel ipc.ts (or, for `startDrag`, drag.ts; for the update
+// methods, updater.ts's `registerUpdaterIpc`) registers. The exceptions:
 //  - `onImportProgress` wraps `ipcRenderer.on` for the 'ntwine:import-progress' broadcast
 //    (ipc.ts's `sendProgress` -> `webContents.send`) rather than invoke/handle, since main
 //    pushes multiple events over the lifetime of one import, not a single request/response.
+//    `onUpdateState` is the same shape for the 'ntwine:update-state' broadcast (updater.ts's
+//    `onState`, once per state transition).
 //  - `sampleUrl`/`coverUrl` are pure template-string helpers with no IPC round-trip at all — the
 //    renderer already knows the URL shape (`sample://s/<id>`, `cover://p/<id>`); asking main
 //    would just be a wasted hop for a string it can build here.
@@ -74,6 +77,21 @@ const api: NtwineApi = {
 
   removeFromCollection: (collectionId: string, sampleId: number) =>
     ipcRenderer.invoke('ntwine:removeFromCollection', collectionId, sampleId),
+
+  // Self-update (release pipeline PR 2) — 5 new methods, bridge 24 -> 29.
+  getUpdateState: () => ipcRenderer.invoke('ntwine:getUpdateState'),
+
+  onUpdateState: (cb) => {
+    const listener = (_event: IpcRendererEvent, s: UpdateState) => cb(s);
+    ipcRenderer.on('ntwine:update-state', listener);
+    return () => ipcRenderer.removeListener('ntwine:update-state', listener);
+  },
+
+  installUpdate: () => ipcRenderer.invoke('ntwine:installUpdate'),
+
+  openReleasesPage: () => ipcRenderer.invoke('ntwine:openReleasesPage'),
+
+  getAppVersion: () => ipcRenderer.invoke('ntwine:getAppVersion'),
 };
 
 // E2E flag (e2e spec §3.1): main appends `--ntwine-e2e` to webPreferences.additionalArguments
