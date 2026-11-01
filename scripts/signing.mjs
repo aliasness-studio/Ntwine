@@ -4,6 +4,10 @@
 // forge.config.ts spreads `resolveSigning(process.env)` into `packagerConfig`.
 //
 // No NTWINE_SIGN_IDENTITY ⇒ an unsigned build, exactly as before (local dev, Linux, Windows).
+// Without an identity the APPLE_* variables below are ignored, with one warning: they are the
+// names electron-builder and fastlane read too, so a contributor may have them exported for some
+// other project, and that must not break their `yarn make`. NTWINE_NOTARY_KEYCHAIN_PROFILE is
+// Ntwine's own name and can only mean "notarize this build", so without an identity it throws.
 // An identity ⇒ hardened-runtime signing, and notarization credentials become mandatory: a signed
 // but un-notarized Developer ID build is Gatekeeper-blocked on every other Mac, so a half-configured
 // release environment fails here, loudly, instead of producing an installer nobody can open.
@@ -43,8 +47,17 @@ export function resolveSigning(env, opts = {}) {
   const keychainProfile = read('NTWINE_NOTARY_KEYCHAIN_PROFILE');
 
   if (identity === undefined) {
-    if (keychainProfile !== undefined || APPLE_ID_VARS.some((name) => read(name) !== undefined)) {
-      throw new Error('NTWINE_SIGN_IDENTITY is required when notarization credentials are set');
+    if (keychainProfile !== undefined) {
+      throw new Error(
+        'NTWINE_SIGN_IDENTITY is required when NTWINE_NOTARY_KEYCHAIN_PROFILE is set',
+      );
+    }
+    const ignored = APPLE_ID_VARS.filter((name) => read(name) !== undefined);
+    if (ignored.length > 0) {
+      console.warn(
+        `NTWINE_SIGN_IDENTITY is not set, so ${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} ` +
+          'ignored and this build is unsigned',
+      );
     }
     return { osxSign: undefined, osxNotarize: undefined };
   }

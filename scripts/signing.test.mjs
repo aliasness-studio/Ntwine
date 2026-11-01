@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveSigning } from './signing.mjs';
 
 // Obviously fake values: nothing under version control may carry a real identity or team id.
@@ -13,22 +13,64 @@ const APPLE_ID_TRIPLE = {
 };
 
 describe('resolveSigning', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('returns undefined for both when no identity is set', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
     expect(resolveSigning({})).toEqual({ osxSign: undefined, osxNotarize: undefined });
     // CI exposes an unset secret as an empty string, which must read as "not configured".
     expect(resolveSigning({ NTWINE_SIGN_IDENTITY: '' })).toEqual({
       osxSign: undefined,
       osxNotarize: undefined,
     });
+    // A clean unsigned build says nothing.
+    expect(warn).not.toHaveBeenCalled();
+  });
 
-    // Credentials without an identity are a misconfiguration, not an unsigned build: notarizing
-    // needs a signed app, so silently dropping them would hide a broken release setup.
-    expect(() => resolveSigning({ APPLE_ID: 'x' })).toThrow(
-      'NTWINE_SIGN_IDENTITY is required when notarization credentials are set',
-    );
-    expect(() => resolveSigning({ NTWINE_NOTARY_KEYCHAIN_PROFILE: 'ntwine' })).toThrow(
-      'NTWINE_SIGN_IDENTITY is required when notarization credentials are set',
-    );
+  // APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are electron-builder and fastlane names a
+  // contributor may well have exported for another project. Without an identity they cannot mean
+  // "sign Ntwine", so they are ignored — with one warning — rather than breaking `yarn make`.
+  it('ignores the Apple ID variables without an identity, warning once with each name', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(resolveSigning({ ...APPLE_ID_TRIPLE })).toEqual({
+      osxSign: undefined,
+      osxNotarize: undefined,
+    });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0]);
+    for (const name of Object.keys(APPLE_ID_TRIPLE)) expect(message).toContain(name);
+  });
+
+  it('names only the Apple ID variables that are actually set', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(resolveSigning({ APPLE_ID: 'x', APPLE_TEAM_ID: '' })).toEqual({
+      osxSign: undefined,
+      osxNotarize: undefined,
+    });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0]);
+    expect(message).toContain('APPLE_ID');
+    expect(message).not.toContain('APPLE_TEAM_ID');
+    expect(message).not.toContain('APPLE_APP_SPECIFIC_PASSWORD');
+  });
+
+  // NTWINE_NOTARY_KEYCHAIN_PROFILE is Ntwine's own name: setting it can only mean "notarize this
+  // build", which needs a signed app — so without an identity it is a broken release setup.
+  it('throws on a keychain profile without an identity', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const message = 'NTWINE_SIGN_IDENTITY is required when NTWINE_NOTARY_KEYCHAIN_PROFILE is set';
+
+    expect(() => resolveSigning({ NTWINE_NOTARY_KEYCHAIN_PROFILE: 'ntwine' })).toThrow(message);
+    expect(() =>
+      resolveSigning({ NTWINE_NOTARY_KEYCHAIN_PROFILE: 'ntwine', ...APPLE_ID_TRIPLE }),
+    ).toThrow(message);
   });
 
   it('builds osxSign with hardened runtime and the entitlements path', () => {

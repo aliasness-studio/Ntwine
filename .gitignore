@@ -9,3 +9,8 @@ desktop.ini
 *.log
 playwright-report/
 test-results/
+
+# Signing material never belongs in the tree.
+*.p12
+*.cer
+*.provisionprofile

@@ -99,15 +99,16 @@ const config: ForgeConfig = {
   makers: [
     // setupIcon dresses the installer .exe itself; iconUrl is the Add/Remove-Programs icon and
     // must be an http(s) URL Windows can fetch, so it points at the checked-in .ico on main.
-    // `setupExe` puts the version and platform in the installer's name, so release assets from
-    // different versions never collide.
-    new MakerSquirrel({
+    // `setupExe` puts the version, platform and arch in the installer's name, so release assets
+    // from different versions or arches never collide. A config function, because Forge calls it
+    // once per target arch — a literal 'x64' would mislabel an arm64 installer.
+    new MakerSquirrel((arch) => ({
       name: 'Ntwine',
       authors: 'AliasNess Studio',
-      setupExe: `Ntwine-${version}-win32-x64-Setup.exe`,
+      setupExe: `Ntwine-${version}-win32-${arch}-Setup.exe`,
       iconUrl: 'https://raw.githubusercontent.com/aliasness-studio/Ntwine/main/assets/icon.ico',
       setupIcon: 'assets/icon.ico',
-    }),
+    })),
     new MakerZIP({}, ['darwin']),
     // The Linux packagers want one plain raster, not an .ico container.
     new MakerRpm({ options: { icon: 'assets/icon.png' } }),
