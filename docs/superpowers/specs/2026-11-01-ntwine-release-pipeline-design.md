@@ -30,8 +30,8 @@ Owner decisions taken in the brainstorm (binding):
   (self-hosted runners on a public repo let fork PRs run code on them). The Developer ID
   certificate (`.p12`) and the notarization app-specific password live in **GitHub repository
   secrets**. The spare machines are for manual installer/import QA.
-- **D4 — Signing identity is the individual team** `<team-id>` ("Developer ID Application:
-  <owner>"). Entity/LLC questions are deferred until something takes money; nothing in this
+- **D4 — Signing identity is the individual team** `<TEAMID>`
+  (`"Developer ID Application: <name> (<TEAMID>)"`). Entity/LLC questions are deferred until something takes money; nothing in this
   lane may make the later identity-string change painful.
 - **D5 — Day-to-day:** the owner installs the same artifact users get and receives updates the
   same way. No separate "owner build".
@@ -183,7 +183,7 @@ Orchestrator calls (owner-delegated, each overridable by the owner):
 
 - Unit: new helpers green under `yarn test`; `yarn typecheck`, `yarn lint` green.
 - Local: `yarn package` with no env → ad-hoc build, e2e suite unchanged and green.
-  `NTWINE_SIGN_IDENTITY="Developer ID Application: <owner> (<team-id>)"` plus the
+  `NTWINE_SIGN_IDENTITY="Developer ID Application: <name> (<TEAMID>)"` plus the
   keychain profile → `yarn make --arch universal` yields a stapled app that passes
   `spctl --assess` on the owner's Mac.
 - CI: a `v0.1.0` tag on `main` produces a Release with the macOS zip, the Windows

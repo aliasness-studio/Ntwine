@@ -8,16 +8,28 @@ repository: the build reads them from the environment only.
 `forge.config.ts` spreads `resolveSigning(process.env)` (`scripts/signing.mjs`) into
 `packagerConfig`. These are the only variables it reads; an empty string counts as unset.
 
-| Variable                                                   | Meaning                                                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `NTWINE_SIGN_IDENTITY`                                     | The codesign identity string, `Developer ID Application: … (TEAMID)`. Unset ⇒ an unsigned build. |
-| `NTWINE_NOTARY_KEYCHAIN_PROFILE`                           | A `xcrun notarytool store-credentials` profile name. Local builds use `AliasNess`.               |
-| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Notarization by Apple ID instead (CI). All three, or none.                                       |
+| Variable                                                   | Meaning                                                                                                   |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `NTWINE_SIGN_IDENTITY`                                     | The codesign identity string, `Developer ID Application: … (TEAMID)`. Unset ⇒ an unsigned build.          |
+| `NTWINE_NOTARY_KEYCHAIN_PROFILE`                           | A `xcrun notarytool store-credentials` profile name. Local builds use `AliasNess`. Requires the identity. |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Notarization by Apple ID instead (CI). All three, or none. Ignored, with a warning, without the identity. |
+
+The `AliasNess` profile is created once per Mac; `notarytool` prompts for an app-specific password
+and keeps it in the login keychain, so the build never sees it:
+
+```bash
+xcrun notarytool store-credentials AliasNess --apple-id <apple id> --team-id <team id>
+```
 
 With `NTWINE_SIGN_IDENTITY` set, one complete credential form is mandatory: the keychain profile,
 or all three `APPLE_*` variables. Anything less throws when Forge loads its config, naming what is
-missing — never a silent unsigned build, never a failure ten minutes in at notarization. A
-credential without the identity throws too.
+missing — never a silent unsigned build, never a failure ten minutes in at notarization.
+
+Without the identity the build is unsigned. `NTWINE_NOTARY_KEYCHAIN_PROFILE` then throws
+(`NTWINE_SIGN_IDENTITY is required when NTWINE_NOTARY_KEYCHAIN_PROFILE is set`): it is Ntwine's
+own variable and can only mean a half-configured release. The `APPLE_*` variables are only
+ignored, with one warning naming them: electron-builder and fastlane read the same names, so a
+contributor may have them exported for another project, and that must not break `yarn make`.
 
 Signed builds use the hardened runtime with `build/entitlements.mac.plist`
 (`allow-jit`, `allow-unsigned-executable-memory`) on every binary.
@@ -40,11 +52,11 @@ yarn make:mac
 ```
 
 `yarn make:mac` builds one universal (`x86_64 arm64`) app. Notarization uploads to Apple and
-waits for the verdict: anywhere from a few minutes to most of an hour (the first one took 37).
-Run it where it will not be interrupted. Output:
+waits for the verdict: anywhere from a few minutes to most of an hour (the first one took ~37
+minutes). Run it where it will not be interrupted. Output:
 
 - `out/Ntwine-darwin-universal/Ntwine.app`
-- `out/make/zip/darwin/universal/Ntwine-darwin-universal-0.1.0.zip`
+- `out/make/zip/darwin/universal/Ntwine-darwin-universal-<version>.zip`
 
 Verify before shipping:
 

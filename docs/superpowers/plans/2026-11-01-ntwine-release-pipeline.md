@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - **Bundle id** `com.aliasness.ntwine` (spec C1). **Version** `0.1.0` now (C2); tags are `v<semver>` and the release workflow refuses a tag whose version core differs from `package.json`.
-- **Env contract for signing (C6)** — the only names the build reads: `NTWINE_SIGN_IDENTITY` (the codesign identity string; absent ⇒ unsigned build, config byte-identical to today), `NTWINE_NOTARY_KEYCHAIN_PROFILE` (local: `AliasNess`), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (CI). Identity set with neither credential form complete ⇒ **throw at config load**, never a silent unsigned build.
-- **Team/identity strings appear once**: in the env (CI secrets, the owner's shell). Nothing under version control contains `<team-id>` or "<owner>" (D4).
+- **Env contract for signing (C6)** — the only names the build reads: `NTWINE_SIGN_IDENTITY` (the codesign identity string; absent ⇒ unsigned build, config byte-identical to today), `NTWINE_NOTARY_KEYCHAIN_PROFILE` (local: `AliasNess`), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (CI). Identity set with neither credential form complete ⇒ **throw at config load** listing the missing names, never a silent unsigned build. Identity unset: `NTWINE_NOTARY_KEYCHAIN_PROFILE` ⇒ throw (`NTWINE_SIGN_IDENTITY is required when NTWINE_NOTARY_KEYCHAIN_PROFILE is set`); `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` ⇒ **ignored** with one `console.warn` naming them, both keys `undefined` (they are electron-builder/fastlane names a contributor may have exported for another project).
+- **Team/identity strings appear once**: in the env (CI secrets, the owner's shell). Nothing under version control contains the real team id or the owner's name — docs use `<TEAMID>` and `"Developer ID Application: <name> (<TEAMID>)"` (D4).
 - **No secrets in the tree or history.** `.p12`, passwords, app-specific passwords only ever live in GitHub secrets or the owner's keychain.
 - **Updater (C4):** first check 30 s after ready, then every 4 h; silent download; dismissible "Restart to update"; never force. Off when `!app.isPackaged` or `NTWINE_E2E === '1'`. Only a code-signature mismatch (D7) surfaces as an error to the user; every other failure is logged and retried next interval.
 - **Update feed:** `https://update.electronjs.org/aliasness-studio/Ntwine/<platform>-<arch>/<version>`. Releases are **not** GitHub prereleases (spec §3.5) except rc tags (`v*-rc.*`), which are, so a dry run is invisible to the updater and to `/releases/latest`.
@@ -78,13 +78,13 @@ LICENSE, README.md                                                              
 - Create: `scripts/icns.mjs`, `scripts/icns.test.mjs`
 
 **Interfaces:**
-- Produces: `packIcns(frames: { size: number, png: Buffer }[]): Buffer` and `readIcnsTypes(buf: Buffer): string[]` (the 4-char OSTypes in file order). Size → type table, fixed: `16:'icp4', 32:'icp5', 64:'icp6', 128:'ic07', 256:'ic08', 512:'ic09', 1024:'ic10'`. Additionally, a 256 frame is written a second time as `ic13` (128@2x) and a 512 frame as `ic14` (256@2x). Unknown size ⇒ throw. Empty input ⇒ throw.
+- Produces: `packIcns(frames: { size: number, png: Buffer }[]): Buffer` and `readIcnsTypes(buf: Buffer): string[]` (the 4-char OSTypes in file order). Size → type table, fixed, in file order: `16:['icp4'], 32:['icp5','ic11'], 64:['ic12'], 128:['ic07'], 256:['ic08','ic13'], 512:['ic09','ic14'], 1024:['ic10']`. The second type is the @2x slot of half the size (`ic11` 16@2x, `ic12` 32@2x, `ic13` 128@2x, `ic14` 256@2x). 64 has no 1x slot — Apple reads `icp6` as 48px — so it is written only as `ic12`. Unknown size ⇒ throw. Empty input ⇒ throw.
 
 - [ ] **Step 1: Write the failing tests** in `scripts/icns.test.mjs`, same style as `scripts/ico.test.mjs`:
 
 ```js
 it('writes the icns magic and total length', ...)      // bytes 0-3 === 'icns', readUInt32BE(4) === buf.length
-it('maps sizes to OSTypes and duplicates retina types', ...) // frames [16,256,512] → ['icp4','ic08','ic13','ic09','ic14']
+it('maps sizes to OSTypes and duplicates retina types', ...) // frames [16,32,64,256,512] → ['icp4','icp5','ic11','ic12','ic08','ic13','ic09','ic14']
 it('embeds each PNG verbatim after an 8-byte entry header whose length includes the header', ...)
 it('throws on an unsupported size and on no frames', ...)   // 48 → /unsupported/, [] → /no frames/
 ```
@@ -102,7 +102,7 @@ it('throws on an unsupported size and on no frames', ...)   // 48 → /unsupport
 
 **Interfaces:**
 - Consumes: `packIcns` (Task 1).
-- Produces: `assets/icon.icns` with frames 16, 32, 64, 128, 256, 512, 1024 — 1024 rendered from `icon.svg`; frames ≤ 24 are not used by icns (macOS wants 16 from `icp4`; keep the ICO table unchanged).
+- Produces: `assets/icon.icns` with frames 16, 32, 64, 128, 256, 512, 1024 — 1024 rendered from `icon.svg`; frames ≤ 24 other than 16 are not used by icns (keep the ICO table unchanged). Written types, in order (Task 1's table): `icp4` (16), `icp5` + `ic11` (32), `ic12` (64), `ic07` (128), `ic08` + `ic13` (256), `ic09` + `ic14` (512), `ic10` (1024). `iconutil -c iconset assets/icon.icns` must yield exactly `icon_{16,32,128,256,512}x…` and their `@2x` — ten files, no 48.
 
 - [ ] **Step 1:** Add an `ICNS_FRAMES` table beside `FRAMES` (`16→icon-small.svg`, the rest `icon.svg`, sizes above) and a test in `scripts/icon.test.mjs` asserting the table's sizes equal `[16,32,64,128,256,512,1024]` and the 16 uses `icon-small.svg` (the existing crossover rule).
 - [ ] **Step 2:** Run the test — FAIL (table missing).
@@ -121,7 +121,7 @@ it('throws on an unsupported size and on no frames', ...)   // 48 → /unsupport
   - `NTWINE_SIGN_IDENTITY` unset/empty ⇒ `{ osxSign: undefined, osxNotarize: undefined }`.
   - Set ⇒ `osxSign = { identity, optionsForFile: () => ({ entitlements: <abs path to build/entitlements.mac.plist>, hardenedRuntime: true }) }`.
   - `osxNotarize`: if `NTWINE_NOTARY_KEYCHAIN_PROFILE` set ⇒ `{ keychainProfile }`; else if all three of `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` ⇒ `{ appleId, appleIdPassword, teamId }`; else **throw** `Error` whose message lists the missing names.
-  - Credentials set without identity ⇒ also throw (`NTWINE_SIGN_IDENTITY is required when notarization credentials are set`).
+  - Identity unset: `NTWINE_NOTARY_KEYCHAIN_PROFILE` set ⇒ throw (`NTWINE_SIGN_IDENTITY is required when NTWINE_NOTARY_KEYCHAIN_PROFILE is set`); any `APPLE_*` set ⇒ ignored, one `console.warn` naming them, both keys `undefined` (Global Constraints, env contract).
 - Entitlements file content (exact): `com.apple.security.cs.allow-jit` true, `com.apple.security.cs.allow-unsigned-executable-memory` true. Nothing else unless Task 5 proves the native module needs `disable-library-validation`.
 
 - [ ] **Step 1: Write failing tests** in `scripts/signing.test.mjs`:
@@ -168,7 +168,7 @@ NTWINE_SIGN_IDENTITY="<Developer ID Application identity>" NTWINE_NOTARY_KEYCHAI
 ```
 
 Expected: Forge logs signing, then "Notarizing…" and stapling; output `out/make/zip/darwin/universal/Ntwine-darwin-universal-0.1.0.zip`.
-  Known risk: `@electron/universal` may refuse the thin `prebuilds/darwin-x64.node` / `darwin-arm64.node` pair. If it does, add `packagerConfig.osxUniversal: { x64ArchFiles: '**/prebuilds/darwin-x64.node' }` and record the outcome in the task report.
+  Known risk (hit on the first run): `@electron/universal` refuses the thin `prebuilds/darwin-x64.node` / `darwin-arm64.node` pair, because both land byte-identical in both per-arch builds. The glob that worked: `packagerConfig.osxUniversal: { x64ArchFiles: '**/better-sqlite3/prebuilds/darwin-{x64,arm64}.node' }` — **both** thin prebuilds must be listed; naming only `darwin-x64.node` still fails on the arm64 one. `lib/binding.js` picks `prebuilds/darwin-${process.arch}.node` at runtime, so copying them through is correct.
 - [ ] **Step 2: Verify:**
 
 ```bash
@@ -343,7 +343,7 @@ Forge's `publisher-github` would run once per platform job and race on creating 
 - [ ] **Step 1:** Write the workflow:
   - `on: push: tags: ['v*']`; `permissions: contents: write`.
   - job `guard` (ubuntu): checkout, `node scripts/checkTagVersion.mjs "$GITHUB_REF_NAME"` → output `prerelease`.
-  - job `mac` (`macos-latest`, needs guard): setup-node 24 + yarn cache as in `e2e.yml`; import the cert into a throwaway keychain from secrets `MACOS_CERT_P12_BASE64` + `MACOS_CERT_PASSWORD` (pin any marketplace action by full SHA, or do it by hand with `security create-keychain` / `import` / `set-key-partition-list`); export `NTWINE_SIGN_IDENTITY` from secret `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` from secrets; `yarn --frozen-lockfile`; `yarn make:mac`; post-checks exactly as Task 5 Step 2 (including the packaged probe with `NTWINE_PACKAGED_DIR`); `upload-artifact` of `out/make/zip/darwin/universal/*.zip`; delete the keychain in an `always()` step.
+  - job `mac` (`macos-latest`, needs guard, `timeout-minutes: 120` — notarization took ~37 min on the first run): setup-node 24 + yarn cache as in `e2e.yml`; import the cert into a throwaway keychain from secrets `MACOS_CERT_P12_BASE64` + `MACOS_CERT_PASSWORD` (pin any marketplace action by full SHA, or do it by hand with `security create-keychain` / `import` / `set-key-partition-list`); export `NTWINE_SIGN_IDENTITY` from secret `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` from secrets; `yarn --frozen-lockfile`; `yarn make:mac`; post-checks exactly as Task 5 Step 2 (including the packaged probe with `NTWINE_PACKAGED_DIR`), plus an Intel-slice boot probe `arch -x86_64 <app>/Contents/MacOS/Ntwine` under Rosetta (allow for a first launch beyond 30 s while Rosetta translates); `upload-artifact` of `out/make/zip/darwin/universal/*.zip`; delete the keychain in an `always()` step.
   - job `win` (`windows-latest`, needs guard): setup as `e2e.yml`; `yarn make:win`; `upload-artifact` of `out/make/squirrel.windows/x64/*` (Setup.exe, RELEASES, .nupkg).
   - job `publish` (ubuntu, needs mac+win): download both; `gh release create "$GITHUB_REF_NAME" --title "Ntwine $GITHUB_REF_NAME (beta)" --generate-notes $( [ "$PRERELEASE" = true ] && echo --prerelease ) <files…>`; drop "(beta)" from the title when the tag is `v1.0.0` or later (a one-line shell check on the major).
 - [ ] **Step 2:** `yarn lint` is unaffected; validate YAML with `gh workflow view` after push or `actionlint` if installed (optional).
@@ -381,7 +381,7 @@ Forge's `publisher-github` would run once per platform job and race on creating 
 ### Task 17: secret and personal-data sweep
 
 - [ ] **Step 1:** `brew install gitleaks` (local tool, not CI); `gitleaks detect --source . --log-opts="--all" --redact` → expected: no leaks. Any finding ⇒ stop and bring it to the owner (rotate or rewrite is their decision).
-- [ ] **Step 2:** `git grep -n -i -E '/Users/<user>|C:\\\\Users|<splice-user>|<team-id>|<owner>' -- . ':!yarn.lock'` → expected: zero hits outside this plan/spec's own references to the *concept* (the spec names the team id once as background: remove it there too, replacing with "the owner's team id" — commit as part of this task).
+- [ ] **Step 2:** `git grep -n -i -E '/Users/<user>|C:\\\\Users|<email local part>|<TEAMID>|<owner name>' -- . ':!yarn.lock'`, with the real values substituted in the shell at run time (never written into the tree) → expected: zero hits. The release-pipeline spec and plan already carry only placeholders (`<TEAMID>`, `"Developer ID Application: <name> (<TEAMID>)"`); any older doc still naming them gets the same treatment — commit as part of this task.
 - [ ] **Step 3:** Review `docs/superpowers/**` and `tests/e2e/fixture/**` for real sample names or library listings; the fixture is synthetic by design (e2e spec D1) — confirm and note.
 - [ ] **Step 4: Commit** `chore: scrub identifiers ahead of going public`. Open PR 4.
 
