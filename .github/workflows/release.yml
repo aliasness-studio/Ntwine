@@ -23,6 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Full history, so origin/main is there for the ancestry check.
+          fetch-depth: 0
           persist-credentials: false
       # Stock runner Node is enough: the script imports only `node:` builtins. It prints one
       # `prerelease=true|false` line, or exits 1 when the tag doesn't match package.json.
@@ -31,6 +33,9 @@ jobs:
           line=$(node scripts/checkTagVersion.mjs "$GITHUB_REF_NAME")
           echo "$line"
           echo "$line" >> "$GITHUB_OUTPUT"
+      # Only reviewed, merged code ships: the tagged commit must be on main.
+      - run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::tag $GITHUB_REF_NAME is not on main"; exit 1; }
 
   mac:
     needs: guard
@@ -41,6 +46,24 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       CI: 'true'
     steps:
+      # Fail in seconds, not after a 30-minute build: an unset secret reaches the job as "".
+      - name: Check signing secrets
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for name in MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD MACOS_SIGN_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name secret is not set"
+              missing=1
+            fi
+          done
+          exit "$missing"
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -85,6 +108,14 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: yarn make:mac
+      # Right after the build: the key is gone before the checks and probes below run any
+      # third-party code (Playwright, the app itself).
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ]; then
+            security delete-keychain "$KEYCHAIN" || true
+          fi
       # docs/RELEASING.md "Verify before shipping".
       - name: Verify signature, notarization and architectures
         run: |
@@ -142,16 +173,11 @@ jobs:
           name: mac
           path: out/make/zip/darwin/universal/*.zip
           if-no-files-found: error
-      - name: Delete signing keychain
-        if: always()
-        run: |
-          if [ -n "${KEYCHAIN:-}" ]; then
-            security delete-keychain "$KEYCHAIN" || true
-          fi
 
   win:
     needs: guard
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       CI: 'true'
@@ -194,6 +220,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PRERELEASE: ${{ needs.guard.outputs.prerelease }}
         run: |
+          case "$PRERELEASE" in
+            true|false) ;;
+            *) echo "::error::bad prerelease output: '$PRERELEASE'"; exit 1 ;;
+          esac
           major="${GITHUB_REF_NAME#v}"
           major="${major%%.*}"
           title="Ntwine $GITHUB_REF_NAME"
