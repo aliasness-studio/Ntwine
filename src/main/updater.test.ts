@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RELEASES_URL } from '../shared/ipcTypes';
+import { RELEASES_URL, type UpdateState } from '../shared/ipcTypes';
 import {
   type AutoUpdaterLike,
   UPDATE_INITIAL_DELAY_MS,
@@ -8,7 +8,9 @@ import {
   classifyUpdateError,
   createUpdater,
   feedUrlFor,
+  registerUpdaterIpc,
   shouldRunUpdater,
+  type Updater,
 } from './updater';
 
 // Stand-in for Electron's `autoUpdater`: a real EventEmitter (so tests drive it with `emit`,
@@ -261,5 +263,67 @@ describe('createUpdater', () => {
     );
     updater.install();
     expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('registerUpdaterIpc', () => {
+  // Injected `handle` (main.ts passes `ipcMain.handle.bind(ipcMain)`): records each registration
+  // so a test can invoke the handler exactly as ipcMain would. No `electron` mock needed.
+  function register(updater: Updater | null) {
+    const handlers = new Map<string, (...a: any[]) => unknown>();
+    const handle = vi.fn((channel: string, fn: (...a: any[]) => unknown) => {
+      handlers.set(channel, fn);
+    });
+    const openExternal = vi.fn(async () => {});
+    registerUpdaterIpc({ handle, updater, openExternal, version: '0.3.1' });
+    const invoke = (channel: string) => {
+      const fn = handlers.get(channel);
+      if (!fn) throw new Error(`no handler for ${channel}`);
+      return fn({} /* IpcMainInvokeEvent */);
+    };
+    return { handle, handlers, openExternal, invoke };
+  }
+
+  function fakeUpdater(state: UpdateState): Updater {
+    return { start: vi.fn(), state: vi.fn(() => state), install: vi.fn() };
+  }
+
+  it('registers exactly the four update channels', () => {
+    const { handle, handlers } = register(null);
+    expect(handle).toHaveBeenCalledTimes(4);
+    expect([...handlers.keys()].sort()).toEqual([
+      'ntwine:getAppVersion',
+      'ntwine:getUpdateState',
+      'ntwine:installUpdate',
+      'ntwine:openReleasesPage',
+    ]);
+  });
+
+  it('openReleasesPage opens exactly RELEASES_URL', async () => {
+    const { openExternal, invoke } = register(null);
+    await invoke('ntwine:openReleasesPage');
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledWith(RELEASES_URL);
+  });
+
+  it('getAppVersion resolves the injected version', async () => {
+    const { invoke } = register(null);
+    expect(await invoke('ntwine:getAppVersion')).toBe('0.3.1');
+  });
+
+  it('with no updater, getUpdateState is idle and installUpdate is a no-op', async () => {
+    const { invoke } = register(null);
+    expect(await invoke('ntwine:getUpdateState')).toEqual({ kind: 'idle' });
+    await expect(Promise.resolve(invoke('ntwine:installUpdate'))).resolves.toBeUndefined();
+  });
+
+  it('with an updater, getUpdateState reads its current state and installUpdate delegates', async () => {
+    const ready: UpdateState = { kind: 'ready', version: '0.4.0' };
+    const updater = fakeUpdater(ready);
+    const { invoke } = register(updater);
+    expect(await invoke('ntwine:getUpdateState')).toEqual(ready);
+    await invoke('ntwine:installUpdate');
+    expect(updater.install).toHaveBeenCalledTimes(1);
+    expect(updater.start).not.toHaveBeenCalled();
   });
 });

@@ -156,6 +156,15 @@ export interface NtwineApi {
   deleteCollection(id: string): Promise<void>; // items cascade; samples untouched
   addToCollection(collectionId: string, sampleId: number): Promise<void>;
   removeFromCollection(collectionId: string, sampleId: number): Promise<void>;
+
+  // Self-update (release pipeline PR 2): the bridge grows from 24 to 29 methods here. Main owns
+  // the updater (src/main/updater.ts); in dev, e2e and Linux runs it never starts, and these
+  // still answer — `getUpdateState` is a permanent `idle`, `installUpdate` a no-op.
+  getUpdateState(): Promise<UpdateState>;
+  onUpdateState(cb: (s: UpdateState) => void): () => void; // 'ntwine:update-state' broadcast, once per transition
+  installUpdate(): Promise<void>; // quits and installs only when `ready`; otherwise a no-op
+  openReleasesPage(): Promise<void>; // opens RELEASES_URL — fixed in main, never renderer-supplied
+  getAppVersion(): Promise<string>; // app.getVersion()
 }
 
 // Self-update (release pipeline PR 2): what the renderer is told about Electron's `autoUpdater`,

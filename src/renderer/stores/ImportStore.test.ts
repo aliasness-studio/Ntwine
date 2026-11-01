@@ -47,6 +47,12 @@ function makeFakeApi(
     deleteCollection: vi.fn(async () => {}),
     addToCollection: vi.fn(async () => {}),
     removeFromCollection: vi.fn(async () => {}),
+    // Self-update (release pipeline PR 2): 5 bridge methods, inert here.
+    getUpdateState: vi.fn(async () => ({ kind: 'idle' as const })),
+    onUpdateState: vi.fn(() => () => {}),
+    installUpdate: vi.fn(async () => {}),
+    openReleasesPage: vi.fn(async () => {}),
+    getAppVersion: vi.fn(async () => '0.0.0'),
   };
 }
 

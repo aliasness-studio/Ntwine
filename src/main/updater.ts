@@ -146,3 +146,25 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     },
   };
 }
+
+export interface UpdaterIpcDeps {
+  /** `ipcMain.handle.bind(ipcMain)` in main.ts; injected so this stays Electron-free and testable. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handle: (channel: string, fn: (...a: any[]) => unknown) => void;
+  /** `null` whenever `shouldRunUpdater` is false (dev, e2e, Linux): the bridge still answers. */
+  updater: Updater | null;
+  openExternal: (url: string) => Promise<void>;
+  version: string;
+}
+
+/** The four update invokes behind NtwineApi's `getUpdateState`/`installUpdate`/`openReleasesPage`/
+ * `getAppVersion`. The `'ntwine:update-state'` broadcast is not here: main.ts wires `onState` to
+ * the window directly. With no updater the renderer simply sees a permanent `idle`. */
+export function registerUpdaterIpc(deps: UpdaterIpcDeps): void {
+  const { handle, updater, openExternal, version } = deps;
+  handle('ntwine:getUpdateState', (): UpdateState => updater?.state() ?? { kind: 'idle' });
+  handle('ntwine:installUpdate', (): void => updater?.install());
+  // Fixed URL, never renderer-supplied: this channel must not become an arbitrary-URL opener.
+  handle('ntwine:openReleasesPage', () => openExternal(RELEASES_URL));
+  handle('ntwine:getAppVersion', () => version);
+}

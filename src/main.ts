@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen } from 'electron';
+import { app, autoUpdater, BrowserWindow, ipcMain, screen, shell } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +11,9 @@ import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
+import { createUpdater, feedUrlFor, registerUpdaterIpc, shouldRunUpdater } from './main/updater';
 import { openUserDb } from './main/user/userDb';
-import type { ImportProgress } from './shared/ipcTypes';
+import type { ImportProgress, UpdateState } from './shared/ipcTypes';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -61,6 +62,18 @@ if (e2e?.hidden) {
 const e2eEmit = makeE2EEmitter(app, e2e);
 
 let mainWindow: BrowserWindow | null = null;
+
+// Every main -> renderer broadcast goes through this guard, not a bare
+// `mainWindow?.webContents.send(...)`: a still-running background pass (e.g. queue.ts's peaks
+// queue) or an update check can deliver well after the window is gone — closing the WINDOW on
+// macOS leaves the app (and these callbacks) alive, and `.webContents` on a destroyed
+// BrowserWindow throws. Uncaught inside a worker-message callback, that would wedge
+// runPeaksQueue: it never resolves, workers never get killed, 'done' never fires.
+const sendToWindow = (channel: string, payload: unknown): void => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+};
 
 // Resolved once: app.getAppPath() is the project root unpackaged and app.asar packaged, and
 // neither moves while the app runs.
@@ -220,17 +233,36 @@ app.whenReady().then(() => {
     coversDir,
     defaultLibraryRoot: e2e?.libraryRoot ?? undefined,
     e2eEmit,
-    // Guarded, not a bare `mainWindow?.webContents.send(...)`: a still-running background pass
-    // (e.g. queue.ts's peaks queue) can deliver a worker reply well after the window is gone —
-    // closing the WINDOW on macOS leaves the app (and this callback) alive, and `.webContents` on
-    // a destroyed BrowserWindow throws. Uncaught inside a worker-message callback, that would
-    // wedge runPeaksQueue: it never resolves, workers never get killed, 'done' never fires.
-    sendProgress: (p: ImportProgress) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('ntwine:import-progress', p);
-      }
-    },
+    sendProgress: (p: ImportProgress) => sendToWindow('ntwine:import-progress', p),
   });
+
+  // Self-update (release pipeline PR 2): packaged darwin/win32 only (shouldRunUpdater) — dev,
+  // e2e and Linux runs never construct it, never touch `autoUpdater`, and the bridge's update
+  // methods answer from `updater: null` (permanent idle). darwin always asks for the universal
+  // feed: that is the only Mac asset published (make:mac), whatever arch this process runs as.
+  const version = app.getVersion();
+  const updater = shouldRunUpdater({
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    env: process.env,
+  })
+    ? createUpdater({
+        autoUpdater,
+        feedUrl: feedUrlFor({
+          platform: process.platform,
+          arch: process.platform === 'darwin' ? 'universal' : process.arch,
+          version,
+        }),
+        onState: (s: UpdateState) => sendToWindow('ntwine:update-state', s),
+      })
+    : null;
+  registerUpdaterIpc({
+    handle: ipcMain.handle.bind(ipcMain),
+    updater,
+    openExternal: (url) => shell.openExternal(url),
+    version,
+  });
+  updater?.start();
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
