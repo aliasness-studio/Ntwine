@@ -12,7 +12,13 @@ import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
 import { MOVE_DECLINED_META, offerMove, shouldOfferMove } from './main/moveToApplications';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
-import { createUpdater, feedUrlFor, registerUpdaterIpc, shouldRunUpdater } from './main/updater';
+import {
+  createUpdater,
+  feedArchFor,
+  feedUrlFor,
+  registerUpdaterIpc,
+  shouldRunUpdater,
+} from './main/updater';
 import { openUserDb } from './main/user/userDb';
 import type { ImportProgress, UpdateState } from './shared/ipcTypes';
 
@@ -63,6 +69,10 @@ if (e2e?.hidden) {
 const e2eEmit = makeE2EEmitter(app, e2e);
 
 let mainWindow: BrowserWindow | null = null;
+// Set by whenReady immediately before it creates the first window; until then `activate` is a
+// no-op. Electron can fire `activate` during first launch while whenReady is still awaiting the
+// move-to-Applications prompt or its failure warning (both modal, both before any window).
+let startupDone = false;
 
 // Every main -> renderer broadcast goes through this guard, not a bare
 // `mainWindow?.webContents.send(...)`: a still-running background pass (e.g. queue.ts's peaks
@@ -222,44 +232,56 @@ app.whenReady().then(async () => {
   // Translocated and Squirrel.Mac cannot update it. Asked before any window exists. The
   // macOS-only app.isInApplicationsFolder / moveToApplicationsFolder never run on win32: the
   // first is darwin-gated inline, the second runs only once shouldOfferMove (darwin-only) passed.
-  if (
-    shouldOfferMove({
-      platform: process.platform,
-      isPackaged: app.isPackaged,
-      inApplications: process.platform === 'darwin' && app.isInApplicationsFolder(),
-      declined: catalog.getMeta(MOVE_DECLINED_META) === '1',
-      e2e: e2e !== null,
-    })
-  ) {
-    const outcome = await offerMove({
-      ask: async () => {
-        const { response } = await dialog.showMessageBox({
-          type: 'question',
-          buttons: ['Move to Applications', 'Not now'],
-          defaultId: 0,
-          cancelId: 1,
-          message: 'Move Ntwine to your Applications folder?',
-          detail: 'Ntwine updates itself only when it runs from Applications.',
-        });
-        return response === 0 ? 'move' : 'later';
-      },
-      move: () => app.moveToApplicationsFolder({ conflictHandler: () => true }),
-      remember: () => catalog.setMeta(MOVE_DECLINED_META, '1'),
-      log: console.error,
-    });
-    // Electron relaunches from /Applications and quits this instance itself — no window, IPC
-    // or updater for a process that is about to exit.
-    if (outcome === 'moved') return;
-    if (outcome === 'failed') {
-      await dialog.showMessageBox({
-        type: 'warning',
-        message: "Ntwine couldn't move itself.",
-        detail: 'Drag Ntwine to your Applications folder and open it from there.',
-        buttons: ['OK'],
+  // Any rejection here (a dialog, the catalog meta write) is logged and startup falls through to
+  // createWindow() — never a headless process with no window. Only 'moved' returns early.
+  try {
+    if (
+      shouldOfferMove({
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+        inApplications: process.platform === 'darwin' && app.isInApplicationsFolder(),
+        declined: catalog.getMeta(MOVE_DECLINED_META) === '1',
+        e2e: e2e !== null,
+      })
+    ) {
+      const outcome = await offerMove({
+        ask: async () => {
+          // Esc presses cancelId ("Don't Move"), so dismissing the prompt is a remembered decline
+          // too — intended: an unwanted question is never asked again (Task 14 notes the reset).
+          const { response } = await dialog.showMessageBox({
+            type: 'question',
+            buttons: ['Move to Applications', "Don't Move"],
+            defaultId: 0,
+            cancelId: 1,
+            message: 'Move Ntwine to your Applications folder?',
+            detail: 'Ntwine updates itself only when it runs from Applications.',
+          });
+          return response === 0 ? 'move' : 'later';
+        },
+        move: () => app.moveToApplicationsFolder({ conflictHandler: () => true }),
+        remember: () => catalog.setMeta(MOVE_DECLINED_META, '1'),
+        log: console.error,
       });
+      // Electron relaunches from /Applications and quits this instance itself — no window, IPC
+      // or updater for a process that is about to exit.
+      if (outcome === 'moved') return;
+      if (outcome === 'failed') {
+        await dialog.showMessageBox({
+          type: 'warning',
+          message: "Ntwine couldn't move itself.",
+          detail: 'Drag Ntwine to your Applications folder and open it from there.',
+          buttons: ['OK'],
+        });
+      }
     }
+  } catch (err) {
+    console.error('[move-to-applications]', err);
   }
 
+  // From here on `activate` may create windows; before this, whenReady may still be awaiting the
+  // move prompt or the "couldn't move itself" warning, and Electron can fire `activate` during a
+  // first launch — a window opened then would race (or outlive) the one created here.
+  startupDone = true;
   mainWindow = createWindow();
 
   registerProtocols({ catalog, getLibraryRoot, coversDir, e2eEmit });
@@ -267,7 +289,10 @@ app.whenReady().then(async () => {
   // Re-points Task 2's hardcoded resolvePath at the real catalog lookup (drag.ts's own doc
   // comment has the full rationale) — registerDragHandler itself is not temporary and doesn't
   // change.
-  registerDragHandler((sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId), e2eEmit);
+  registerDragHandler(
+    (sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId),
+    e2eEmit,
+  );
 
   registerIpc({
     catalog,
@@ -281,8 +306,8 @@ app.whenReady().then(async () => {
 
   // Self-update (release pipeline PR 2): packaged darwin/win32 only (shouldRunUpdater) — dev,
   // e2e and Linux runs never construct it, never touch `autoUpdater`, and the bridge's update
-  // methods answer from `updater: null` (permanent idle). darwin always asks for the universal
-  // feed: that is the only Mac asset published (make:mac), whatever arch this process runs as.
+  // methods answer from `updater: null` (permanent idle). feedArchFor maps every Mac to the
+  // universal feed (the only Mac asset published).
   const version = app.getVersion();
   const updater = shouldRunUpdater({
     isPackaged: app.isPackaged,
@@ -293,7 +318,7 @@ app.whenReady().then(async () => {
         autoUpdater,
         feedUrl: feedUrlFor({
           platform: process.platform,
-          arch: process.platform === 'darwin' ? 'universal' : process.arch,
+          arch: feedArchFor(process.platform, process.arch),
           version,
         }),
         onState: (s: UpdateState) => sendToWindow('ntwine:update-state', s),
@@ -318,6 +343,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
+  // Ignored until whenReady has finished its awaits (see startupDone): whenReady creates the
+  // first window itself, and a pending 'moved' outcome must not get a window at all.
+  if (!startupDone) return;
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {

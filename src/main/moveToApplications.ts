@@ -6,7 +6,8 @@
  * main.ts passes in the real dialog / app.moveToApplicationsFolder / catalog meta.
  */
 
-/** Catalog meta key; '1' once the user chose "Not now" — the offer is never repeated. */
+/** Catalog meta key; '1' once the user chose "Don't Move" (or pressed Esc, which is the same
+ * button) — the offer is never repeated. */
 export const MOVE_DECLINED_META = 'move_to_applications_declined';
 
 /** Packaged darwin builds outside /Applications that have not declined, never in E2E mode.
