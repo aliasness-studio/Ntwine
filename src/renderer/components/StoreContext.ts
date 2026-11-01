@@ -13,6 +13,7 @@ import { createContext, useContext } from 'react';
 import type { ImportStore } from '../stores/ImportStore';
 import type { LibraryStore } from '../stores/LibraryStore';
 import type { PlayerStore } from '../stores/PlayerStore';
+import type { UpdateStore } from '../stores/UpdateStore';
 import type { UserLayerStore } from '../stores/UserLayerStore';
 
 export interface Stores {
@@ -20,6 +21,7 @@ export interface Stores {
   player: PlayerStore;
   importStore: ImportStore;
   userLayer: UserLayerStore;
+  update: UpdateStore;
 }
 
 export const StoreContext = createContext<Stores | null>(null);
