@@ -65,12 +65,14 @@ describe('the macOS frame table', () => {
 describe('the committed macOS icon', () => {
   const icns = readFileSync(join(ASSETS, 'icon.icns'));
 
-  // 256 and 512 appear twice: once as their own 1x type, once as the @2x of half their size.
-  it('carries an entry for every frame, plus the two Retina duplicates', () => {
+  // 32, 256 and 512 appear twice: once as their own 1x type, once as the @2x of half their size.
+  // 64 has no 1x slot ('icp6' is 48px), so it appears only as 'ic12', the 32pt@2x.
+  it('carries an entry for every frame, plus the three Retina duplicates', () => {
     expect(readIcnsTypes(icns)).toEqual([
       'icp4',
       'icp5',
-      'icp6',
+      'ic11',
+      'ic12',
       'ic07',
       'ic08',
       'ic13',
@@ -84,7 +86,8 @@ describe('the committed macOS icon', () => {
     const sizeForType = {
       icp4: 16,
       icp5: 32,
-      icp6: 64,
+      ic11: 32,
+      ic12: 64,
       ic07: 128,
       ic08: 256,
       ic13: 256,

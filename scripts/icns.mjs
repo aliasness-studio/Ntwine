@@ -13,25 +13,26 @@
 const HEADER_BYTES = 8;
 const ENTRY_HEADER_BYTES = 8;
 
-/** The 1x OSType for each pixel size. Fixed by the format; any other size has no type. */
-const TYPE_FOR_SIZE = new Map([
-  [16, 'icp4'],
-  [32, 'icp5'],
-  [64, 'icp6'],
-  [128, 'ic07'],
-  [256, 'ic08'],
-  [512, 'ic09'],
-  [1024, 'ic10'],
-]);
-
 /**
- * Sizes that double as the @2x image of a smaller point size. macOS looks up the retina variant by
- * its own OSType ('ic13' = 128pt@2x, 'ic14' = 256pt@2x) rather than by pixel count, so the same PNG
- * is written a second time under that type — otherwise a Retina Finder upscales the 1x frame.
+ * The OSTypes each pixel size is written under, in file order. Fixed by the format; any other size
+ * has no type.
+ *
+ * A size can fill two slots: its own 1x type, and the @2x of half its size. macOS looks up a
+ * Retina variant by its own OSType rather than by pixel count — 'ic11' is 16pt@2x (32px), 'ic12'
+ * is 32pt@2x (64px), 'ic13' is 128pt@2x (256px), 'ic14' is 256pt@2x (512px) — so the same PNG is
+ * written a second time under that type, otherwise a Retina Finder upscales the 1x frame.
+ *
+ * 64px has no 1x slot: 'icp6' looks like the next step after 'icp4'/'icp5' but Apple reads it as a
+ * 48px image, so a 64px PNG there is a mislabelled frame. 64px goes in 'ic12' only.
  */
-const RETINA_TYPE_FOR_SIZE = new Map([
-  [256, 'ic13'],
-  [512, 'ic14'],
+const TYPES_FOR_SIZE = new Map([
+  [16, ['icp4']],
+  [32, ['icp5', 'ic11']],
+  [64, ['ic12']],
+  [128, ['ic07']],
+  [256, ['ic08', 'ic13']],
+  [512, ['ic09', 'ic14']],
+  [1024, ['ic10']],
 ]);
 
 /**
@@ -45,12 +46,10 @@ export function packIcns(frames) {
   }
 
   const entries = frames.flatMap((frame) => {
-    const type = TYPE_FOR_SIZE.get(frame.size);
-    if (type === undefined) {
+    const types = TYPES_FOR_SIZE.get(frame.size);
+    if (types === undefined) {
       throw new Error(`packIcns: unsupported size ${frame.size}px — ICNS has no OSType for it`);
     }
-    const retinaType = RETINA_TYPE_FOR_SIZE.get(frame.size);
-    const types = retinaType === undefined ? [type] : [type, retinaType];
     return types.map((entryType) => {
       const header = Buffer.alloc(ENTRY_HEADER_BYTES);
       header.write(entryType, 0, 4, 'latin1');
