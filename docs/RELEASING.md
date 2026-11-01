@@ -35,7 +35,8 @@ git commit -am "chore(release): 0.2.0" && git push -u origin HEAD && gh pr creat
 Merge the PR once CI is green.
 
 **Step 2 — tag the merged commit on `main`.** The middle command is the same guard the workflow
-runs first; it prints `prerelease=false` or says why the tag is refused.
+runs first; it prints `prerelease=false` or says why the tag is refused. Until the repository is
+public (spec §6), tag only `-rc.N` versions here (§2); the first real `v0.1.0` comes after the flip.
 
 ```bash
 git switch main && git pull
@@ -249,7 +250,7 @@ is timestamped and notarized. Renew in January 2027.
    with `security find-identity -v -p codesigning`. The old and new certificates have the same
    name, so a local build may call the identity ambiguous while both are there. Deleting the old
    one in Keychain Access (My Certificates, the earlier expiry date) can wait until a build with
-   the new one has succeeded (step 5): until then it is your rollback.
+   the new one has succeeded (a local build, or the dry run in step 5): until then it is your rollback.
 4. **Re-export and replace the two certificate secrets:** §3 steps 1, 2 and the `rm` in step 5.
    `MACOS_CERT_P12_BASE64` and `MACOS_CERT_PASSWORD` are the only secrets that change.
 5. **Dry run** (§2) before the next real release.
