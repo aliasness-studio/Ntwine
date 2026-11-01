@@ -79,7 +79,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     onState(next);
   }
 
-  /** Cancel every pending check — used once the updater can never succeed (signature failure). */
+  /** Cancel every pending check: once an update is downloaded (another check would re-download
+   * it; `install()` is all that is left) or once the updater can never succeed (signature failure). */
   function stop(): void {
     if (firstCheck !== null) clearTimeout(firstCheck);
     if (interval !== null) clearInterval(interval);
@@ -96,6 +97,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       autoUpdater.on(
         'update-downloaded',
         (_event: unknown, _notes: unknown, releaseName: string) => {
+          stop();
           setState({ kind: 'ready', version: releaseName });
         },
       );

@@ -152,6 +152,26 @@ describe('createUpdater', () => {
     expect(onState).toHaveBeenCalledTimes(1);
   });
 
+  it('stops polling once an update is ready (re-checking would re-download it)', () => {
+    const { autoUpdater, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    autoUpdater.emit(
+      'update-downloaded',
+      {},
+      'notes',
+      '0.2.0',
+      new Date(),
+      'https://example.invalid',
+    );
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS * 3);
+
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(updater.state()).toStrictEqual({ kind: 'ready', version: '0.2.0' });
+  });
+
   it('install() only quits-and-installs when ready', () => {
     const { autoUpdater, updater } = setup();
     updater.start();
