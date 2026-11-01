@@ -127,7 +127,7 @@ it('throws on an unsupported size and on no frames', ...)   // 48 → /unsupport
 - [ ] **Step 1: Write failing tests** in `scripts/signing.test.mjs`:
 
 ```js
-it('returns undefined for both when no identity is set', ...)        // {} and { APPLE_ID: 'x' } without identity → throws for the second
+it('returns undefined for both when no identity is set', ...)        // {} → both undefined; { APPLE_ID: 'x' } without identity → both undefined + one console.warn naming it
 it('builds osxSign with hardened runtime and the entitlements path', ...)
 it('prefers the keychain profile over the Apple ID triple', ...)
 it('uses the Apple ID triple when no profile is set', ...)
