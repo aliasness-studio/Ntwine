@@ -1,7 +1,8 @@
 // Turns assets/icon.svg + assets/icon-small.svg into the binaries the build actually ships:
-// assets/icon.ico (Windows: the exe, the taskbar, the Squirrel installer) and assets/icon.png
-// (Linux .deb/.rpm, plus anywhere a plain image is wanted). Run it with `yarn icons` after editing
-// either SVG; the outputs are committed, so a normal `yarn make` never needs this script.
+// assets/icon.ico (Windows: the exe, the taskbar, the Squirrel installer), assets/icon.icns (macOS:
+// the .app bundle, Finder, the Dock) and assets/icon.png (Linux .deb/.rpm, plus anywhere a plain
+// image is wanted). Run it with `yarn icons` after editing either SVG; the outputs are committed,
+// so a normal `yarn make` never needs this script.
 //
 // ELECTRON IS THE RASTERIZER, deliberately. It is already a devDependency and the app's own
 // runtime, so this adds no tooling and — unlike a Playwright/Puppeteer Chromium or a native
@@ -20,25 +21,11 @@ import { app, BrowserWindow } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packIcns, readIcnsTypes } from './icns.mjs';
 import { packIco, readIcoSizes } from './ico.mjs';
+import { FRAMES, ICNS_FRAMES } from './icon-frames.mjs';
 
 const ASSETS = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
-
-/**
- * Which drawing serves which frame. 32 is the crossover, established by rendering both drawings at
- * both sizes magnified: at 32px the detailed mark is thin but crisp and its A still has a counter,
- * at 24px that counter closes to a speck and the strokes wash out. Below the crossover the blunter,
- * crossbar-free drawing is the one that stays legible (see icon-small.svg).
- */
-const FRAMES = [
-  { size: 16, source: 'icon-small.svg' },
-  { size: 24, source: 'icon-small.svg' },
-  { size: 32, source: 'icon.svg' },
-  { size: 48, source: 'icon.svg' },
-  { size: 64, source: 'icon.svg' },
-  { size: 128, source: 'icon.svg' },
-  { size: 256, source: 'icon.svg' },
-];
 
 /** The standalone PNG (Linux packagers want a single large raster, not a container). */
 const PNG_SIZE = 512;
@@ -66,16 +53,27 @@ ${svg}`;
  * One window for every frame, rather than a window per size, because Windows enforces a MINIMUM
  * window size: a 16x16 BrowserWindow is really 44x56, and the capture comes back that shape (the
  * assertion below caught exactly this on the first run). Capturing a rect out of a big window
- * sidesteps the floor entirely, and reuses one compositor instead of standing up seven.
+ * sidesteps the floor entirely, and reuses one compositor instead of standing up one per frame.
  *
  * `force-device-scale-factor` (set before app ready, below) is what makes a `size`-CSS-pixel rect
- * capture to exactly `size` DEVICE pixels — this machine's display reports 1.5, and without pinning
- * it every frame would come out 1.5x and need a lossy downscale.
+ * capture to exactly `size` DEVICE pixels on Windows — the dev box's display reports 1.5, and
+ * without pinning it every frame would come out 1.5x and need a lossy downscale. macOS ignores the
+ * switch: a Retina window keeps devicePixelRatio 2 and `capturePage` returns 2x the rect asked
+ * for. So the artwork is painted, and the rect captured, at `size / scale` CSS pixels, which is
+ * `size` device pixels on either host — the SVG is still rasterized once, straight at the target
+ * resolution, never scaled after the fact. `scale` is 1 wherever the switch took, so on Windows
+ * this is exactly the old path.
  */
-async function render(win, source, size) {
+async function render(win, scale, source, size) {
+  const css = size / scale;
+  if (!Number.isInteger(css)) {
+    throw new Error(
+      `cannot render ${size}px at device scale ${scale}: ${css} is not a whole CSS pixel`,
+    );
+  }
   const svg = readFileSync(join(ASSETS, source), 'utf8');
-  await win.loadURL(page(svg, size));
-  const image = await win.webContents.capturePage({ x: 0, y: 0, width: size, height: size });
+  await win.loadURL(page(svg, css));
+  const image = await win.webContents.capturePage({ x: 0, y: 0, width: css, height: css });
   if (image.isEmpty()) throw new Error(`capturePage returned an empty image for ${source} at ${size}px`);
   const { width, height } = image.getSize();
   if (width !== size || height !== size) {
@@ -88,7 +86,7 @@ async function main() {
   mkdirSync(ASSETS, { recursive: true });
 
   // Sized to the largest frame anything asks for, so every capture rect fits inside it.
-  const extent = Math.max(PNG_SIZE, ...FRAMES.map((f) => f.size));
+  const extent = Math.max(PNG_SIZE, ...[...FRAMES, ...ICNS_FRAMES].map((f) => f.size));
   const win = new BrowserWindow({
     width: extent,
     height: extent,
@@ -101,9 +99,12 @@ async function main() {
   });
 
   try {
+    await win.loadURL('about:blank');
+    const scale = await win.webContents.executeJavaScript('window.devicePixelRatio');
+
     const frames = [];
     for (const { size, source } of FRAMES) {
-      frames.push({ size, png: await render(win, source, size) });
+      frames.push({ size, png: await render(win, scale, source, size) });
       console.log(`  rendered ${source} at ${size}px`);
     }
 
@@ -111,14 +112,27 @@ async function main() {
     writeFileSync(join(ASSETS, 'icon.ico'), ico);
     console.log(`wrote assets/icon.ico — sizes ${readIcoSizes(ico).join(', ')}`);
 
-    writeFileSync(join(ASSETS, 'icon.png'), await render(win, PNG_SOURCE, PNG_SIZE));
+    // Rendered separately from the ICO frames, not reused: the sizes only partly overlap, and the
+    // whole run is a few seconds, so one more pass is cheaper than a cache keyed on (source, size).
+    const icnsFrames = [];
+    for (const { size, source } of ICNS_FRAMES) {
+      icnsFrames.push({ size, png: await render(win, scale, source, size) });
+      console.log(`  rendered ${source} at ${size}px`);
+    }
+
+    const icns = packIcns(icnsFrames);
+    writeFileSync(join(ASSETS, 'icon.icns'), icns);
+    console.log(`wrote assets/icon.icns — types ${readIcnsTypes(icns).join(', ')}`);
+
+    writeFileSync(join(ASSETS, 'icon.png'), await render(win, scale, PNG_SOURCE, PNG_SIZE));
     console.log(`wrote assets/icon.png — ${PNG_SIZE}x${PNG_SIZE}`);
   } finally {
     win.destroy();
   }
 }
 
-// Pinned before ready, which is the only point at which Chromium reads it.
+// Pinned before ready, which is the only point at which Chromium reads it. Windows/Linux only in
+// effect; see render() for how macOS, which ignores it, still gets 1:1 frames.
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 app.disableHardwareAcceleration(); // deterministic output; a build must not depend on the host GPU
 
