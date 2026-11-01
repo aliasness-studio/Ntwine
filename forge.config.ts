@@ -7,6 +7,28 @@ import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-nati
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import { execFileSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { version } from './package.json';
+import { resolveSigning } from './scripts/signing.mjs';
+
+/** The `.app` bundle `path` lives inside — Forge hooks get `<bundle>/Contents/Resources/app`. */
+function enclosingAppBundle(path: string): string {
+  for (let dir = path; dirname(dir) !== dir; dir = dirname(dir)) {
+    if (dir.endsWith('.app')) return dir;
+  }
+  throw new Error(`packageAfterCopy: no .app bundle above ${path}`);
+}
+
+/** `plutil -remove`, tolerating only the key already being absent; any other failure throws. */
+function removePlistKey(plist: string, key: string): void {
+  try {
+    execFileSync('plutil', ['-remove', key, plist], { stdio: ['ignore', 'ignore', 'pipe'] });
+  } catch (err) {
+    const stderr = String((err as { stderr?: Buffer }).stderr ?? '');
+    if (!stderr.includes('No value to remove')) throw err;
+  }
+}
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -15,6 +37,17 @@ const config: ForgeConfig = {
     // Windows, .icns on macOS) and ignores this on Linux, where the icon comes from the maker
     // options below instead. Both files are generated from assets/icon.svg by `yarn icons`.
     icon: 'assets/icon',
+    appBundleId: 'com.aliasness.ntwine',
+    appCategoryType: 'public.app-category.music',
+    // Developer ID signing + notarization, only when NTWINE_SIGN_IDENTITY is set (see the file);
+    // with no signing env both keys are undefined: an unsigned build, exactly as before.
+    ...resolveSigning(process.env),
+    // `--arch universal` lipo-merges every Mach-O file that differs between the x64 and arm64
+    // builds and refuses any that is byte-identical in both unless it matches this glob.
+    // better-sqlite3 ships each darwin prebuild as its own thin binary, and both land in both
+    // per-arch builds, so both are identical across them; lib/binding.js picks
+    // prebuilds/darwin-${process.arch}.node at runtime, so copying them through as-is is correct.
+    osxUniversal: { x64ArchFiles: '**/better-sqlite3/prebuilds/darwin-{x64,arm64}.node' },
     // F7, part 2: @electron-forge/plugin-vite's own resolveForgeConfig sets packagerConfig.ignore
     // to `(file) => !file.startsWith('/.vite')` whenever ignore is still unset when it runs — i.e.
     // it excludes node_modules from the packaged app entirely, on the assumption Vite bundles
@@ -51,11 +84,31 @@ const config: ForgeConfig = {
   // windows-latest runners): "unknown version \"undefined\"" → package fails. An empty
   // onlyModules list rebuilds no modules, so no VS is required to package on Windows at all.
   rebuildConfig: { onlyModules: [] },
+  hooks: {
+    // Spec C7: Electron's template Info.plist ships boilerplate microphone and camera usage
+    // descriptions; Ntwine uses neither device. This hook runs on the copied bundle before the
+    // packager reads Info.plist from disk and rewrites it, so the removal survives into the app.
+    packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform) => {
+      if (platform !== 'darwin') return;
+      const plist = join(enclosingAppBundle(buildPath), 'Contents', 'Info.plist');
+      for (const key of ['NSMicrophoneUsageDescription', 'NSCameraUsageDescription']) {
+        removePlistKey(plist, key);
+      }
+    },
+  },
   makers: [
-    // setupIcon dresses the installer .exe itself. Squirrel's other icon knob, `iconUrl`, is the
-    // Add/Remove-Programs icon and must be an http(s) URL Windows can fetch — it is deliberately
-    // left at the default until there is a stable public URL to point it at.
-    new MakerSquirrel({ setupIcon: 'assets/icon.ico' }),
+    // setupIcon dresses the installer .exe itself; iconUrl is the Add/Remove-Programs icon and
+    // must be an http(s) URL Windows can fetch, so it points at the checked-in .ico on main.
+    // `setupExe` puts the version, platform and arch in the installer's name, so release assets
+    // from different versions or arches never collide. A config function, because Forge calls it
+    // once per target arch — a literal 'x64' would mislabel an arm64 installer.
+    new MakerSquirrel((arch) => ({
+      name: 'Ntwine',
+      authors: 'AliasNess Studio',
+      setupExe: `Ntwine-${version}-win32-${arch}-Setup.exe`,
+      iconUrl: 'https://raw.githubusercontent.com/aliasness-studio/Ntwine/main/assets/icon.ico',
+      setupIcon: 'assets/icon.ico',
+    })),
     new MakerZIP({}, ['darwin']),
     // The Linux packagers want one plain raster, not an .ico container.
     new MakerRpm({ options: { icon: 'assets/icon.png' } }),
