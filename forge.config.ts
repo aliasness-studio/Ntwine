@@ -42,6 +42,12 @@ const config: ForgeConfig = {
     // Developer ID signing + notarization, only when NTWINE_SIGN_IDENTITY is set (see the file);
     // with no signing env both keys are undefined: an unsigned build, exactly as before.
     ...resolveSigning(process.env),
+    // `--arch universal` lipo-merges every Mach-O file that differs between the x64 and arm64
+    // builds and refuses any that is byte-identical in both unless it matches this glob.
+    // better-sqlite3 ships each darwin prebuild as its own thin binary, and both land in both
+    // per-arch builds, so both are identical across them; lib/binding.js picks
+    // prebuilds/darwin-${process.arch}.node at runtime, so copying them through as-is is correct.
+    osxUniversal: { x64ArchFiles: '**/better-sqlite3/prebuilds/darwin-{x64,arm64}.node' },
     // F7, part 2: @electron-forge/plugin-vite's own resolveForgeConfig sets packagerConfig.ignore
     // to `(file) => !file.startsWith('/.vite')` whenever ignore is still unset when it runs — i.e.
     // it excludes node_modules from the packaged app entirely, on the assumption Vite bundles
