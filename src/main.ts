@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, ipcMain, screen, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { computeDefaultBounds } from './main/defaultBounds';
 import { registerDragHandler } from './main/drag';
 import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
+import { MOVE_DECLINED_META, offerMove, shouldOfferMove } from './main/moveToApplications';
 import { dataDirFrom } from './main/paths';
 import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
 import { createUpdater, feedUrlFor, registerUpdaterIpc, shouldRunUpdater } from './main/updater';
@@ -195,7 +196,7 @@ const createWindow = (): BrowserWindow => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // All catalog state lives in a subdirectory of userData (spec §4): catalog.db (incl. waveform
   // peaks, spec §6), the Splice DB snapshot, and downloaded cover art. better-sqlite3's Database
   // constructor does NOT create missing parent directories (unlike snapshotSpliceDb/
@@ -216,6 +217,48 @@ app.whenReady().then(() => {
   // (NtwineApi.pickLibraryRoot), and everything below is wired up once — each consumer re-reads
   // the current value at request time instead of resolving against a startup snapshot.
   const getLibraryRoot = () => currentLibraryRoot(catalog, libraryRootDeps(e2e?.libraryRoot));
+
+  // Move-to-Applications offer (release pipeline D6): a bundle run from ~/Downloads is App
+  // Translocated and Squirrel.Mac cannot update it. Asked before any window exists. The
+  // macOS-only app.isInApplicationsFolder / moveToApplicationsFolder never run on win32: the
+  // first is darwin-gated inline, the second runs only once shouldOfferMove (darwin-only) passed.
+  if (
+    shouldOfferMove({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      inApplications: process.platform === 'darwin' && app.isInApplicationsFolder(),
+      declined: catalog.getMeta(MOVE_DECLINED_META) === '1',
+      e2e: e2e !== null,
+    })
+  ) {
+    const outcome = await offerMove({
+      ask: async () => {
+        const { response } = await dialog.showMessageBox({
+          type: 'question',
+          buttons: ['Move to Applications', 'Not now'],
+          defaultId: 0,
+          cancelId: 1,
+          message: 'Move Ntwine to your Applications folder?',
+          detail: 'Ntwine updates itself only when it runs from Applications.',
+        });
+        return response === 0 ? 'move' : 'later';
+      },
+      move: () => app.moveToApplicationsFolder({ conflictHandler: () => true }),
+      remember: () => catalog.setMeta(MOVE_DECLINED_META, '1'),
+      log: console.error,
+    });
+    // Electron relaunches from /Applications and quits this instance itself — no window, IPC
+    // or updater for a process that is about to exit.
+    if (outcome === 'moved') return;
+    if (outcome === 'failed') {
+      await dialog.showMessageBox({
+        type: 'warning',
+        message: "Ntwine couldn't move itself.",
+        detail: 'Drag Ntwine to your Applications folder and open it from there.',
+        buttons: ['OK'],
+      });
+    }
+  }
 
   mainWindow = createWindow();
 
