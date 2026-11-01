@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { REPO_ROOT } from './launch';
 
 export function packagedExecutable(): string {
-  const dir = join(REPO_ROOT, 'out', `Ntwine-${process.platform}-${process.arch}`);
+  // NTWINE_PACKAGED_DIR: absolute path to an `out/Ntwine-<platform>-<arch>` directory, for runs
+  // against a build other than the host-arch default (e.g. the universal release build).
+  const dir =
+    process.env.NTWINE_PACKAGED_DIR ??
+    join(REPO_ROOT, 'out', `Ntwine-${process.platform}-${process.arch}`);
   const exe = process.platform === 'darwin' ? join(dir, 'Ntwine.app', 'Contents', 'MacOS', 'Ntwine')
     : process.platform === 'win32' ? join(dir, 'Ntwine.exe')
     : null;
