@@ -17,6 +17,7 @@ import { PackRail } from './PackRail';
 import { SampleList, type SampleListHandle } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
 import { TransportControls } from './TransportControls';
+import { UpdateBadge } from './UpdateBadge';
 import { useStores } from './StoreContext';
 import { TopBar, type TopBarHandle } from './TopBar';
 
@@ -302,6 +303,7 @@ export function App() {
         </FilterDock>
         <RailFooter>
           <TransportControls />
+          <UpdateBadge />
           <GearButton
             type="button"
             title="Settings"

@@ -12,6 +12,9 @@ test('settings: re-run import stays idempotent, and re-pick persists a relocated
 
   await openSettings(page);
   await expect(page.getByTestId('settings-library-root')).toHaveText(fixture.libraryRoot);
+  // Version row (release pipeline Task 9): app.getVersion() resolved through the update bridge —
+  // a semver, not the '…' placeholder shown while UpdateStore.init() is still in flight.
+  await expect(page.getByTestId('settings-version')).toHaveText(/^\d+\.\d+\.\d+/);
 
   // --- re-run import is idempotent: the same 12 rows survive a second pass, no duplicates ---
   const reimportButton = page.getByRole('button', { name: 'Re-run import' });
