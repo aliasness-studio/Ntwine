@@ -19,6 +19,12 @@ class FakeAutoUpdater extends EventEmitter implements AutoUpdaterLike {
   quitAndInstall = vi.fn();
 }
 
+// Squirrel.Mac's wording for an update whose signature does not match the running app (D7).
+const SIGNATURE_MISMATCH =
+  'Code signature at URL file:///private/var/folders/x/Ntwine.app/ did not pass validation: ' +
+  'code failed to satisfy specified code requirement(s)';
+const UNSIGNED_LOCAL_BUILD = 'Could not get code signature for running application';
+
 const FEED = 'https://update.electronjs.org/aliasness-studio/Ntwine/darwin-universal/0.1.0';
 
 function setup() {
@@ -47,11 +53,13 @@ describe('updater helpers', () => {
     expect(shouldRunUpdater({ isPackaged: true, platform: 'linux', env: {} })).toBe(false);
   });
 
-  it('classifyUpdateError keys on "code signature" in the message', () => {
-    expect(
-      classifyUpdateError(new Error('Could not get code signature for running application')),
-    ).toBe('signature');
-    expect(classifyUpdateError(new Error('Code Signature is invalid'))).toBe('signature');
+  it('classifyUpdateError flags only a Squirrel.Mac signature-validation failure', () => {
+    expect(classifyUpdateError(new Error(SIGNATURE_MISMATCH))).toBe('signature');
+    expect(classifyUpdateError(new Error('code signature DID NOT PASS VALIDATION'))).toBe(
+      'signature',
+    );
+    // An unsigned / ad-hoc local `yarn package` build: not a D7 mismatch, stays silent.
+    expect(classifyUpdateError(new Error(UNSIGNED_LOCAL_BUILD))).toBe('other');
     expect(classifyUpdateError(new Error('net::ERR_INTERNET_DISCONNECTED'))).toBe('other');
     expect(classifyUpdateError('not an Error')).toBe('other');
   });
@@ -137,7 +145,7 @@ describe('createUpdater', () => {
     vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
 
-    autoUpdater.emit('error', new Error('Could not get code signature for running application'));
+    autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
 
     const failed = { kind: 'failed', reason: 'signature', downloadUrl: RELEASES_URL };
     expect(updater.state()).toStrictEqual(failed);
@@ -148,7 +156,7 @@ describe('createUpdater', () => {
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
 
     // A repeat of the same failure is not a change, so it is not re-reported.
-    autoUpdater.emit('error', new Error('Could not get code signature for running application'));
+    autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
     expect(onState).toHaveBeenCalledTimes(1);
   });
 
@@ -172,6 +180,66 @@ describe('createUpdater', () => {
     expect(updater.state()).toStrictEqual({ kind: 'ready', version: '0.2.0' });
   });
 
+  it('a signature error emitted synchronously by setFeedURL still stops all polling', () => {
+    const { autoUpdater, onState, updater } = setup();
+    autoUpdater.setFeedURL.mockImplementation(() => {
+      autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
+    });
+    updater.start();
+    vi.advanceTimersByTime(12 * 60 * 60 * 1000);
+
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    expect(updater.state()).toStrictEqual({
+      kind: 'failed',
+      reason: 'signature',
+      downloadUrl: RELEASES_URL,
+    });
+    expect(onState).toHaveBeenCalledTimes(1);
+  });
+
+  it('start() is idempotent: a second call neither re-registers nor re-schedules', () => {
+    const { autoUpdater, log, updater } = setup();
+    updater.start();
+    updater.start();
+    expect(autoUpdater.setFeedURL).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS + UPDATE_INTERVAL_MS);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+
+    autoUpdater.emit('error', new Error('net::ERR_INTERNET_DISCONNECTED'));
+    expect(log).toHaveBeenCalledTimes(1); // one listener, not two
+  });
+
+  it('cancels through the injected clear functions, with the handles the injected setters made', () => {
+    const autoUpdater = new FakeAutoUpdater();
+    // Spies over the (faked) globals. Cast because `typeof setTimeout` is the DOM+Node overload
+    // set, which a single-signature mock cannot satisfy structurally.
+    const timers = {
+      setTimeout: vi.fn(setTimeout),
+      setInterval: vi.fn(setInterval),
+      clearTimeout: vi.fn(clearTimeout),
+      clearInterval: vi.fn(clearInterval),
+    };
+    const updater = createUpdater({
+      autoUpdater,
+      feedUrl: FEED,
+      onState: vi.fn(),
+      setTimeout: timers.setTimeout as unknown as typeof setTimeout,
+      setInterval: timers.setInterval as unknown as typeof setInterval,
+      clearTimeout: timers.clearTimeout,
+      clearInterval: timers.clearInterval,
+    });
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+    expect(timers.setTimeout).toHaveBeenCalledTimes(1);
+    expect(timers.setInterval).toHaveBeenCalledTimes(1);
+
+    autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
+    expect(timers.clearInterval).toHaveBeenCalledWith(timers.setInterval.mock.results[0].value);
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
   it('install() only quits-and-installs when ready', () => {
     const { autoUpdater, updater } = setup();
     updater.start();
@@ -179,7 +247,7 @@ describe('createUpdater', () => {
     updater.install();
     expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
 
-    autoUpdater.emit('error', new Error('Could not get code signature for running application'));
+    autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
     updater.install();
     expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
 

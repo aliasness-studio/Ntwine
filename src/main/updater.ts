@@ -26,11 +26,14 @@ export function shouldRunUpdater(a: {
   );
 }
 
-/** Squirrel.Mac rejects an update whose code signature does not match the running app's (D7).
- * Retrying cannot fix that, so it is the one error the user is told about. */
+/** Squirrel.Mac rejects an update whose code signature does not match the running app's (D7):
+ * "Code signature at URL … did not pass validation". Retrying cannot fix that, so it is the one
+ * error the user is told about. Keyed on "did not pass validation", not "code signature": an
+ * unsigned/ad-hoc local `yarn package` build fails with "Could not get code signature for running
+ * application", and that must stay silent ('other') rather than show a download link. */
 export function classifyUpdateError(err: unknown): 'signature' | 'other' {
   const message = err instanceof Error ? err.message : String(err);
-  return /code signature/i.test(message) ? 'signature' : 'other';
+  return /did not pass validation/i.test(message) ? 'signature' : 'other';
 }
 
 /** The slice of Electron's `autoUpdater` this module drives. `any[]` (not `unknown[]`) so the real
@@ -50,6 +53,9 @@ export interface UpdaterDeps {
   onState: (s: UpdateState) => void;
   setTimeout?: typeof setTimeout;
   setInterval?: typeof setInterval;
+  /** Must match the injected setters (a handle is only meaningful to its own timer source). */
+  clearTimeout?: typeof clearTimeout;
+  clearInterval?: typeof clearInterval;
   log?: (msg: string) => void;
 }
 
@@ -67,9 +73,12 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   const { autoUpdater, feedUrl, onState } = deps;
   const setTimeoutFn = deps.setTimeout ?? setTimeout;
   const setIntervalFn = deps.setInterval ?? setInterval;
+  const clearTimeoutFn = deps.clearTimeout ?? clearTimeout;
+  const clearIntervalFn = deps.clearInterval ?? clearInterval;
   const log = deps.log ?? ((msg: string) => console.error(msg));
 
   let current: UpdateState = { kind: 'idle' };
+  let started = false;
   let firstCheck: ReturnType<typeof setTimeout> | null = null;
   let interval: ReturnType<typeof setInterval> | null = null;
 
@@ -82,18 +91,26 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   /** Cancel every pending check: once an update is downloaded (another check would re-download
    * it; `install()` is all that is left) or once the updater can never succeed (signature failure). */
   function stop(): void {
-    if (firstCheck !== null) clearTimeout(firstCheck);
-    if (interval !== null) clearInterval(interval);
+    if (firstCheck !== null) clearTimeoutFn(firstCheck);
+    if (interval !== null) clearIntervalFn(interval);
     firstCheck = null;
     interval = null;
   }
 
+  /** Polling only ever happens from `idle`: `ready` and `failed` are terminal for checks. This is
+   * the backstop for any path where a transition lands before or between timer arming. */
   function check(): void {
+    if (current.kind !== 'idle') {
+      stop();
+      return;
+    }
     autoUpdater.checkForUpdates();
   }
 
   return {
     start() {
+      if (started) return;
+      started = true;
       autoUpdater.on(
         'update-downloaded',
         (_event: unknown, _notes: unknown, releaseName: string) => {
@@ -111,8 +128,12 @@ export function createUpdater(deps: UpdaterDeps): Updater {
         log(`[updater] update check failed: ${err instanceof Error ? err.message : String(err)}`);
       });
       autoUpdater.setFeedURL({ url: feedUrl });
+      // setFeedURL can itself emit a signature error synchronously; stop() then had nothing to
+      // cancel, so never arm timers from a non-idle state.
+      if (current.kind !== 'idle') return;
       firstCheck = setTimeoutFn(() => {
         firstCheck = null;
+        if (current.kind !== 'idle') return;
         // Interval armed BEFORE the first check so a synchronously-emitted signature error can
         // still cancel it.
         interval = setIntervalFn(check, UPDATE_INTERVAL_MS);
