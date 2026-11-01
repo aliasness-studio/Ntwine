@@ -157,3 +157,15 @@ export interface NtwineApi {
   addToCollection(collectionId: string, sampleId: number): Promise<void>;
   removeFromCollection(collectionId: string, sampleId: number): Promise<void>;
 }
+
+// Self-update (release pipeline PR 2): what the renderer is told about Electron's `autoUpdater`,
+// as decided by the pure state machine in src/main/updater.ts. Deliberately coarse — checking,
+// downloading and ordinary network failures are all `idle` (silent, retried on the next tick);
+// the user only ever hears "an update is ready, restart to install" or, for the one failure a
+// retry can never fix (a code-signature mismatch, D7), "download it yourself" with a link to
+// `RELEASES_URL`.
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'ready'; version: string } // downloaded; restart installs
+  | { kind: 'failed'; reason: 'signature'; downloadUrl: string }; // D7 only
+export const RELEASES_URL = 'https://github.com/aliasness-studio/Ntwine/releases/latest';
