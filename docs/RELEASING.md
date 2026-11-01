@@ -6,8 +6,9 @@ identity, team id or credential lives in this repository: CI reads them from rep
 a local build from the environment.
 
 **First time?** Do §3 (secrets, once), then §2 (a release-candidate dry run), then §1. A tag only
-releases if the commit it points at contains the workflow, so tag `main` after the workflow has
-been merged.
+releases if the commit it points at contains the workflow and is on `main`, so tag `main` after
+the workflow has been merged. The first real `v0.1.0` waits for the going-public PR and the
+visibility flip (spec §6); until then, push only `-rc.N` tags.
 
 1. [Cut a release](#1-cut-a-release)
 2. [Dry run with a release candidate](#2-dry-run-with-a-release-candidate)
@@ -49,10 +50,12 @@ Actions tab):
 gh run watch
 ```
 
-Expect anything from 20 minutes to over an hour, almost all of it Apple's notarization. The jobs:
+Expect anything from 20 minutes to over an hour, almost all of it Apple's notarization (an
+estimate from one local run, which notarized in ~37 minutes; CI is not yet measured). The jobs:
 
-- **`guard`** (ubuntu, seconds): `node scripts/checkTagVersion.mjs <tag>`. Fails if the tag's
-  version is not `package.json`'s; nothing else runs.
+- **`guard`** (ubuntu, seconds): `node scripts/checkTagVersion.mjs <tag>`, then a check that the
+  tagged commit is on `main`. Fails if the tag's version is not `package.json`'s or the commit is
+  not on `main`; nothing else runs.
 - **`mac`** (macOS, Apple silicon; 120 min timeout): imports the certificate into a throwaway
   keychain, runs `yarn make:mac` (sign, notarize, staple), then checks `codesign --verify`,
   `spctl` reporting `source=Notarized Developer ID`, `stapler validate`, both `x86_64` and `arm64`
@@ -76,8 +79,8 @@ Expect the title above, not marked pre-release, and four assets: the
 
 ### When a run fails
 
-- **`guard` failed:** the tag names the wrong version. Delete the tag (below), fix
-  `package.json` via a PR if needed, tag again.
+- **`guard` failed:** the tag names the wrong version, or points at a commit not on `main`.
+  Delete the tag (below), fix `package.json` via a PR if needed, tag the merged commit on `main`.
 - **`mac` or `win` failed:** nothing was published. Transient (Apple's service, a runner
   hiccup): re-run the failed jobs (below). A real bug: fix it on `main` via a PR, delete the tag,
   tag the new commit.
@@ -91,7 +94,12 @@ Re-run only the failed jobs of the latest release run (or "Re-run failed jobs" i
 gh run rerun $(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId') --failed
 ```
 
-Delete a Release but keep its tag (the `publish` case; or delete the draft on the Releases page):
+Delete a Release but keep its tag (the `publish` case; or delete the draft on the Releases page).
+List the Releases first: a leftover draft shows as `Draft`.
+
+```bash
+gh release list
+```
 
 ```bash
 gh release delete v0.1.0 --yes
@@ -103,8 +111,9 @@ Delete a tag, locally and on GitHub (the `guard` and real-bug cases):
 git push origin :refs/tags/v0.1.0 && git tag -d v0.1.0
 ```
 
-Pushing the same tag again while a run for it is still going queues behind that run; it does not
-race it.
+A plain `git push` of a tag that already exists on GitHub is rejected and starts nothing. Only
+deleting the tag and tagging again (or a force push) starts a second run; if the first is still
+going, the second queues behind it rather than racing it.
 
 ## 2. Dry run with a release candidate
 
@@ -238,8 +247,9 @@ is timestamped and notarized. Renew in January 2027.
    upload the CSR → download the `.cer`.
 3. **Install.** Double-click the `.cer`; it joins its private key in the login keychain. Check
    with `security find-identity -v -p codesigning`. The old and new certificates have the same
-   name, so delete the old one in Keychain Access (My Certificates, the earlier expiry date) or a
-   local build may call the identity ambiguous.
+   name, so a local build may call the identity ambiguous while both are there. Deleting the old
+   one in Keychain Access (My Certificates, the earlier expiry date) can wait until a build with
+   the new one has succeeded (step 5): until then it is your rollback.
 4. **Re-export and replace the two certificate secrets:** §3 steps 1, 2 and the `rm` in step 5.
    `MACOS_CERT_P12_BASE64` and `MACOS_CERT_PASSWORD` are the only secrets that change.
 5. **Dry run** (§2) before the next real release.
