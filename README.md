@@ -4,7 +4,12 @@ Ntwine is a desktop browser for an orphaned Splice sample library: search, filte
 preview, and drag samples straight into your DAW — no subscription required.
 
 Ntwine is an independent project and is not affiliated with or endorsed by Splice. It reads the
-library the Splice app left on your disk; it does not download from, log in to, or talk to Splice.
+library the Splice app left on your disk. It never logs in to Splice or downloads samples; during
+import it fetches pack cover art from the image links in Splice's database.
+
+**Network use:** besides that cover art at import, the packaged app checks
+update.electronjs.org (backed by this repo's GitHub Releases) for updates 30 s after launch and
+every 4 hours. Nothing else leaves your machine.
 
 ## Status
 
@@ -19,12 +24,14 @@ Ntwine is free. Grab the latest build from
 
 - **macOS** — `Ntwine-darwin-universal-<version>.zip` (Apple silicon and Intel; signed and
   notarized). Unzip, open Ntwine, and accept the "Move to Applications" prompt — updates only
-  work from Applications.
-- **Windows** — `Ntwine-<version>-win32-x64-Setup.exe`. The Windows build is unsigned, so
-  SmartScreen warns about an "unknown publisher": click **More info → Run anyway**.
+  work from Applications. If you declined the prompt, drag Ntwine into Applications yourself.
+- **Windows** — download the `Setup.exe` (`Ntwine-<version>-win32-x64-Setup.exe`); the other
+  files on the release page are for the updater. The Windows build is unsigned, so SmartScreen
+  warns about an "unknown publisher": click **More info → Run anyway**.
 
-Updates download in the background; a "Restart to update" badge appears in the bottom-left
-rail when one is ready. Nothing restarts until you click it.
+Updates download in the background. When one is ready, an update icon appears at the bottom of
+the left rail; click it to restart into the new version. Otherwise the update applies the next
+time you quit and reopen Ntwine.
 
 The first-run import reads the Splice desktop app's leftover `sounds.db`
 (auto-detected) plus the sample folder itself — you need a real Splice library on

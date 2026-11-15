@@ -15,9 +15,12 @@ test('first run detects the fixture DB, imports, and lands on the library with e
 });
 
 test('the first-run screen carries the Splice non-affiliation disclaimer', async ({ ntwine }) => {
-  await expect(ntwine.page.getByTestId('first-run-disclaimer')).toHaveText(
+  const disclaimer = ntwine.page.getByTestId('first-run-disclaimer');
+  await expect(disclaimer).toBeVisible();
+  await expect(disclaimer).toHaveText(
     'Ntwine is an independent project and is not affiliated with or endorsed by Splice. It reads the ' +
-      'library the Splice app left on your disk; it does not download from, log in to, or talk to Splice.',
+      'library the Splice app left on your disk. It never logs in to Splice or downloads samples; ' +
+      "during import it fetches pack cover art from the image links in Splice's database.",
   );
 });
 

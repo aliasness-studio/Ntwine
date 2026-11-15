@@ -229,8 +229,9 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
       )}
       <Disclaimer data-testid="first-run-disclaimer">
         Ntwine is an independent project and is not affiliated with or endorsed by Splice. It reads
-        the library the Splice app left on your disk; it does not download from, log in to, or talk
-        to Splice.
+        the library the Splice app left on your disk. It never logs in to Splice or downloads
+        samples; during import it fetches pack cover art from the image links in Splice&apos;s
+        database.
       </Disclaimer>
     </Card>
   );
