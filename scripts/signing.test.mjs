@@ -73,6 +73,27 @@ describe('resolveSigning', () => {
     ).toThrow(message);
   });
 
+  // A secret pasted into GitHub with a trailing newline must not become part of the identity.
+  it('trims surrounding whitespace from the values it uses', () => {
+    const { osxSign, osxNotarize } = resolveSigning(
+      {
+        NTWINE_SIGN_IDENTITY: 'Developer ID Application: X (ABC)\n',
+        NTWINE_NOTARY_KEYCHAIN_PROFILE: ' AliasNess ',
+      },
+      { entitlements: ENTITLEMENTS },
+    );
+
+    expect(osxSign?.identity).toBe('Developer ID Application: X (ABC)');
+    expect(osxNotarize).toEqual({ keychainProfile: 'AliasNess' });
+  });
+
+  it('treats a whitespace-only value as unset', () => {
+    expect(resolveSigning({ NTWINE_SIGN_IDENTITY: ' \n' })).toEqual({
+      osxSign: undefined,
+      osxNotarize: undefined,
+    });
+  });
+
   it('builds osxSign with hardened runtime and the entitlements path', () => {
     const { osxSign } = resolveSigning(
       { NTWINE_SIGN_IDENTITY: IDENTITY, NTWINE_NOTARY_KEYCHAIN_PROFILE: 'ntwine' },

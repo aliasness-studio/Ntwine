@@ -15,7 +15,8 @@
 // Notarization credentials, in order of preference:
 //   NTWINE_NOTARY_KEYCHAIN_PROFILE — a `xcrun notarytool store-credentials` profile (local release)
 //   APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID — all three, or none (CI secrets)
-// Empty strings count as unset: that is how CI exposes a secret that was never configured.
+// Values are trimmed (a secret pasted with a trailing newline must not end up in the identity),
+// and empty strings count as unset: that is how CI exposes a secret that was never configured.
 
 import { fileURLToPath } from 'node:url';
 
@@ -41,7 +42,7 @@ const APPLE_ID_VARS = /** @type {const} */ ([
  */
 export function resolveSigning(env, opts = {}) {
   /** @param {string} name */
-  const read = (name) => env[name] || undefined;
+  const read = (name) => env[name]?.trim() || undefined;
 
   const identity = read('NTWINE_SIGN_IDENTITY');
   const keychainProfile = read('NTWINE_NOTARY_KEYCHAIN_PROFILE');

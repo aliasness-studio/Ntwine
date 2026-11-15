@@ -1,0 +1,234 @@
+name: release
+# A pushed `v*` tag builds a Developer ID signed + notarized universal macOS zip and an unsigned
+# Windows Squirrel installer, then publishes both as a GitHub Release. docs/RELEASING.md is the
+# runbook; the secrets named below are configured in the repository settings, never in this file.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# Keyed on the tag: a re-push of the same tag queues behind the running release instead of racing
+# it to `gh release create` (the second create then fails on the existing release).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, so origin/main is there for the ancestry check.
+          fetch-depth: 0
+          persist-credentials: false
+      # Stock runner Node is enough: the script imports only `node:` builtins. It prints one
+      # `prerelease=true|false` line, or exits 1 when the tag doesn't match package.json.
+      - id: tag
+        run: |
+          line=$(node scripts/checkTagVersion.mjs "$GITHUB_REF_NAME")
+          echo "$line"
+          echo "$line" >> "$GITHUB_OUTPUT"
+      # Only reviewed, merged code ships: the tagged commit must be on main.
+      - run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::tag $GITHUB_REF_NAME is not on main"; exit 1; }
+
+  mac:
+    needs: guard
+    runs-on: macos-latest
+    # Notarization alone took ~37 min on the first run.
+    timeout-minutes: 120
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      CI: 'true'
+    steps:
+      # Fail in seconds, not after a 30-minute build: an unset secret reaches the job as "".
+      - name: Check signing secrets
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for name in MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD MACOS_SIGN_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name secret is not set"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          # Host Node runs yarn/Forge/Vite only; app + tests run under Electron's Node. 24 (not 22)
+          # because better-sqlite3 v13's install runs an (always-no-op, prebuilds ship in the
+          # tarball) `node-gyp rebuild`, and gyp configure on Windows still has to FIND Visual
+          # Studio: windows-latest now carries VS 2026 ("18"), which the node-gyp bundled with
+          # Node 22's npm can't parse (`unknown version "undefined"` → install fails). Node 24's
+          # npm bundles a node-gyp that understands VS 2026.
+          node-version: 24
+          cache: yarn
+      # Before the cert import: no package install script ever runs with the signing key reachable.
+      - run: yarn --frozen-lockfile
+      # Throwaway keychain holding only the Developer ID cert; deleted in the always() step below.
+      - name: Import signing certificate
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/ntwine-signing.keychain-db"
+          P12="$RUNNER_TEMP/ntwine-signing.p12"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          trap 'rm -f "$P12"' EXIT
+          KC_PW=$(uuidgen)
+          echo "::add-mask::$KC_PW"
+          printf '%s' "$MACOS_CERT_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KC_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PW" "$KEYCHAIN"
+          security import "$P12" -P "$MACOS_CERT_PASSWORD" -x -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm -f "$P12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+      # scripts/signing.mjs reads exactly these four; an identity with incomplete notarization
+      # credentials throws at config load rather than shipping an un-notarized build.
+      - name: Build, sign and notarize
+        env:
+          NTWINE_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: yarn make:mac
+      # Right after the build: the key is gone before the checks and probes below run any
+      # third-party code (Playwright, the app itself).
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ]; then
+            security delete-keychain "$KEYCHAIN" || true
+          fi
+      # docs/RELEASING.md "Verify before shipping".
+      - name: Verify signature, notarization and architectures
+        run: |
+          codesign --verify --deep --strict --verbose=2 out/Ntwine-darwin-universal/Ntwine.app
+          spctl_out=$(spctl --assess --type execute -vv out/Ntwine-darwin-universal/Ntwine.app 2>&1) \
+            || { echo "$spctl_out"; exit 1; }
+          echo "$spctl_out"
+          # A runner with Gatekeeper off "passes" with `override=security disabled`.
+          grep -q 'source=Notarized Developer ID' <<<"$spctl_out"
+          xcrun stapler validate out/Ntwine-darwin-universal/Ntwine.app
+          archs=$(lipo -archs out/Ntwine-darwin-universal/Ntwine.app/Contents/MacOS/Ntwine)
+          echo "$archs"
+          for a in x86_64 arm64; do
+            case " $archs " in *" $a "*) ;; *) echo "::error::missing $a slice"; exit 1 ;; esac
+          done
+      - name: Packaged boot probe
+        run: NTWINE_PACKAGED_DIR=$PWD/out/Ntwine-darwin-universal yarn e2e:only --grep packaged
+      # The runner is Apple silicon, so the probe above only exercised the arm64 slice. Boot the
+      # x86_64 slice under Rosetta with the same boot-marker contract (src/main/e2e.ts): the app
+      # writes the marker once the renderer loads, then quits itself. "Still alive" is no pass —
+      # a main-process throw (e.g. a wrong-arch native module) parks on a modal error dialog.
+      # 120 s watchdog: the first Rosetta launch translates the whole binary.
+      - name: Intel-slice boot probe
+        run: |
+          arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
+          probe="$RUNNER_TEMP/intel-probe"
+          mkdir -p "$probe"
+          marker="$probe/booted.txt"
+          log="$probe/output.log"
+          NTWINE_E2E=1 NTWINE_E2E_HIDDEN=1 NTWINE_USER_DATA="$probe/ud" NTWINE_E2E_BOOT_MARKER="$marker" \
+            arch -x86_64 out/Ntwine-darwin-universal/Ntwine.app/Contents/MacOS/Ntwine > "$log" 2>&1 &
+          pid=$!
+          for _ in $(seq 120); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid"
+            wait "$pid" || true
+            echo "::error::x86_64 slice did not boot and quit within 120 s (killed)"
+            cat "$log"
+            exit 1
+          fi
+          code=0
+          wait "$pid" || code=$?
+          if [ "$code" -ne 0 ] || [ ! -f "$marker" ]; then
+            [ -f "$marker" ] && state=written || state=missing
+            echo "::error::x86_64 boot probe failed (exit status $code, marker $state)"
+            cat "$log"
+            exit 1
+          fi
+          echo "x86_64 slice booted, wrote the boot marker and quit with status 0"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac
+          path: out/make/zip/darwin/universal/*.zip
+          if-no-files-found: error
+
+  win:
+    needs: guard
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          # Node 24, not 22: see the mac job — windows-latest's VS 2026 needs Node 24's node-gyp.
+          node-version: 24
+          cache: yarn
+      - run: yarn --frozen-lockfile
+      # Unsigned: this pipeline signs macOS only.
+      - run: yarn make:win
+      # Setup.exe, RELEASES and the full .nupkg.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: win
+          path: out/make/squirrel.windows/x64/*
+          if-no-files-found: error
+
+  publish:
+    needs: [guard, mac, win]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: mac
+          path: dist/mac
+      - uses: actions/download-artifact@v7
+        with:
+          name: win
+          path: dist/win
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
+        run: |
+          case "$PRERELEASE" in
+            true|false) ;;
+            *) echo "::error::bad prerelease output: '$PRERELEASE'"; exit 1 ;;
+          esac
+          major="${GITHUB_REF_NAME#v}"
+          major="${major%%.*}"
+          title="Ntwine $GITHUB_REF_NAME"
+          if [ "$major" -lt 1 ]; then title="$title (beta)"; fi
+          prerelease=()
+          if [ "$PRERELEASE" = true ]; then prerelease=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$title" --generate-notes \
+            "${prerelease[@]}" dist/mac/*.zip dist/win/*
