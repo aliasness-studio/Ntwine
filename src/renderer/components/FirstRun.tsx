@@ -112,6 +112,13 @@ const ErrorLine = styled.div`
   color: ${(p) => p.theme.color.danger};
 `;
 
+const Disclaimer = styled.p`
+  margin: 0;
+  font-size: 11px;
+  color: ${(p) => p.theme.color.textMuted};
+  line-height: 1.5;
+`;
+
 export interface FirstRunProps {
   state: Awaited<ReturnType<NtwineApi['getState']>>;
   onImported: () => void;
@@ -220,6 +227,11 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
       {importStore.phase === 'error' && (
         <ErrorLine>{importStore.message ?? 'Import failed for an unknown reason.'}</ErrorLine>
       )}
+      <Disclaimer data-testid="first-run-disclaimer">
+        Ntwine is an independent project and is not affiliated with or endorsed by Splice. It reads
+        the library the Splice app left on your disk; it does not download from, log in to, or talk
+        to Splice.
+      </Disclaimer>
     </Card>
   );
 });

@@ -14,6 +14,13 @@ test('first run detects the fixture DB, imports, and lands on the library with e
   await expect(page.getByTestId('result-count')).toHaveText(`${fixture.totalSamples} samples`);
 });
 
+test('the first-run screen carries the Splice non-affiliation disclaimer', async ({ ntwine }) => {
+  await expect(ntwine.page.getByTestId('first-run-disclaimer')).toHaveText(
+    'Ntwine is an independent project and is not affiliated with or endorsed by Splice. It reads the ' +
+      'library the Splice app left on your disk; it does not download from, log in to, or talk to Splice.',
+  );
+});
+
 test('the same detection reads "not found" against an empty appData (the glob is live)', async () => {
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-nodb-'));
   const l = await launchNtwine({ userData: join(root, 'ud'), appData: join(root, 'empty-appdata') });
