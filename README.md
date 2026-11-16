@@ -3,11 +3,39 @@
 Ntwine is a desktop browser for an orphaned Splice sample library: search, filter,
 preview, and drag samples straight into your DAW — no subscription required.
 
+Ntwine is an independent project and is not affiliated with or endorsed by Splice. It reads the
+library the Splice app left on your disk. It never logs in to Splice or downloads samples; during
+import it fetches pack cover art from the image links in Splice's database.
+
+**Network use:** besides that cover art at import, the packaged app checks
+update.electronjs.org (backed by this repo's GitHub Releases) for updates 30 s after launch and
+every 4 hours. Nothing else leaves your machine.
+
 ## Status
 
-v1, macOS and Windows (Linux later — nothing in the design bakes in platform-specific
+v1 feature set, macOS and Windows (Linux later — nothing in the design bakes in platform-specific
 assumptions). Both have been built and QA'd against a real Splice library, and both are
-covered by the CI matrix. Private/personal tooling for now.
+covered by the CI matrix. Free and MIT-licensed; still beta (0.x), so expect rough edges.
+
+## Download
+
+Ntwine is free. Grab the latest build from
+[Releases](https://github.com/aliasness-studio/Ntwine/releases/latest):
+
+- **macOS** — `Ntwine-darwin-universal-<version>.zip` (Apple silicon and Intel; signed and
+  notarized). Unzip, open Ntwine, and accept the "Move to Applications" prompt — updates only
+  work from Applications. If you declined the prompt, drag Ntwine into Applications yourself.
+- **Windows** — download the `Setup.exe` (`Ntwine-<version>-win32-x64-Setup.exe`); the other
+  files on the release page are for the updater. The Windows build is unsigned, so SmartScreen
+  warns about an "unknown publisher": click **More info → Run anyway**.
+
+Updates download in the background. When one is ready, an update icon appears at the bottom of
+the left rail; click it to restart into the new version. Otherwise the update applies the next
+time you quit and reopen Ntwine.
+
+The first-run import reads the Splice desktop app's leftover `sounds.db`
+(auto-detected) plus the sample folder itself — you need a real Splice library on
+disk, or its leftovers, for the app to have anything to show.
 
 ## Prerequisites
 
@@ -16,7 +44,7 @@ covered by the CI matrix. Private/personal tooling for now.
   version stops mattering — see [Verification](#verification).
 - yarn (classic)
 - macOS or Windows. On Windows, prefer Node 24: `better-sqlite3`'s install runs an
-  (always-no-op) `node-gyp rebuild`, and gyp configure still has to *find* Visual Studio —
+  (always-no-op) `node-gyp rebuild`, and gyp configure still has to _find_ Visual Studio —
   the node-gyp bundled with Node 22's npm can't parse VS 2026 and the install fails.
 
 The first-run import reads the Splice desktop app's leftover `sounds.db`
@@ -60,7 +88,7 @@ actual Splice library over the network instead of the synthetic fixture, so it n
 library on disk. It's excluded from `yarn e2e`/`yarn e2e:only`'s default project and must be run
 by name.
 
-**Fresh clone:** run `yarn e2e` or `yarn start` once *before* `yarn test`. Either one triggers
+**Fresh clone:** run `yarn e2e` or `yarn start` once _before_ `yarn test`. Either one triggers
 Forge's native-module rebuild, which puts `better-sqlite3` on Electron's ABI; `yarn test` never
 does that rebuild itself, so running it first fails on the ABI mismatch. Note the install floor
 above too — `yarn` (install) needs Node ≥ 22; the gates themselves run under Electron's bundled
@@ -95,3 +123,8 @@ TanStack Virtual, WebAudio. TypeScript strict; ESLint 9 + Prettier.
 
 - [Design spec](docs/superpowers/specs/2026-08-16-ntwine-v1-design.md)
 - [Implementation plan](docs/superpowers/plans/2026-08-16-ntwine-v1.md)
+- [Releasing](docs/RELEASING.md)
+
+## License
+
+[MIT](LICENSE) © 2026 AliasNess Studio

@@ -25,12 +25,15 @@ type GetStateResult = Awaited<ReturnType<NtwineApi['getState']>>;
 type LoadState =
   { kind: 'loading' } | { kind: 'firstRun'; state: GetStateResult } | { kind: 'library' };
 
+// `safe` + `overflow: auto`: a card taller (or wider) than the window overflows toward the end
+// and scrolls, instead of being centred off the top edge where it can't be reached.
 const Centered = styled.div`
   width: 100%;
   height: 100%;
+  overflow: auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   background: ${(p) => p.theme.color.bg};
   color: ${(p) => p.theme.color.textMuted};
   font-family: ${(p) => p.theme.font.family};
