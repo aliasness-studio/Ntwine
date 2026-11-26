@@ -106,7 +106,7 @@ function setUp() {
   buildFixtureSpliceDb(dbPath, buildFixtureRows(libraryRoot));
   const data = readSplice(dbPath);
   const catalog = freshCatalog();
-  buildCatalog(catalog, data, libraryRoot); // wires rebuildSearch — see importer.ts's Task 7 seam
+  buildCatalog(catalog, data, libraryRoot); // wires rebuildSearch — see importer.ts
   return { catalog };
 }
 
@@ -128,7 +128,7 @@ function markMissing(catalog: Catalog, fileHash: string): void {
   catalog.db.prepare('UPDATE samples SET missing = 1 WHERE file_hash = ?').run(fileHash);
 }
 
-// Same fixture catalog as `setUp`, plus the `user` schema alias ATTACHed (Task 1's `openUserDb`)
+// Same fixture catalog as `setUp`, plus the `user` schema alias ATTACHed (`openUserDb`)
 // on the SAME connection — the shape every user-layer test below needs, since `querySamples`
 // detects the attachment on `catalog.db` itself rather than taking a separate handle.
 function setUpWithUser() {
@@ -159,7 +159,7 @@ describe('querySamples', () => {
       hasPeaks: false,
       peaksFailed: false,
       // No `openUserDb` on this connection — the three user-layer fields must still be present,
-      // at their zero value, rather than absent (Task 3).
+      // at their zero value, rather than absent.
       favorite: false,
       nickname: null,
       userTags: [],
@@ -190,9 +190,9 @@ describe('querySamples', () => {
     const insertWaveform = catalog.db.prepare(
       'INSERT INTO waveforms (sample_id, peaks, bucket_count, format) VALUES (?, ?, ?, ?)',
     );
-    // loop.wav: a real decode succeeded — format 1 (spec §6's default/current format).
+    // loop.wav: a real decode succeeded — format 1 (the schema's default/current format).
     insertWaveform.run(idOf(catalog, 'h-loop'), Buffer.alloc(400), 200, 1);
-    // kick.wav: Task 10 writes format 0 for a decode that failed — a row exists, but it must
+    // kick.wav: the decode queue writes format 0 for a decode that failed — a row exists, but it must
     // NOT read as "has peaks". This is the case a bare `sample_id IS NULL` check gets wrong.
     insertWaveform.run(idOf(catalog, 'h-kick'), Buffer.alloc(400), 200, 0);
     // bass.wav: no waveforms row at all — still pending, neither succeeded nor failed.
@@ -376,10 +376,10 @@ describe('querySamples — user layer (favorite/nickname/userTags, favorites/col
   });
 });
 
-describe('querySamples — per-token search union (FTS + nickname + user tags, spec §3.4)', () => {
+describe('querySamples — per-token search union (FTS + nickname + user tags)', () => {
   it('mixed vocabulary: a token matching only via nickname unions with a token matching only via FTS text, AND across tokens', () => {
     const { catalog, user } = setUpWithUser();
-    // Spec §3.4's own example, adapted to this fixture's "kick.wav" (already an FTS hit for
+    // The canonical mixed-vocabulary example, adapted to this fixture's "kick.wav" (already an FTS hit for
     // "kick" via both filename and its 'kick' tag) rather than inventing a new sample: nicknaming
     // it "THE snare" gives one row reachable by "snare" ONLY through the nickname, and by "kick"
     // ONLY through FTS — so a match on "snare kick" proves the two sources union per token.
@@ -400,7 +400,7 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
   });
 
   // Direct successor to search.test.ts's retired 'kic ana'/'kic amb' cases (search.test.ts:92) —
-  // those pinned FTS5's own internal AND across two quoted phrases in ONE MATCH query; this task
+  // those pinned FTS5's own internal AND across two quoted phrases in ONE MATCH query; queries.ts
   // replaced that mechanism with N independent `searchIdsForToken` calls intersected via JS Sets
   // (queries.ts), so the old test's SCENARIO (two tokens, both purely FTS-sourced) needs its own
   // proof against the new mechanism, not just an assumption the replacement is equivalent. Plain
@@ -426,12 +426,12 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
   });
 
   // Note on this test's RED-phase power: any assertion of an EMPTY result here is structurally
-  // unable to fail against the OLD (pre-Task-4) implementation — old FTS-only matching is a strict
+  // unable to fail against the OLD (FTS-only) implementation — old FTS-only matching is a strict
   // subset of the new union matching (it can only find FEWER rows, never more), so a token that
   // only matches via nickname/tag returns [] under BOTH old and new code, for different reasons.
   // This test's real job is a falsifier for a specific bug class the new union logic invites —
   // unioning ACROSS tokens instead of per-token (turning "tokens AND" into "tokens OR") — verified
-  // by temporarily swapping the intersection for a union in queries.ts during self-review, which
+  // by temporarily swapping the intersection for a union in queries.ts, which
   // does turn this red.
   it('tokens AND, not OR, across sources: two tokens each matching a different row (via different sources) match neither', () => {
     const { catalog, user } = setUpWithUser();
@@ -441,7 +441,7 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
     // Each token alone has a real, non-empty match, but on DIFFERENT rows — a buggy
     // union-ACROSS-tokens implementation would wrongly return both.
     expect(querySamples(catalog, { search: 'snare bounce' })).toEqual([]);
-    // The brief's own phrasing of the case (spec §3.4): a garbage second token empties an
+    // A garbage second token empties an
     // otherwise-matching single-token result too.
     expect(querySamples(catalog, { search: 'snare nosuch' })).toEqual([]);
   });
@@ -486,7 +486,7 @@ describe('querySamples — per-token search union (FTS + nickname + user tags, s
   });
 });
 
-describe('querySamples — either-source tag filtering (spec §3.3)', () => {
+describe('querySamples — either-source tag filtering', () => {
   it('a selected tag matches a sample carrying it from EITHER source', () => {
     const { catalog, user } = setUpWithUser();
     user.addUserTag('h-loop', 'kick'); // loop.wav has no splice 'kick' tag
@@ -510,7 +510,7 @@ describe('querySamples — either-source tag filtering (spec §3.3)', () => {
     // lowercase 'kick'/'bounce' would still pass even with the two pushes swapped, since
     // `normalizeUserName` is a no-op on them; 'BOUNCE' forces the second (normalized) param to
     // carry the right value or the user-side match silently fails. (Verified by temporarily
-    // swapping the two `params.push` calls in queries.ts during self-review: this exact
+    // swapping the two `params.push` calls in queries.ts: this exact
     // assertion goes red — `[]` instead of `['kick.wav']` — while reverting restores green.)
     const result = querySamples(catalog, { tags: ['kick', 'BOUNCE'] });
 
@@ -556,7 +556,7 @@ describe('listTags', () => {
   });
 });
 
-describe('listTags — user layer union (spec §3.3)', () => {
+describe('listTags — user layer union', () => {
   // kick.wav already carries the splice tag 'kick' from the fixture — giving bass.wav a second
   // splice-side 'kick' link (raw SQL, same idiom this file already uses for waveforms rows) is
   // what lets a single test prove the union counts DISTINCT samples rather than merely "at least
@@ -632,7 +632,7 @@ describe('pendingPeakIds', () => {
     );
     // loop.wav: a real decode succeeded (format 1) — has a row, so it's not pending.
     insertWaveform.run(idOf(catalog, 'h-loop'), Buffer.alloc(400), 200, 1);
-    // kick.wav: Task 10 writes format 0 for a failed decode — still has a row, still not
+    // kick.wav: the decode queue writes format 0 for a failed decode — still has a row, still not
     // "pending" (a bare `no row` check must not resurrect a known-failed sample here).
     insertWaveform.run(idOf(catalog, 'h-kick'), Buffer.alloc(400), 200, 0);
     // tom.wav: missing entirely — excluded even though it also has no waveforms row, since
@@ -753,7 +753,7 @@ describe('getPeaks', () => {
     expect(Object.keys(result)).toEqual([String(kickId)]);
   });
 
-  // Review round 1, Finding 1: a `format = 0` row (writePeaksFailed) still has a `sample_id`, and
+  // A `format = 0` row (writePeaksFailed) still has a `sample_id`, and
   // the unfiltered SQL used to hand its 400-zero-byte placeholder back exactly like a real decode.
   // A stale renderer snapshot (`row.peaksFailed` from the last `querySamples()`, not refreshed
   // until the next re-query) would then draw that placeholder as a thin, quiet-but-normal

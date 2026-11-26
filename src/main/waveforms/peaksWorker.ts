@@ -1,5 +1,5 @@
-// utilityProcess entry point: forked either per queue.ts in-flight slot (Task 10 — the default,
-// no-`kind` path below) or one-shot per ipc.ts `decodePreviewPcm` call (Task 11 — `kind: 'pcm'`).
+// utilityProcess entry point: forked either per queue.ts in-flight slot (the default, no-`kind`
+// path below) or one-shot per ipc.ts `decodePreviewPcm` call (`kind: 'pcm'`).
 // Either way it receives one `{ sampleId, absPath }`-shaped message at a time and replies with
 // either a result or an error. Thin by design: no unit test here, the two things it calls
 // (decodeAudio, computePeaks) are already covered by their own suites, and ipc.ts's
@@ -11,10 +11,8 @@ process.parentPort.on('message', async (e) => {
   const { sampleId, absPath, kind } = e.data as {
     sampleId: number;
     absPath: string;
-    // Optional discriminant, added in Task 11 — absent (or explicitly 'peaks') keeps the
-    // original behavior byte-for-byte, since queue.ts's pump() posts `{ sampleId, absPath }`
-    // with no `kind` field and must not change (Task 10 is reviewed and green; queue.ts itself
-    // is untouched by this task).
+    // Optional discriminant — absent (or explicitly 'peaks') is the peaks path, since
+    // queue.ts's pump() posts `{ sampleId, absPath }` with no `kind` field.
     kind?: 'peaks' | 'pcm';
   };
   try {

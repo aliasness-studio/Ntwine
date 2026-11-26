@@ -1,4 +1,4 @@
-// Task 13 / design spec §7: the renderer-owned drag-source slot is the ONLY way a rail drop
+// The renderer-owned drag-source slot is the ONLY way a rail drop
 // target can tell our own native row drag from an external Finder/Explorer file drag (once
 // SampleRow's `handleDragStart` calls `preventDefault`, there is no HTML5 drag session of our own
 // left for `dataTransfer` to carry anything useful). These tests pin the slot's full lifecycle,

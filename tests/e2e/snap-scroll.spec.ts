@@ -2,7 +2,7 @@ import type { Locator, Page } from '@playwright/test';
 import { importAndWait } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
-// QoL round 1: arrow-key navigation snaps an off-screen landing row to the TOP of the list (the
+// Arrow-key navigation snaps an off-screen landing row to the TOP of the list (the
 // Splice paging feel), in both directions; landings that are already fully visible never scroll.
 //
 // The window is shrunk small enough that (a) the 12-row fixture overflows the list viewport and

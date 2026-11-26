@@ -1,6 +1,6 @@
-// THE only module in src/renderer/stores that touches `window` (design constraint, Task 12
-// dispatch). Every store class takes `NtwineApi` as a constructor argument instead of importing
-// this file directly — real app code (Task 13's renderer.tsx) wires `api` in here; tests
+// THE only module in src/renderer/stores that touches `window` (a design constraint). Every
+// store class takes `NtwineApi` as a constructor argument instead of importing
+// this file directly — real app code (renderer.tsx) wires `api` in here; tests
 // construct stores with hand-rolled fakes and never import this module at all. That split is
 // what lets the store test suite run under plain Node (no `window`/`document` — the Vitest
 // config's `environment: 'node'`, matching how the whole app's tests run under

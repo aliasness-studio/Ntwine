@@ -250,7 +250,7 @@ describe('runWaveformsInBackground', () => {
 });
 
 describe('currentLibraryRoot', () => {
-  // Precedence pin (Task 1, e2e spec §3.1, extended 2026-08-20 with detection):
+  // Precedence pin:
   // persisted > E2E override > Splice's reported folder > platform stock location.
   //
   // A persisted `library_root` must keep winning over an E2E `defaultLibraryRoot` override —
@@ -325,7 +325,7 @@ describe('currentLibraryRoot', () => {
   });
 });
 
-// Task 6: the 11 user-layer handlers registerIpc wires onto `deps.userDb`. `IpcHandler` mirrors
+// The 11 user-layer handlers registerIpc wires onto `deps.userDb`. `IpcHandler` mirrors
 // what every `ipcMain.handle` listener in this codebase actually is — `async (event, ...args) =>
 // ...` — so the harness below can `await`/`.resolves`/`.rejects` a captured handler exactly like
 // Electron itself would invoke it.
@@ -372,7 +372,7 @@ function setUpUserIpc(): { catalog: Catalog; handlers: Map<string, IpcHandler> }
   return { catalog, handlers: registeredHandlers() };
 }
 
-describe('registerIpc — user-layer handlers (Task 6, design spec §4)', () => {
+describe('registerIpc — user-layer handlers', () => {
   const NEW_CHANNELS = [
     'ntwine:setFavorite',
     'ntwine:setNickname',
@@ -424,7 +424,7 @@ describe('registerIpc — user-layer handlers (Task 6, design spec §4)', () => 
     await expect(createCollection({}, ' drums ')).rejects.toThrow(/already exists/);
   });
 
-  it('ntwine:listLibraryRail returns the Task-1 shape', async () => {
+  it('ntwine:listLibraryRail returns the { favorites, collections } shape', async () => {
     const { handlers } = setUpUserIpc();
 
     const rail = await handlerFor(handlers, 'ntwine:listLibraryRail')({});
@@ -433,7 +433,7 @@ describe('registerIpc — user-layer handlers (Task 6, design spec §4)', () => 
   });
 });
 
-// The Splice-DB picker fallback (Windows-port audit blocker): detection's win32 glob is a
+// The Splice-DB picker fallback: detection's win32 glob is a
 // best-guess — when it misses, the user must be able to point at sounds.db by hand, and that
 // choice must persist and keep winning until it goes stale.
 describe('resolveSpliceDb — manual override precedence', () => {

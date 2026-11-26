@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computePeaks } from './peaks';
 
 const BUCKETS = 200;
-const BYTES = BUCKETS * 2; // interleaved [min, max] Int8 pairs — spec §5.1 / db.ts's waveforms.peaks
+const BYTES = BUCKETS * 2; // interleaved [min, max] Int8 pairs — db.ts's waveforms.peaks
 
 function constantChannel(value: number, length: number): Float32Array {
   return new Float32Array(length).fill(value);
@@ -17,7 +17,7 @@ function alternatingChannel(length: number): Float32Array {
   return ch;
 }
 
-// Brief's four prose cases (DC 0.5, alternating ±1, short input, stereo fold), plus one added
+// Four core cases (DC 0.5, alternating ±1, short input, stereo fold), plus one added
 // case (clamp) that the four don't otherwise exercise — see that test's own comment.
 describe('computePeaks', () => {
   it('DC 0.5 signal: every bucket floors to 63 (0.5 * 127 = 63.5)', () => {
@@ -65,8 +65,8 @@ describe('computePeaks', () => {
   });
 
   it('clamps an out-of-range sample to 127 rather than letting Int8Array silently wrap it', () => {
-    // Not one of the brief's four named cases, but "clamps to ±127" is its own named property
-    // (Interfaces block) that none of the other four happens to exercise: +/-1.0 already floors
+    // Not one of the four core cases, but "clamps to ±127" is its own documented property
+    // (see computePeaks' doc comment) that none of the other four happens to exercise: +/-1.0 already floors
     // to exactly +/-127, so a version of computePeaks with NO clamp at all would still pass the
     // alternating-signal test above. 1.5 * 127 = 190.5 -> floors to 190, which IS out of range —
     // and would wrap to -66 if assigned into the Int8Array unclamped (190 - 256 = -66), silently

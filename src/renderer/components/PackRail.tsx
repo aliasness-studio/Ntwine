@@ -1,6 +1,6 @@
-// Left-rail pack list (Task 13 brief, Step 1 / spec §7): `library.packs` (already filtered to
-// packs with >=1 present sample, and sorted A-Z, by `listPacks` — Task 7). The All Samples row
-// that used to lead this list moved into LibraryRail's own listbox (Task 8, design spec §5.1) —
+// Left-rail pack list: `library.packs` (already filtered to
+// packs with >=1 present sample, and sorted A-Z, by `listPacks`). The All Samples row
+// that used to lead this list moved into LibraryRail's own listbox —
 // this component now renders packs only, under its own small header so the two rails still read
 // as distinct sections inside the shared PacksScroll.
 import { observer } from 'mobx-react-lite';
@@ -9,7 +9,7 @@ import styled from 'styled-components';
 import { api } from '../stores/api';
 import { useStores } from './StoreContext';
 
-// A Fragment, not a wrapping styled.div, holds `SectionLabel` + `List` below (Task 8) —
+// A Fragment, not a wrapping styled.div, holds `SectionLabel` + `List` below —
 // sidebar.spec.ts's `packsScrollState` reads the "Packs" listbox's `parentElement` and expects
 // PacksScroll itself (App.tsx's scroll container), not an intermediate section wrapper. LibraryRail
 // has no such pre-existing DOM-parentage contract to preserve, so it wraps freely; this one can't.
@@ -86,7 +86,7 @@ const Count = styled.span`
   flex-shrink: 0;
 `;
 
-/** Broken/missing cover art (spec §8: "Cover download fails -> Generic tile") falls back to a
+/** Broken/missing cover art (a failed cover download shows a generic tile) falls back to a
  * styled tile via the real `<img>`'s `onError` — this covers BOTH "no cover_file was ever
  * downloaded" and "the file went missing on disk" uniformly, since either way the `cover://`
  * protocol handler answers with a 404 the `<img>` element treats as a load error. No need to

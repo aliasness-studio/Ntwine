@@ -1,7 +1,7 @@
 import type { ElectronApplication } from '@playwright/test';
 
 /**
- * Records main-process seam events (e2e spec §3.1). `arm` installs a recorder in main and RESOLVES
+ * Records main-process seam events. `arm` installs a recorder in main and RESOLVES
  * ONLY AFTER it is installed — always `await seam.arm(...)` before the action under test, then
  * assert with `expect.poll(() => seam.count(...))`. Negatives are counters that stay flat while a
  * sibling positive increments — never "no event within a timeout".

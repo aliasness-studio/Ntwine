@@ -8,16 +8,15 @@ import { buildFixtureSpliceDb, type FixtureRow } from './fixtureSpliceDb';
 import { readSplice, snapshotSpliceDb } from './spliceDb';
 import { buildCatalog, statPass, runImport, type CoversFetch, type ImportDeps } from './importer';
 
-// Step 6 (brief prose only, no verbatim code given — authored per Task 5's own precedent for
-// prose-only steps): "using fixture db from Task 5: buildCatalog twice is idempotent (same row
-// counts, no duplicate tags/sample_tags); pack rows land; a sample whose pack_uuid is unknown
-// still imports with pack_id NULL; unicode filename survives byte-exact."
+// Using the fixtureSpliceDb.ts fixture: buildCatalog twice is idempotent (same row counts, no
+// duplicate tags/sample_tags); pack rows land; a sample whose pack_uuid is unknown still imports
+// with pack_id NULL; unicode filename survives byte-exact.
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-importer-'));
 const freshCatalog = () => openCatalog(join(tmp(), 'catalog.db'));
 
 const PACK_UUID = 'pack-aaaa-1111';
-// Unicode/NFD edge case (spec §10), same shape as Task 5's own fixture.
+// Unicode/NFD edge case, same shape as spliceDb.test.ts's own fixture.
 const NFD_FILENAME = 'café_kick.wav'.normalize('NFD');
 
 // One pack + four samples: two ordinary samples sharing tags (proves tag rows are shared, not
@@ -142,12 +141,12 @@ describe('buildCatalog', () => {
       .prepare('SELECT filename FROM samples WHERE file_hash = ?')
       .get('hash-cafe') as { filename: string } | undefined;
     // Falsifier: prove the NFD code points survived, not just that *a* string with visually
-    // identical characters did (same discipline as Task 5's readSplice NFD assertion).
+    // identical characters did (same discipline as spliceDb.test.ts's readSplice NFD assertion).
     expect(row?.filename).toBe(NFD_FILENAME);
     expect(row?.filename).not.toBe('café_kick.wav'.normalize('NFC'));
   });
 
-  // Task 13 hand-QA against the REAL Splice sounds.db (2026-08-17): the very first real import
+  // Found by manual testing against a REAL Splice sounds.db: the very first real import
   // aborted this exact transaction — `buildCatalog` -> `normalizeSample` -> `toChordType` threw
   // `unknown chord_type "null"` on the first row whose chord_type was a genuine SQL NULL (3,737
   // of 4,197 real rows; audio_key NULL on 2,977). Every fixture row elsewhere in this file uses
@@ -181,7 +180,7 @@ describe('buildCatalog', () => {
     expect(row.chord_type).toBeNull();
   });
 
-  it('skips a not-yet-downloaded row (local_path NULL — a mid-sync Splice DB really contains these; proven live 2026-08-19) instead of crashing the whole transaction', () => {
+  it('skips a not-yet-downloaded row (local_path NULL — a mid-sync Splice DB really contains these) instead of crashing the whole transaction', () => {
     const libraryRoot = tmp();
     const dbPath = join(tmp(), 'sounds.db');
     buildFixtureSpliceDb(dbPath, [
@@ -248,11 +247,11 @@ describe('buildCatalog', () => {
 
     expect(secondCounts).toEqual(firstCounts);
     // Stable id proves the upsert is a real UPDATE-in-place on conflict, not a delete+reinsert
-    // — later tasks key `waveforms`/`sample_tags` off this id and must survive a re-import.
+    // — `waveforms`/`sample_tags` key off this id and must survive a re-import.
     expect(kickSampleId()).toBe(firstKickId);
   });
 
-  // Fix round 1 (review): the identical-data rerun above can't distinguish a real
+  // The identical-data rerun above can't distinguish a real
   // delete-then-reinsert junction rebuild from a no-op `INSERT OR IGNORE`-only implementation
   // — re-inserting the same (sample_id, tag_id) pairs is a no-op either way. This test changes
   // the data between runs so only a real rebuild passes.
@@ -289,17 +288,16 @@ describe('buildCatalog', () => {
     // ...and hash-loop (untouched, also tagged 'drums') keeps its own link — this is a
     // per-sample junction rebuild, not a global purge of the 'drums' tag.
     expect(linkExists('hash-loop', 'drums')).toBe(true);
-    // Per the review: "the tag row itself may remain in tags — assert only the junction." It
+    // The tag row itself may remain in tags — only the junction is the contract. It
     // does (hash-loop still references it); asserted for completeness, not the point of the test.
     const tagRow = catalog.db.prepare('SELECT id FROM tags WHERE name = ?').get('drums');
     expect(tagRow).toBeDefined();
   });
 });
 
-// Task 8 Step 1 (brief prose only, same as Task 6's own prose-only steps): "create temp library
-// root with one real file matching one row; assert that row missing=0, others missing=1; run
-// twice = same result." The interface line's parenthetical — "(sets/clears samples.missing)" —
-// is a second, distinct claim from "run twice = same result": a bug that only ever sets
+// Create a temp library root with one real file matching one row; assert that row missing=0,
+// others missing=1; run twice = same result. "Sets/clears samples.missing" is a second,
+// distinct claim from "run twice = same result": a bug that only ever sets
 // missing=1 and never clears it back to 0 would still pass a same-filesystem rerun (it would be
 // stably wrong both times). The reappear test below exercises the "clears" half directly rather
 // than leaving it to be implied by the other two.
@@ -408,10 +406,9 @@ describe('statPass', () => {
   });
 });
 
-// Task 9 Step 1 (brief prose only, same as Tasks 5/6/8's own prose-only steps): "full pipeline
-// over fixture db + temp dirs emits phases in order snapshot -> catalog -> stat -> covers and
-// returns ids missing peaks; with spliceDbPath: null but an existing prior snapshot, still
-// succeeds (spec §5.2); with neither, rejects with a message naming the searched path."
+// Full pipeline over fixture db + temp dirs emits phases in order snapshot -> catalog -> stat ->
+// covers and returns ids missing peaks; with spliceDbPath: null but an existing prior snapshot,
+// still succeeds; with neither, rejects with a message naming the searched path.
 describe('runImport', () => {
   const RUN_PACK_UUID = 'pack-run-import-1';
   const RUN_PACK_UUID_2 = 'pack-run-import-2';
@@ -504,7 +501,7 @@ describe('runImport', () => {
     // Phase order: first-seen order of distinct phases. Each phase's own events are contiguous
     // (a phase's start is immediately followed later by its own completion, never interleaved
     // with another phase's events), so de-duplicating consecutive-by-first-occurrence gives
-    // exactly the phase sequence the brief asks for.
+    // exactly the phase sequence.
     const phaseOrder = [...new Set(events.map((e) => e.phase))];
     expect(phaseOrder).toEqual(['snapshot', 'catalog', 'stat', 'covers']);
 
@@ -538,7 +535,7 @@ describe('runImport', () => {
     expect(catalog.getMeta('imported_at')).toBe(FIXED_NOW);
   });
 
-  it('falls back to an existing prior snapshot when spliceDbPath is null (spec §5.2)', async () => {
+  it('falls back to an existing prior snapshot when spliceDbPath is null', async () => {
     const { libraryRoot, sourceDbPath } = setUpSource();
     const catalog = freshCatalog();
     const snapshotDir = join(tmp(), 'snapshot');

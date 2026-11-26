@@ -34,7 +34,7 @@ if (started) {
 // whenReady() below, alongside everything else.
 registerProtocolSchemes();
 
-// E2E mode (e2e spec §3.1). Read BEFORE whenReady: app.setPath must precede any getPath, and a
+// E2E mode. Read BEFORE whenReady: app.setPath must precede any getPath, and a
 // config error must never reach Electron's "JavaScript error in main process" dialog (a modal
 // that would hang a headless run) — log and exit instead.
 let e2e: E2EConfig | null = null;
@@ -159,7 +159,7 @@ const createWindow = (): BrowserWindow => {
     win.loadFile(indexPath);
   }
 
-  // Fuse-safe packaged boot probe (e2e spec §4 packaged.spec): the packaged binary's fuses disable
+  // Fuse-safe packaged boot probe (packaged.spec): the packaged binary's fuses disable
   // the Node inspector Playwright's driver needs, so the probe is "boot, load, write a marker, quit".
   if (e2e?.bootMarker) {
     const marker = e2e.bootMarker;
@@ -198,7 +198,7 @@ const createWindow = (): BrowserWindow => {
     }
   });
 
-  // No devtools auto-open, even on dev-server loads (owner call, 2026-08-17): they ate half the
+  // No devtools auto-open, even on dev-server loads: they ate half the
   // window on every `yarn start`. Cmd+Option+I / the View menu toggles them on demand.
   return win;
 };
@@ -207,18 +207,18 @@ const createWindow = (): BrowserWindow => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-  // All catalog state lives in a subdirectory of userData (spec §4): catalog.db (incl. waveform
-  // peaks, spec §6), the Splice DB snapshot, and downloaded cover art. better-sqlite3's Database
+  // All catalog state lives in a subdirectory of userData: catalog.db (incl. waveform
+  // peaks), the Splice DB snapshot, and downloaded cover art. better-sqlite3's Database
   // constructor does NOT create missing parent directories (unlike snapshotSpliceDb/
-  // downloadCovers, which mkdirSync their own target dirs) — discovered via `yarn start`'s Task
-  // 11 manual smoke ("Cannot open database because the directory does not exist" on a fresh
+  // downloadCovers, which mkdirSync their own target dirs) — discovered via a `yarn start`
+  // manual smoke test ("Cannot open database because the directory does not exist" on a fresh
   // userData), so this wiring layer is what has to ensure the directory exists first.
   const dataDir = dataDirFrom(app.getPath('userData'));
   mkdirSync(dataDir, { recursive: true });
   const catalog = openCatalog(path.join(dataDir, 'catalog.db'));
-  // Sidecar user.db (design spec §2.2), ATTACHed onto the SAME connection as catalog.db —
+  // Sidecar user.db, ATTACHed onto the SAME connection as catalog.db —
   // precious curation must not share blast radius with importer/FTS-rebuild bugs, and this is
-  // the one call site every render of the user layer (Task 6's IPC handlers) depends on running
+  // the one call site every render of the user layer (ipc.ts's user-layer handlers) depends on running
   // before registerIpc below.
   const userDb = openUserDb(catalog, path.join(dataDir, 'user.db'));
   const snapshotDir = path.join(dataDir, 'splice-snapshot');
@@ -228,7 +228,7 @@ app.whenReady().then(async () => {
   // the current value at request time instead of resolving against a startup snapshot.
   const getLibraryRoot = () => currentLibraryRoot(catalog, libraryRootDeps(e2e?.libraryRoot));
 
-  // Move-to-Applications offer (release pipeline D6): a bundle run from ~/Downloads is App
+  // Move-to-Applications offer: a bundle run from ~/Downloads is App
   // Translocated and Squirrel.Mac cannot update it. Asked before any window exists. The
   // macOS-only app.isInApplicationsFolder / moveToApplicationsFolder never run on win32: the
   // first is darwin-gated inline, the second runs only once shouldOfferMove (darwin-only) passed.
@@ -247,7 +247,7 @@ app.whenReady().then(async () => {
       const outcome = await offerMove({
         ask: async () => {
           // Esc presses cancelId ("Don't Move"), so dismissing the prompt is a remembered decline
-          // too — intended: an unwanted question is never asked again (Task 14 notes the reset).
+          // too — intended: an unwanted question is never asked again (docs/RELEASING.md notes the reset).
           const { response } = await dialog.showMessageBox({
             type: 'question',
             buttons: ['Move to Applications', "Don't Move"],
@@ -286,9 +286,8 @@ app.whenReady().then(async () => {
 
   registerProtocols({ catalog, getLibraryRoot, coversDir, e2eEmit });
 
-  // Re-points Task 2's hardcoded resolvePath at the real catalog lookup (drag.ts's own doc
-  // comment has the full rationale) — registerDragHandler itself is not temporary and doesn't
-  // change.
+  // Points resolvePath at the real catalog lookup (drag.ts's own doc comment has the full
+  // rationale).
   registerDragHandler(
     (sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId),
     e2eEmit,

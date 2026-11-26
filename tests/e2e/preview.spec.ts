@@ -24,7 +24,7 @@ async function currentSelectedId(page: Page): Promise<number> {
 }
 
 /** `getByRole('slider', ...).fill(...)` is refused by Playwright for `input[type=range]` in some
- * versions — the brief's pre-approved fallback sets the value directly and dispatches a real
+ * versions — the fallback sets the value directly and dispatches a real
  * `input` event so React's controlled `onChange` (TopBar.tsx) fires exactly as a user drag would. */
 async function setVolumeSlider(page: Page, value: string): Promise<void> {
   const slider = page.getByRole('slider', { name: 'Volume' });
@@ -98,7 +98,7 @@ test('click-to-preview and the keyboard walk go through the protocol/pcm seams, 
   protocolEvents = await seam.drain<ProtocolEvent>('ntwine:e2e:protocol');
   expect(protocolEvents.filter((e) => e.scheme === 'sample')).toEqual([]);
 
-  // --- ArrowLeft is the same retrigger (QoL round 1, Splice muscle memory): playCount grows,
+  // --- ArrowLeft is the same retrigger (Splice muscle memory): playCount grows,
   // selection and lastPlayedId stay put, and — like Space — the replay comes from the buffer
   // cache, so no new sample:// fetch. Same drain-then-filter discipline as the Space block. ---
   await seam.drain('ntwine:e2e:protocol');

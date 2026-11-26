@@ -1,11 +1,11 @@
-// keymap.test.ts (Task 12 brief, Step 1): every table row of `listKeyAction` (design spec §5.4),
+// keymap.test.ts: every table row of `listKeyAction`,
 // INCLUDING the no-selection no-ops and the non-collection Delete/Backspace -> null gate — red
-// before keymap.ts existed. `landingIdAfterRemoval`'s suite below is the §3.1 selection-follow
+// before keymap.ts existed. `landingIdAfterRemoval`'s suite below is the selection-follow
 // next-row rule's pure arithmetic, factored out of SampleList's `withSelectionFollow` specifically
 // so it has a real unit test (this repo has no component-mounting test infra — vitest.config.ts
 // only globs `src/**/*.test.ts`, and there is no `@testing-library/react` dependency — so a
-// closure over live MobX stores can only be exercised end-to-end, Task 13's milestone; the pure
-// index math underneath it can and should be pinned now). Covers the task's named landing-math
+// closure over live MobX stores can only be exercised end-to-end; the pure
+// index math underneath it can and should be pinned here). Covers the landing-math
 // cases by name: remove middle -> next; remove last -> previous; remove sole -> cleared.
 import { describe, expect, it } from 'vitest';
 import { landingIdAfterRemoval, listKeyAction, type ListKeyContext } from './keymap';
@@ -35,7 +35,7 @@ describe('listKeyAction', () => {
       );
     });
 
-    it('is a no-op without a selection (spec §5.4: every single-key action no-ops on empty selection)', () => {
+    it('is a no-op without a selection (every single-key action no-ops on empty selection)', () => {
       expect(listKeyAction({ key: 'f' }, noSelection)).toBeNull();
     });
   });
@@ -148,7 +148,7 @@ describe('listKeyAction', () => {
   });
 });
 
-describe('landingIdAfterRemoval — §3.1 selection-follow next-row rule', () => {
+describe('landingIdAfterRemoval — selection-follow next-row rule', () => {
   it('remove a MIDDLE row -> selection lands on the row that shifted into its place ("next")', () => {
     // rows [10, 20, 30]; 20 (index 1) is the one the write removes.
     expect(landingIdAfterRemoval(1, [10, 30])).toBe(30);

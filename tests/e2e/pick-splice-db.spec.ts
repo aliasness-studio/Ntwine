@@ -6,7 +6,7 @@ import { buildFixtureLibrary } from './fixture/library';
 import { importAndWait, readCount } from './harness/actions';
 import { launchNtwine } from './harness/launch';
 
-// The Splice-DB picker fallback (Windows-port audit blocker): the win32 detection glob is a
+// The Splice-DB picker fallback (needed for the Windows port): the win32 detection glob is a
 // best-guess — when it misses, the first-run screen must offer a way to point at sounds.db by
 // hand, refuse a non-Splice file with a visible reason, and import from the picked file. Driven
 // against a REAL fixture library whose sounds.db sits where the detection glob does NOT look

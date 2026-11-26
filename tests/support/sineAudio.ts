@@ -1,6 +1,5 @@
-// tests/support/sineAudio.ts — shared 44100 Hz mono 16-bit PCM sine generator, ported verbatim
-// from the deleted scripts/gen-fixture-audio.mjs (plan-review ruling 2026-08-17: an .mjs cannot
-// import a TS module, so the generator moved here instead of staying a "two-line caller"). Both
+// tests/support/sineAudio.ts — shared 44100 Hz mono 16-bit PCM sine generator (a TS module, so
+// both TS callers can import it). Both
 // decode.test.ts and the e2e fixture library (tests/e2e/fixture/library.ts) generate their audio
 // inputs through these same three functions — "the same generator" is literally true rather than
 // two independently maintained copies.

@@ -1,4 +1,4 @@
-// One virtualized list row (Task 13 brief). Fixed 40px height — `ROW_HEIGHT` is exported so
+// One virtualized list row. Fixed 40px height — `ROW_HEIGHT` is exported so
 // SampleList's `useVirtualizer({ estimateSize: () => ROW_HEIGHT })` and this file's own CSS read
 // the SAME literal instead of two independently-maintained "40"s. Prop-driven only (no
 // `observer`, no store reads) — SampleList (itself an `observer`) already resolves `row`/
@@ -27,19 +27,19 @@ export const ROW_HEIGHT = 40;
 const THUMB_WIDTH = 96;
 const THUMB_HEIGHT = 32;
 const MAX_INLINE_TAGS = 3;
-// Task 15 (spec §8: "Drag of missing file -> Drag refused, row flashes its badge"). A missing
+// Dragging a missing file is refused and the row flashes its badge. A missing
 // row is never actually draggable (see `draggable={!row.missing}` below), so this handler mostly
 // exists for defense-in-depth and for a synthetically-dispatched `dragstart` (e.g.
 // `element.dispatchEvent`, which invokes listeners regardless of the `draggable` attribute) —
 // the only way to drive an "attempt" mechanically. 220ms is long enough to read as a deliberate
 // pulse, short enough to still feel like a refusal rather than a state change.
 const BADGE_FLASH_MS = 220;
-// Character-count heuristic, not a pixel-measured truncation: spec §7 calls filenames out as
-// "middle-truncated" but doesn't specify HOW. True pixel-accurate middle truncation needs a
+// Character-count heuristic, not a pixel-measured truncation: filenames are middle-truncated,
+// but nothing requires pixel accuracy. True pixel-accurate middle truncation needs a
 // ResizeObserver + text measurement per row, which is real complexity/perf risk in a virtualized
-// list whose #1 requirement is "never jank" (spec §7's feel bar) — a fixed character budget gets
-// the same "keep the extension/tail visible" shape at zero measurement cost. Flagged in the task
-// report as a place a future pass could upgrade to pixel-accurate truncation if it matters.
+// list whose #1 requirement is "never jank" — a fixed character budget gets
+// the same "keep the extension/tail visible" shape at zero measurement cost. A future pass could
+// upgrade to pixel-accurate truncation if it matters.
 const FILENAME_TRUNCATE_MAX = 42;
 
 function middleTruncate(name: string, max: number = FILENAME_TRUNCATE_MAX): string {
@@ -106,17 +106,17 @@ const Filename = styled.span`
   font-size: 13px;
 `;
 
-// The real filename, shown dimmed-small after a nickname (design spec §5.2: "reappears
-// dimmed-small after the nickname where width allows"). No separate width-measurement logic
-// needed for the "where width allows" part — Filename's own `overflow: hidden; white-space:
-// nowrap` already clips this trailing inline span exactly when there isn't room.
+// The real filename, shown dimmed-small after a nickname, where width allows. No separate
+// width-measurement logic needed for the "where width allows" part — Filename's own
+// `overflow: hidden; white-space: nowrap` already clips this trailing inline span exactly when
+// there isn't room.
 const DimmedReal = styled.span`
   margin-left: 6px;
   color: ${(p) => p.theme.color.textFaint};
   font-size: 11px;
 `;
 
-// Nickname inline editor (Task 11 brief / design spec §5.3) — replaces `Filename` in place when
+// Nickname inline editor — replaces `Filename` in place when
 // `editingNickname` is true. `flex: 2; min-width: 0;` mirrors `Filename`'s own sizing so swapping
 // between display/edit never shifts the row's other columns. Colors match `LibraryRail`'s own
 // `TextInput` (its rename/create editors) for one consistent "editing" look app-wide.
@@ -171,7 +171,7 @@ const BpmCell = styled.span`
   text-align: right;
 `;
 
-// Cross-navigation cells (QoL round 2, 2026-08-20): pack / key / bpm / tag read as plain text but
+// Cross-navigation cells: pack / key / bpm / tag read as plain text but
 // behave as links — click one and the browse state follows it. Styled to be VISUALLY identical to
 // the span they replace (`font: inherit`, no chrome) so a row still reads as a row, with the
 // affordance appearing on hover only; a row full of obviously-buttonish cells would be noise at
@@ -268,7 +268,7 @@ const Chip = styled.span`
   color: ${(p) => p.theme.color.textMuted};
 `;
 
-// Splice tag chips, clickable since QoL round 2: one click adds the tag to the active filter (and
+// Splice tag chips, clickable: one click adds the tag to the active filter (and
 // a second removes it — `toggleTag`). Same drag guards as the cell links above.
 const ChipButton = styled.button`
   ${chipShape}
@@ -284,8 +284,8 @@ const ChipButton = styled.button`
   }
 `;
 
-// User tags (design spec §5.2: "accent-outlined, after Splice's within the same +N overflow
-// budget") — extends ChipButton's shape/padding/font-size, only the fill/border differ. Same
+// User tags (accent-outlined, after Splice's within the same +N overflow
+// budget) — extends ChipButton's shape/padding/font-size, only the fill/border differ. Same
 // outline-on-accent idiom FilterPanel's active `TagChip` already uses for "this chip is
 // accent-relevant" (transparent fill, 1px accent border, accentStrong text). Filterable on the
 // same footing as a Splice tag: querySamples' `tags` filter matches EITHER source per name.
@@ -309,13 +309,13 @@ const MissingBadge = styled.span<{ $flash: boolean }>`
     color 150ms ease;
 `;
 
-// Design spec §5.2: "a small heart button at the row's right edge... rendered on every
-// NON-missing row, filled when favorited, hollow-on-hover otherwise." Occupies the same
+// A small heart button at the row's right edge, rendered on every
+// NON-missing row, filled when favorited, hollow-on-hover otherwise. Occupies the same
 // right-edge slot MissingBadge does — the two are mutually exclusive (`!row.missing` /
 // `row.missing`), which is the visual expression of "missing rows are read-only for the user
 // layer."
 //
-// Drag-hazard fix (review round 1): `Row` is `draggable` with its own `onDragStart` (native HTML5
+// Drag-hazard fix: `Row` is `draggable` with its own `onDragStart` (native HTML5
 // drag, armed on mousedown+move — a SEPARATE event path from `click`). A click on this 20×20
 // button with slight cursor drift can resolve as a drag start on `Row` instead of a click on the
 // button, kicking off a real OS file-drag from what looked like a favorite click; Chromium then
@@ -343,8 +343,8 @@ const HeartButton = styled.button<{ $favorite: boolean }>`
   }
 `;
 
-// A local copy of LibraryRail's own HeartIcon, not an import — this task's file scope is
-// SampleRow.tsx/SampleList.tsx only, and LibraryRail's isn't exported. The two also differ in
+// A local copy of LibraryRail's own HeartIcon, not an import — LibraryRail's isn't
+// exported. The two also differ in
 // substance, not just packaging: the rail's glyph is always filled/accent (it marks a fixed
 // "Favorites" row), this one toggles filled vs. hollow off `row.favorite` per row. Same
 // inline-SVG reasoning as both (and App.tsx's GearIcon/ChevronIcon): a system-font heart dingbat
@@ -376,22 +376,22 @@ export interface SampleRowProps {
   selected: boolean;
   /** Already resolved by the caller from `peaksCache` — may be a real decode. This component
    * still independently re-checks `row.missing`/`row.peaksFailed` below before ever handing it to
-   * `WaveformThumb`, rather than trusting the caller got that right (the brief's "never try to
+   * `WaveformThumb`, rather than trusting the caller got that right ("never try to
    * draw a failed row's blob" is treated as a rule worth enforcing twice, not once). */
   peaks: ArrayBuffer | null;
   top: number;
   onSelect: () => void;
-  /** Design spec §5.2: "click toggles without changing selection or playback." This component
+  /** Click toggles without changing selection or playback. This component
    * only renders the button and forwards the click — same "no store reads" posture as `onSelect`
    * above. SampleList supplies `() => userLayer.toggleFavorite(row)`. */
   onToggleFavorite: () => void;
-  /** Task 11 (design spec §5.3): true when this row is mid-nickname-edit
+  /** True when this row is mid-nickname-edit
    * (`userLayer.nicknameEditId === row.id`) — pre-resolved by the caller into a boolean, the same
    * shape `selected` above already takes, rather than handing this component the raw id to
    * compare itself. */
   editingNickname: boolean;
   /** Enter in the nickname input calls this with the trimmed value, or `null` for an empty
-   * (post-trim) input — design spec §5.3: "empty clears the nickname." SampleList wires this to
+   * (post-trim) input — empty clears the nickname. SampleList wires this to
    * `userLayer.setNickname(row.id, nickname)` followed by `userLayer.stopNicknameEdit()`. */
   onCommitNickname: (nickname: string | null) => void;
   /** Esc in the nickname input calls this. SampleList wires this to
@@ -434,9 +434,8 @@ export function SampleRow({
   });
 
   // Splice chips first, then user chips, SLICED TOGETHER against one MAX_INLINE_TAGS budget
-  // (design spec §5.2: "after Splice's within the same +N overflow budget") — two independent
-  // slices would let a row with 3 Splice tags AND 3 user tags show 6 chips before ever
-  // overflowing, silently doubling the row's real budget.
+  // — two independent slices would let a row with 3 Splice tags AND 3 user tags show 6 chips
+  // before ever overflowing, silently doubling the row's real budget.
   // Every link below carries an explicit `aria-label` rather than letting its visible text become
   // the accessible name. Two reasons, one of them load-bearing: a chip reading just "bounce" would
   // be indistinguishable by role+name from TagsPopover's own "bounce" suggestion button (an
@@ -513,12 +512,12 @@ export function SampleRow({
     }
   };
 
-  // spec §8 / brief Step 1: cancel the HTML5 drag unconditionally (the documented Electron
+  // Cancel the HTML5 drag unconditionally (the documented Electron
   // pattern — `preventDefault` stops the browser's own drag-and-drop so the NATIVE
   // `webContents.startDrag` can take over instead), then either start the real drag or, for a
   // missing row, refuse and flash the badge instead.
   //
-  // Task 13 / spec §7: a real drag also arms the renderer-owned drag-source slot BEFORE invoking
+  // A real drag also arms the renderer-owned drag-source slot BEFORE invoking
   // `startDrag` — the only way LibraryRail's drop targets can tell this native row drag from an
   // external Finder/Explorer file drag once `preventDefault` has cancelled our own HTML5 drag
   // session. `startDrag`'s invoke resolves when the OS drag session ends (immediately under e2e —
@@ -545,13 +544,13 @@ export function SampleRow({
 
 
   // Row's own onClick (below) would otherwise select the row on bubble — favoriting must not
-  // move the selection or touch playback (design spec §5.2).
+  // move the selection or touch playback.
   const handleFavoriteClick = (e: MouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation();
     onToggleFavorite();
   };
 
-  // Nickname editor commit/cancel (Task 11, design spec §5.3). Uncontrolled input
+  // Nickname editor commit/cancel. Uncontrolled input
   // (`defaultValue`, read via `e.currentTarget.value` on Enter) rather than React-controlled
   // state: the input only exists in the tree while `editingNickname` is true (conditional
   // rendering below swaps it in for `Filename`), so it always mounts fresh with the row's CURRENT

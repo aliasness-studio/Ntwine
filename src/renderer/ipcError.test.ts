@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ipcErrorMessage } from './ipcError';
 
 describe('ipcErrorMessage', () => {
-  it('strips Electron invoke-rejection wrapper AND the UserNameError domain prefix down to the clean message — the exact string collections.spec.ts observed live (Task 15)', () => {
+  it('strips Electron invoke-rejection wrapper AND the UserNameError domain prefix down to the clean message — the exact string collections.spec.ts observed live', () => {
     const err = new Error(
       `Error invoking remote method 'ntwine:createCollection': UserNameError: A collection named "Crate" already exists.`,
     );
@@ -26,7 +26,7 @@ describe('ipcErrorMessage', () => {
     expect(ipcErrorMessage(err)).toBe('A collection named "Kicks: Live" already exists.');
   });
 
-  it('an unexpected system error stays visible, unstripped — the strip is the LITERAL "UserNameError:" prefix, never a broad \\w+Error: pattern (Codex caution, ledger Ruling R4)', () => {
+  it('an unexpected system error stays visible, unstripped — the strip is the LITERAL "UserNameError:" prefix, never a broad \\w+Error: pattern', () => {
     expect(ipcErrorMessage(new Error('TypeError: boom'))).toBe('TypeError: boom');
   });
 
@@ -35,7 +35,7 @@ describe('ipcErrorMessage', () => {
     expect(ipcErrorMessage(err)).toBe('TypeError: boom');
   });
 
-  it('final review wave, reviewer-supplied falsifier: both prefixes are anchored to the START of the message, not wherever the substring appears — an unanchored strip would find "Error invoking remote method \'x\': " and "UserNameError: " mid-string and corrupt this to "Not actually wrapped: gotcha"', () => {
+  it('both prefixes are anchored to the START of the message, not wherever the substring appears — an unanchored strip would find "Error invoking remote method \'x\': " and "UserNameError: " mid-string and corrupt this to "Not actually wrapped: gotcha"', () => {
     const err = new Error(
       "Not actually wrapped: Error invoking remote method 'x': UserNameError: gotcha",
     );

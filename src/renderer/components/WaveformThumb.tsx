@@ -1,4 +1,4 @@
-// Canvas waveform thumbnail (Task 13 brief, verbatim prop shape): `{ peaks: ArrayBuffer | null;
+// Canvas waveform thumbnail: `{ peaks: ArrayBuffer | null;
 // width: 96; height: 32 }` — devicePixelRatio-scaled canvas, 200 min/max bars from an Int8Array
 // view of `peaks`, a flat gray placeholder line when `peaks` is null. Deliberately a "dumb"
 // prop-driven component (no `observer`, no store reads): SampleRow/SampleList already resolve

@@ -64,7 +64,7 @@ describe('user tags', () => {
     user.addUserTag('h2', ' kick ');
     user.addUserTag('h1', 'bounce');
     expect(catalog.db.prepare(`SELECT COUNT(*) AS n FROM user.tags`).get()).toEqual({ n: 2 });
-    expect(user.listUserTagNames()).toEqual(['bounce', 'Kick']); // localeCompare display sort (Global Constraints)
+    expect(user.listUserTagNames()).toEqual(['bounce', 'Kick']); // localeCompare display sort
     user.removeUserTag('h1', 'KICK'); // removal matches by normalized name too
     expect(catalog.db.prepare(`SELECT COUNT(*) AS n FROM user.sample_tags`).get()).toEqual({ n: 2 });
   });

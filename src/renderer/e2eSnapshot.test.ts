@@ -26,7 +26,7 @@ describe('wrapPlayPort', () => {
 });
 
 describe('installE2ESnapshot', () => {
-  it('unarmed: never attaches — the property stays absent (spec §4 security row)', () => {
+  it('unarmed: never attaches — the property stays absent (no E2E surface in a normal run)', () => {
     const target: { __ntwineE2E?: unknown } = {};
     installE2ESnapshot(target, false, () => { throw new Error('must not be read'); });
     expect('__ntwineE2E' in target).toBe(false);

@@ -1,7 +1,7 @@
 import { importAndWait, openSettings, openTagsPopover, readCount, rowByFilename, rowHeart } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 
-test('a favorite, a nickname, and a user tag on the same row all survive Settings → Re-run import intact, proving the §2.1 file_hash identity guarantee end-to-end', async ({
+test('a favorite, a nickname, and a user tag on the same row all survive Settings → Re-run import intact, proving the file_hash identity guarantee end-to-end', async ({
   ntwine,
 }) => {
   const { page, fixture } = ntwine;
@@ -42,7 +42,7 @@ test('a favorite, a nickname, and a user tag on the same row all survive Setting
   await page.getByRole('button', { name: 'Close settings' }).click();
   await expect.poll(() => readCount(page)).toBe(fixture.totalSamples); // back to 12
 
-  // --- the §2.1 guarantee: sample_state/sample_tags key off file_hash, which the re-import
+  // --- the file_hash identity guarantee: sample_state/sample_tags key off file_hash, which the re-import
   // upserts onto the SAME row (ON CONFLICT(file_hash)) rather than replacing it — favorite,
   // nickname, and tag all ride through untouched ---
   await expect(rowHeart(page, 'AD_Kick_01.wav')).toHaveAttribute('aria-pressed', 'true');

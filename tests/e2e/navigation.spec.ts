@@ -1,4 +1,4 @@
-// Cross-navigation (QoL round 2, 2026-08-20): a row's pack / key / bpm / tag cells are links, and
+// Cross-navigation: a row's pack / key / bpm / tag cells are links, and
 // every hop they make is reversible. This drives the whole loop through the real renderer — follow
 // a link, watch the result set actually change, then unwind it three different ways (the back
 // button, Alt+Left, a crumb's ✕) — because the failure mode this guards against is a link that
@@ -96,9 +96,9 @@ test('row cells link to their pack, key, bpm and tags — and every hop unwinds'
 });
 
 // Following a link must never disturb what's selected or what's playing — the same contract the
-// favorite heart already holds (design spec §5.2). A link that stole the selection would make
+// favorite heart already holds. A link that stole the selection would make
 // every navigation also change the preview, which is exactly the kind of "why did it do that"
-// behaviour this round of work exists to remove.
+// behaviour to avoid.
 test('following a link leaves selection and playback alone', async ({ ntwine }) => {
   const { page, fixture } = ntwine;
   await importAndWait(page);

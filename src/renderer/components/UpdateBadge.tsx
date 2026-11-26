@@ -1,4 +1,4 @@
-// Update badge (release pipeline PR 2, Task 9), in the rail footer between the transport dock and
+// Update badge, in the rail footer between the transport dock and
 // the settings gear. Reads UpdateStore and nothing else: main decides every transition, this only
 // offers the one action each non-idle state allows — restart-to-install when an update is `ready`,
 // or open the download page when a signature mismatch means it must be installed by hand — plus a

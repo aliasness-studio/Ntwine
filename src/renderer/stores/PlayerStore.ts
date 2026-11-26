@@ -1,5 +1,5 @@
-// PlayerStore (Task 12): selection + preview-playback INTENT, decoupled from how audio actually
-// plays. Real playback is Task 14's `previewPlayer.ts`, injected here as a `PlayPort` — this
+// PlayerStore: selection + preview-playback INTENT, decoupled from how audio actually
+// plays. Real playback is `previewPlayer.ts`, injected here as a `PlayPort` — this
 // store never touches WebAudio, `window`, or `api` directly (design constraint: store classes
 // take only their dependency's typed shape as a constructor argument — see stores/api.ts's own
 // doc comment for why `window` never appears in a store file).
@@ -7,10 +7,10 @@ import { makeAutoObservable } from 'mobx';
 import './configure';
 
 /**
- * The playback seam Task 14 implements (`createPreviewPlayer(...)` returns a `PlayPort &
+ * The playback seam `previewPlayer.ts` implements (`createPreviewPlayer(...)` returns a `PlayPort &
  * { dispose(): void }`). Kept minimal on purpose: PlayerStore only needs to start a sample, stop
  * whatever's sounding, and set the master volume — everything else (per-voice gain-ramp
- * retrigger, the AIFF PCM decode fallback, buffer caching) is Task 14's concern and invisible
+ * retrigger, the AIFF PCM decode fallback, buffer caching) is previewPlayer's concern and invisible
  * here.
  */
 export interface PlayPort {
@@ -26,14 +26,14 @@ export interface SelectOptions {
 /**
  * `selectedId`/`volume`/`autoplay` are the only state. Every action that LANDS on a new "current"
  * sample (`select`, `moveSelection`) plays it — no queued/pending playback state to reconcile —
- * matching spec §3.1 item 4 ("click a row -> it plays immediately... Arrow keys move selection and
+ * matching the browse model ("click a row -> it plays immediately... Arrow keys move selection and
  * auto-play on landing"), unless the `autoplay` preference is off.
  *
  * Both additions here (2026-08-23, transport dock) close gaps v1 left open on purpose, which live
  * use turned out to care about:
  *
  * - `playPort.stop()` was part of the injected contract with NO caller. Every action that changed
- *   "current" immediately played the new landing, and Task 14's per-voice gain-ramp retrigger is
+ *   "current" immediately played the new landing, and previewPlayer's per-voice gain-ramp retrigger is
  *   what silenced the previous voice — so a 30-second sample triggered by accident could only be
  *   RESTARTED, never stopped. `stop()` drives it directly now.
  * - `autoplay` makes the landing sound optional. Browsing a filtered list with the arrow keys
@@ -63,8 +63,8 @@ export class PlayerStore {
   }
 
   /**
-   * Defaults to `{ autoplay: true }` — spec §3.1 item 4's "click a row -> it plays immediately"
-   * is the common case (Task 13's row `onClick` calls `select(id)` with no second argument);
+   * Defaults to `{ autoplay: true }` — "click a row -> it plays immediately"
+   * is the common case (the row `onClick` calls `select(id)` with no second argument);
    * `{ autoplay: false }` exists for selection that shouldn't sound anything (e.g. restoring a
    * prior selection on mount).
    */
@@ -82,7 +82,7 @@ export class PlayerStore {
   /**
    * Clamps at the edges of `visibleIds` — no wrap (repeatedly pressing the arrow key at either
    * end keeps landing on, and replaying, the boundary item rather than jumping to the other
-   * end). `visibleIds` is taken fresh on every call (Task 13 passes the virtualizer's current
+   * end). `visibleIds` is taken fresh on every call (SampleList passes the virtualizer's current
    * visible-row id list) rather than cached on the store, so filtering/scrolling between calls
    * is always respected. If the current selection isn't in `visibleIds` at all (filtered out,
    * or nothing selected yet), it's treated as position -1, so the first step in EITHER direction
@@ -103,7 +103,7 @@ export class PlayerStore {
   }
 
   /**
-   * Selection-follow's (design spec §3.1) terminal case: the write that just ran emptied the
+   * Selection-follow's terminal case: the write that just ran emptied the
    * current scope entirely, so there's no "next row" for `landingIdAfterRemoval` (keymap.ts) to
    * land on. Still deliberately doesn't call `playPort.stop()`, even now that `stop()` exists:
    * losing the selection because a filter emptied out is not a request to silence anything, and

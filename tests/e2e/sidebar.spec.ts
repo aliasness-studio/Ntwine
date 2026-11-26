@@ -3,7 +3,7 @@ import { importAndWait } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 import { launchNtwine } from './harness/launch';
 
-// QoL round 1: the rail is two independent sections — packs in their own scroller, the filter
+// The rail is two independent sections — packs in their own scroller, the filter
 // panel docked below it, ALWAYS on screen (the old single rail scroll buried the filters under
 // the full pack list). The dock collapses to its header row, handing the reclaimed height to the
 // packs scroller, and the collapsed/open choice survives a relaunch (localStorage, which lives

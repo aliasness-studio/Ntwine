@@ -4,8 +4,8 @@ import { expect, test } from './harness/fixtures';
 // Cells are addressed by testid (`row-key`/`row-bpm`/`row-duration`, SampleRow.tsx). This used to
 // be child position — `:scope > span` plus an index — which broke once a cell became either a span
 // or a button depending on whether it has a value to link to: the same index then means different
-// cells on different rows. Naming them is also what the brief's "assert on the row's cell texts,
-// not a bare '—' anywhere" asks for: a bpm-0 row shows '—' in TWO cells (key AND bpm) for two
+// cells on different rows. Naming them also lets the assertions target the row's cell texts
+// rather than a bare '—' anywhere: a bpm-0 row shows '—' in TWO cells (key AND bpm) for two
 // independently-NULL reasons, and a bare `toContainText('—')` can't tell those apart from a third,
 // actually-broken cell.
 

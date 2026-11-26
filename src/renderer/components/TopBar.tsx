@@ -1,5 +1,5 @@
-// Search box + result count + volume (Task 13 brief, Step 1 / spec §7). `library.setSearch`
-// already owns the 50ms debounce (Task 12) — this component just forwards every keystroke.
+// Search box + result count + volume. `library.setSearch`
+// already owns the 50ms debounce — this component just forwards every keystroke.
 import { observer } from 'mobx-react-lite';
 import { forwardRef, useImperativeHandle, useRef, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
@@ -55,13 +55,13 @@ const VolumeSlider = styled.input`
 `;
 
 export interface TopBarHandle {
-  /** App.tsx's window-level Cmd/Ctrl+F listener (design spec §5.4) calls this. */
+  /** App.tsx's window-level Cmd/Ctrl+F listener calls this. */
   focusSearch: () => void;
 }
 
 export interface TopBarProps {
-  /** Esc in the search box when it's already empty (design spec §5.4: "else return focus to the
-   * list"). TopBar has no reach to the list container's DOM node on its own — App.tsx wires this
+  /** Esc in the search box when it's already empty: return focus to the
+   * list. TopBar has no reach to the list container's DOM node on its own — App.tsx wires this
    * to SampleList's own forwarded `focusList`. */
   onEscEmpty: () => void;
 }
@@ -73,7 +73,7 @@ export const TopBar = observer(
 
     useImperativeHandle(ref, () => ({ focusSearch: () => searchRef.current?.focus() }), []);
 
-    // Esc (design spec §5.4): lives on the search input itself ("focus is by definition there") —
+    // Esc: lives on the search input itself ("focus is by definition there") —
     // a non-empty search clears first, same "Esc unwinds one layer" contract every other surface
     // (RowContextMenu/TagsPopover/CollectionPopover) already follows; an already-empty box blurs
     // and hands focus back to the list so arrow keys/F/T/C/N work immediately, no click required.

@@ -1,13 +1,12 @@
-// Pure-function tests for keyDisplay.ts (Task 13, TDD first — written and run failing before
-// keyDisplay.ts exists at all). `formatKey`/`formatDuration` feed SampleRow's key/duration
+// Pure-function tests for keyDisplay.ts. `formatKey`/`formatDuration` feed SampleRow's key/duration
 // columns; `PITCH_CLASSES` feeds FilterPanel's key <select> so the filter dropdown and the
 // display formatter share one definition of "the 12 keys" instead of two independently
-// maintained lists that could drift (spec §2.2's exact vocabulary).
+// maintained lists that could drift (Splice's exact vocabulary).
 import { describe, expect, it } from 'vitest';
 import { formatDuration, formatKey, PITCH_CLASSES } from './keyDisplay';
 
 describe('formatKey', () => {
-  // Round-trips pin EVERY pitch class, not a representative one (house rule) — spec §2.2's
+  // Round-trips pin EVERY pitch class, not a representative one (house rule) — Splice's
   // vocabulary is exactly these 12 lowercase, sharps-only values.
   it('formats every pitch class with no chord type', () => {
     const expected: Record<string, string> = {
@@ -29,19 +28,19 @@ describe('formatKey', () => {
     }
   });
 
-  it("combines a sharp pitch class with a minor chord type — brief's exact case", () => {
+  it('combines a sharp pitch class with a minor chord type', () => {
     expect(formatKey('c#', 'minor')).toBe('C♯ min');
   });
 
-  it("a bare pitch class with no chord type — brief's exact case", () => {
+  it('a bare pitch class with no chord type', () => {
     expect(formatKey('a', null)).toBe('A');
   });
 
-  it("both unknown — brief's exact case", () => {
+  it('both unknown', () => {
     expect(formatKey(null, null)).toBe('—');
   });
 
-  it('appends "maj" for a major chord type (460-sample chord-type population, spec §2.3)', () => {
+  it('appends "maj" for a major chord type (460-sample chord-type population)', () => {
     expect(formatKey('g', 'major')).toBe('G maj');
   });
 
@@ -56,15 +55,15 @@ describe('formatKey', () => {
 });
 
 describe('formatDuration', () => {
-  it("rounds ms to one decimal second — brief's exact case", () => {
+  it('rounds ms to one decimal second', () => {
     expect(formatDuration(1395)).toBe('1.4s');
   });
 
-  it("unknown duration — brief's exact case", () => {
+  it('unknown duration', () => {
     expect(formatDuration(null)).toBe('—');
   });
 
-  it('matches the spec §2.3 verified-firsthand duration examples', () => {
+  it('matches the duration examples verified against a real library', () => {
     expect(formatDuration(9600)).toBe('9.6s');
     expect(formatDuration(12830)).toBe('12.8s');
   });
@@ -87,7 +86,7 @@ describe('formatDuration', () => {
 });
 
 describe('PITCH_CLASSES', () => {
-  it('is exactly the spec §2.2 12-value vocabulary, lowercase, sharps only, in order', () => {
+  it('is exactly the Splice 12-value vocabulary, lowercase, sharps only, in order', () => {
     expect(PITCH_CLASSES).toEqual([
       'a',
       'a#',

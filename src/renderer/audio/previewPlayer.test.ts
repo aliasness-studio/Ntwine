@@ -1,10 +1,9 @@
-// Task 14: previewPlayer's decidable logic, pinned against a stub WebAudio context — no DOM in
+// previewPlayer's decidable logic, pinned against a stub WebAudio context — no DOM in
 // this test env (vitest.config.ts's `environment: 'node'`), so every WebAudio object the
-// implementation touches is reached ONLY through the injected `ctx` (design constraint #6). The
-// stub below implements createBufferSource/createGain/createBuffer/decodeAudioData (the Task 14
-// brief's Step 1 enumeration) PLUS destination/currentTime/state/resume/close — the last three
-// aren't in that enumeration, but they're what the suspended-context-resume and
-// dispose()-closes-the-context design constraints (#6/#7) need to be testable at all; a real
+// implementation touches is reached ONLY through the injected `ctx`. The
+// stub below implements createBufferSource/createGain/createBuffer/decodeAudioData PLUS
+// destination/currentTime/state/resume/close — the last three are what the
+// suspended-context-resume and dispose()-closes-the-context behaviors need to be testable at all; a real
 // AudioContext has all of them too, so this is a superset, not a divergence, of what production
 // actually gets.
 //
@@ -180,7 +179,7 @@ describe('createPreviewPlayer', () => {
     });
   });
 
-  describe('deps.sampleUrl wiring (controller-resolved deviation from the brief)', () => {
+  describe('deps.sampleUrl wiring', () => {
     it('fetches via deps.sampleUrl(sampleId), not a hardcoded template', async () => {
       const { ctxBundle, fetchBytes, sampleUrl, player } = setUp();
       fetchBytes.mockResolvedValue(new ArrayBuffer(8));
@@ -272,7 +271,7 @@ describe('createPreviewPlayer', () => {
     });
   });
 
-  describe('AIFF / PCM fallback (§4 single-exception path)', () => {
+  describe('AIFF / PCM fallback (single PCM-over-IPC exception path)', () => {
     it('when decodeAudioData rejects, decodeFallback is called ONCE and its Float32 channels land in a createBuffer()-made buffer', async () => {
       const { ctxBundle, fetchBytes, decodeFallback, player } = setUp();
       fetchBytes.mockResolvedValue(new ArrayBuffer(8));
@@ -287,8 +286,8 @@ describe('createPreviewPlayer', () => {
 
       expect(decodeFallback).toHaveBeenCalledTimes(1);
       expect(decodeFallback).toHaveBeenCalledWith(7);
-      // Hand-QA-visible evidence the fallback fired (brief Step 5: "verify in devtools console
-      // that the fallback fired") — a permanent, non-error diagnostic, not a reverted QA probe.
+      // Console-visible evidence the fallback fired, for manual testing — a permanent, non-error
+      // diagnostic, not a reverted QA probe.
       expect(infoSpy).toHaveBeenCalledTimes(1);
       expect(infoSpy.mock.calls[0][0]).toMatch(/sample 7.*PCM fallback/);
       infoSpy.mockRestore();

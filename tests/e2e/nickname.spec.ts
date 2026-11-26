@@ -26,7 +26,7 @@ test('N edits the selected row nickname in place, the real filename stays the ti
   await expect(filenameCell).toHaveAttribute('title', 'AD_Kick_01.wav'); // real filename stays the tooltip
   await expect(filenameCell).toContainText('THE snare');
 
-  // §3.4 mixed-vocabulary search: 'snare kick' AND-composes two tokens, sources unioned PER
+  // Mixed-vocabulary search: 'snare kick' AND-composes two tokens, sources unioned PER
   // token (queries.ts's wordPrefixMatch/readUserTextWithIds). AD_Snare_02.wav matches natively —
   // its Splice tags carry both 'snare' and 'kick' (fixture.counts.kickAndSnare's one row).
   // AD_Kick_01.wav now ALSO matches, but from two DIFFERENT sources: 'kick' from its own

@@ -1,6 +1,6 @@
 /**
- * React root (Task 13 — replaces the Task 2 drag spike). Instantiates the three MobX stores
- * (Task 12) once with the real `api`/`PlayPort`, and renders the app inside a store context
+ * React root. Instantiates the MobX stores once with the real `api`/`PlayPort`, and renders the
+ * app inside a store context
  * provider + styled-components ThemeProvider.
  *
  * To learn more about the differences between the "main" and the "renderer" context in Electron,
@@ -23,8 +23,7 @@ import { PlayerStore } from './renderer/stores/PlayerStore';
 import { UpdateStore } from './renderer/stores/UpdateStore';
 import { UserLayerStore } from './renderer/stores/UserLayerStore';
 
-// Task 14: the real WebAudio PlayPort, replacing Task 13's no-op stub. `fetchBytes` is the one
-// production implementation the previewPlayer brief names verbatim — `sample://` is
+// The real WebAudio PlayPort. `fetchBytes` is the one production implementation — `sample://` is
 // fetch-privileged (protocol.ts's PRIVILEGES has `supportFetchAPI: true`), so a plain renderer
 // `fetch()` is all a real sample byte-fetch needs; not-ok responses are turned into a rejection so
 // previewPlayer.ts's decode-failure path (-> decodeFallback) covers this too, not just a genuine
@@ -46,7 +45,7 @@ const basePort = createPreviewPlayer({
 });
 const { port: playPort, counters } = wrapPlayPort(basePort, e2eArmed);
 
-// Constructed as a local, not inline in `stores` below, so `UserLayerStore` (Task 7) — DI'd with
+// Constructed as a local, not inline in `stores` below, so `UserLayerStore` — DI'd with
 // BOTH `api` and this same `library` instance, the same pattern its own constructor doc-comments
 // — can reference it without reaching back into `stores.library`.
 const library = new LibraryStore(api);
@@ -64,10 +63,10 @@ const stores: Stores = {
 // (gated behind FirstRun completion, since browsing UI has nothing to show before an import),
 // `userLayer.init()` runs unconditionally at startup: `openUserDb` (main.ts) opens user.db on
 // EVERY launch regardless of import state, so `listLibraryRail()`/`listUserTags()` are always
-// answerable — pre-import they just resolve to the zero values (Task 1: an empty user.db is a
+// answerable — pre-import they just resolve to the zero values (an empty user.db is a
 // valid, fully-migrated database, not a missing one).
 void stores.userLayer.init();
-// Self-update (release pipeline PR 2): same unconditional, fire-and-forget posture — main answers
+// Self-update: same unconditional, fire-and-forget posture — main answers
 // the update bridge in every run mode (dev/e2e/Linux just report a permanent `idle`).
 void stores.update.init();
 

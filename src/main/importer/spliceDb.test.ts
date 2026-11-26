@@ -8,10 +8,10 @@ import { readSplice, snapshotSpliceDb, validateSpliceDb } from './spliceDb';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-splicedb-'));
 
-// 2 packs / 3 samples. Each sample carries one of the brief's named edge cases; the third
-// sample's filename AND its own pack's name are both NFD-normalized (spec §10: "unicode/NFD
-// filename + pack name — APFS normalization and tag lower-casing diverge exactly there").
-// Durations reuse the exact ms values spec §2.3 verified firsthand against the real library
+// 2 packs / 3 samples. Each sample carries one named edge case; the third
+// sample's filename AND its own pack's name are both NFD-normalized (unicode/NFD
+// filename + pack name — APFS normalization and tag lower-casing diverge exactly there).
+// Durations reuse the exact ms values verified firsthand against a real library
 // (1395 / 9600 / 12830 ms) so this fixture stays traceable to the numbers that pin the unit.
 const PACK_ONE_UUID = 'pack-aaaa-1111';
 const PACK_TWO_UUID = 'pack-bbbb-2222';
@@ -35,7 +35,7 @@ const FIXTURE_ROWS: FixtureRow[] = [
     provider_name: null,
     cover_url: null,
   },
-  // Edge case 1 (brief): bpm 0 / audio_key '' / chord_type '' — the "none" sentinel trio.
+  // Edge case 1: bpm 0 / audio_key '' / chord_type '' — the "none" sentinel trio.
   {
     table: 'samples',
     file_hash: 'hash-0001-kick',
@@ -49,7 +49,7 @@ const FIXTURE_ROWS: FixtureRow[] = [
     duration: 1395,
     tags: 'kick,drums,909',
   },
-  // Edge case 2 (brief): ragged comma-separated tags, raw and unparsed at this layer.
+  // Edge case 2: ragged comma-separated tags, raw and unparsed at this layer.
   {
     table: 'samples',
     file_hash: 'hash-0002-loop',
@@ -63,7 +63,7 @@ const FIXTURE_ROWS: FixtureRow[] = [
     duration: 9600,
     tags: 'Drums, kicks ,drums',
   },
-  // Edge case 3 (brief, spec §10): unicode NFD filename, paired with the NFD pack above.
+  // Edge case 3: unicode NFD filename, paired with the NFD pack above.
   {
     table: 'samples',
     file_hash: 'hash-0003-cafe',
@@ -80,7 +80,7 @@ const FIXTURE_ROWS: FixtureRow[] = [
 ];
 
 describe('readSplice', () => {
-  it('reads back 2 packs / 3 samples with exact row fidelity (spec §2.2 + §10 edge cases)', () => {
+  it('reads back 2 packs / 3 samples with exact row fidelity (real schema + edge cases)', () => {
     const dir = tmp();
     const dbPath = join(dir, 'sounds.db');
     buildFixtureSpliceDb(dbPath, FIXTURE_ROWS);
@@ -149,13 +149,13 @@ describe('readSplice', () => {
 
     // Falsifier: prove the round trip preserved DECOMPOSED code points instead of silently
     // re-normalizing to NFC. SQLite/Node don't normalize Unicode on their own, but that's
-    // exactly the assumption spec §10 says not to trust — pin it, don't take it on faith.
+    // exactly the assumption not to trust — pin it, don't take it on faith.
     expect(samples[2].filename).toBe(NFD_FILENAME);
     expect(samples[2].filename).not.toBe('café_kick.wav'.normalize('NFC'));
     expect(samples[2].filename.normalize('NFC')).toBe('café_kick.wav'.normalize('NFC'));
   });
 
-  // Task 13 hand-QA (2026-08-17): the real sounds.db stores genuine SQL NULL for chord_type
+  // Found in manual testing: a real sounds.db stores genuine SQL NULL for chord_type
   // (3,737 of 4,197 rows) and audio_key (2,977 rows) — confirmed firsthand via `sqlite3 sounds.db
   // "SELECT typeof(chord_type), COUNT(*) FROM samples GROUP BY 1"`, NOT the empty string every
   // other fixture row (including this file's own FIXTURE_ROWS above) had assumed. This pins that
@@ -212,7 +212,7 @@ describe('readSplice', () => {
 });
 
 describe('snapshotSpliceDb', () => {
-  it('captures rows living only in an un-checkpointed WAL — the state a RUNNING Splice leaves on disk (proven live 2026-08-19: 46 rows differed; a raw file copy misses them)', () => {
+  it('captures rows living only in an un-checkpointed WAL — the state a RUNNING Splice leaves on disk (proven on a live install: 46 rows differed; a raw file copy misses them)', () => {
     const dir = tmp();
     const dbPath = join(dir, 'sounds.db');
     buildFixtureSpliceDb(dbPath, FIXTURE_ROWS);
@@ -260,7 +260,7 @@ describe('snapshotSpliceDb', () => {
     const path1 = snapshotSpliceDb(dbPath, destDir);
     // Plant a stale snapshot with different content and a mtime in the FUTURE relative to the
     // real source. A naive "skip if dest looks newer" freshness guard would leave this alone;
-    // the brief's contract is explicit that no such guard exists.
+    // `snapshotSpliceDb`'s contract is explicit that no such guard exists.
     writeFileSync(path1, 'STALE-NOT-A-REAL-SQLITE-FILE');
     const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
     utimesSync(path1, future, future);
@@ -295,7 +295,7 @@ describe('validateSpliceDb', () => {
     expect(validateSpliceDb(p)).toMatch(/sounds\.db|samples/i);
   });
 
-  it("rejects tables that are RIGHT-named but wrong-shaped (Copilot review, PR #11): name-only checking would persist a file readSplice then chokes on — validation must compile readSplice's own projections", () => {
+  it("rejects tables that are RIGHT-named but wrong-shaped: name-only checking would persist a file readSplice then chokes on — validation must compile readSplice's own projections", () => {
     const p = join(tmp(), 'wrong-shape.db');
     const db = new Database(p);
     db.exec('CREATE TABLE samples (x TEXT); CREATE TABLE packs (y TEXT);');

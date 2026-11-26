@@ -12,7 +12,7 @@ test('settings: re-run import stays idempotent, and re-pick persists a relocated
 
   await openSettings(page);
   await expect(page.getByTestId('settings-library-root')).toHaveText(fixture.libraryRoot);
-  // Version row (release pipeline Task 9): app.getVersion() resolved through the update bridge —
+  // Version row: app.getVersion() resolved through the update bridge —
   // a semver, not the '…' placeholder shown while UpdateStore.init() is still in flight.
   await expect(page.getByTestId('settings-version')).toHaveText(/^\d+\.\d+\.\d+/);
 
@@ -30,7 +30,7 @@ test('settings: re-run import stays idempotent, and re-pick persists a relocated
   // and statPass against the now-empty root flips every row's missing flag. ---
   const relocated = join(ntwine.root, 'relocated');
   mkdirSync(relocated);
-  // Primary stub strategy (task-8 brief Step 2): ipc.ts's pickLibraryRoot handler calls
+  // Primary stub strategy: ipc.ts's pickLibraryRoot handler calls
   // `dialog.showOpenDialog(...)` as a property access on the imported `dialog` module object, not
   // a value captured into a local binding — app.evaluate runs INSIDE the main process, so `dialog`
   // there is the very same Electron module singleton ipc.ts imported, and patching the property

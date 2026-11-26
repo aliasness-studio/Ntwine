@@ -57,7 +57,7 @@ const withUnoverriddenLaunch = async (
 
   // Windows holds the just-closed app's SQLite handles for a moment — retry rather than fail on a
   // transient EBUSY. But a directory that is STILL locked after every attempt is a real defect (a
-  // leaked handle), so the last error surfaces instead of being swallowed (review, PR #13):
+  // leaked handle), so the last error surfaces instead of being swallowed:
   // silently leaving temp data behind is exactly how a handle leak hides.
   let cleanupError: unknown = null;
   for (let i = 0; i < 5; i++) {
@@ -75,8 +75,8 @@ const withUnoverriddenLaunch = async (
   if (cleanupError !== null) throw cleanupError;
 };
 
-// Library-root auto-detection (2026-08-20): first-run used to show a hardcoded "~/Splice
-// (default)", which is wrong on Windows (real install: Documents\Splice) and made the owner's
+// Library-root auto-detection: first-run used to show a hardcoded "~/Splice
+// (default)", which is wrong on Windows (real install: Documents\Splice) and made a
 // first real import refuse EVERY row — normalizeSample throws on any local_path outside the root.
 // Main now reads Splice's own `splice_folder` from the settings.json beside sounds.db, which the
 // fixture plants like a real install does. No picking, no typing: the shown root is the root the

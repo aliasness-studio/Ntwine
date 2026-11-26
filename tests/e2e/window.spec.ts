@@ -2,7 +2,7 @@ import { computeDefaultBounds } from '../../src/main/defaultBounds';
 import { expect, test } from './harness/fixtures';
 import { E2E_HEADED } from './harness/launch';
 
-// QoL round 1: the window opens at 90% of the primary display's work area (floored at the old
+// The window opens at 90% of the primary display's work area (floored at the old
 // 800x600, capped at the work area itself). Asserted against the SAME pure function main.ts
 // uses, evaluated over the live display the app actually saw — so this passes on any screen a
 // dev or CI box happens to have, while still failing if main.ts stops consulting the display at

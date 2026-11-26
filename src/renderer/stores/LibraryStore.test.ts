@@ -40,8 +40,8 @@ function makeFakeApi(
     startDrag: vi.fn(async () => {}),
     sampleUrl: vi.fn((id: number) => `sample://s/${id}`),
     coverUrl: vi.fn((id: number) => `cover://p/${id}`),
-    // Task 6 (design spec §4): 11 new bridge methods, inert here — LibraryStore itself never
-    // calls any of these (UserLayerStore, a later task, owns the writes; LibraryStore only
+    // User layer: 11 bridge methods, inert here — LibraryStore itself never
+    // calls any of these (UserLayerStore owns the writes; LibraryStore only
     // re-runs querySamples/listTags afterward).
     setFavorite: vi.fn(async () => {}),
     setNickname: vi.fn(async () => {}),
@@ -54,7 +54,7 @@ function makeFakeApi(
     deleteCollection: vi.fn(async () => {}),
     addToCollection: vi.fn(async () => {}),
     removeFromCollection: vi.fn(async () => {}),
-    // Self-update (release pipeline PR 2): 5 bridge methods, inert here.
+    // Self-update: 5 bridge methods, inert here.
     getUpdateState: vi.fn(async () => ({ kind: 'idle' as const })),
     onUpdateState: vi.fn(() => () => {}),
     installUpdate: vi.fn(async () => {}),
@@ -342,13 +342,13 @@ describe('LibraryStore', () => {
     });
   });
 
-  // Task 13 hand-QA against the REAL library (2026-08-17): every single query — the very first
+  // Found in manual testing against a REAL library: every single query — the very first
   // one, `init()`'s own unfiltered call — rejected with "An object could not be cloned" the
   // moment a REAL Electron IPC boundary (not this file's `vi.fn()` fake) was involved. `filters`
   // is a plain field but `makeAutoObservable` deep-wraps it as an observable object (a Proxy) by
   // default — nothing here excludes it the way `api`/`searchDebounceHandle` are excluded — and a
   // MobX Proxy fails structured-clone the instant it crosses a REAL `ipcRenderer.invoke` call.
-  // packs/tags loaded fine in that same hand-QA session because `listPacks()`/`listTags()` take
+  // packs/tags loaded fine in that same session because `listPacks()`/`listTags()` take
   // no arguments at all — nothing to clone on the way IN — which is exactly why 20+ existing
   // `toHaveBeenCalledWith({...})` assertions above never caught this: deep-equality matchers (and
   // a bare mock function call) are both blind to "is this a real Proxy," the one property that
@@ -379,13 +379,13 @@ describe('LibraryStore', () => {
     });
   });
 
-  // Review round 1, Finding 1: `patchFilters` used to spread-merge `undefined`-valued patch
+  // `patchFilters` used to spread-merge `undefined`-valued patch
   // entries (e.g. `{ scope: undefined }` from `setScope(null)`) straight into `this.filters`,
   // leaving a stale OWN key rather than removing it. `toEqual`/`toHaveBeenCalledWith` (used
   // everywhere above) are equality-insensitive to "key present with value undefined" vs "key
   // absent" — that's why none of those 20 tests caught it. `toStrictEqual` (and reading
   // `Object.keys` directly) is what actually distinguishes them, which matters because that's
-  // exactly what a future filter-chip / active-filter-count UI (Task 13) would read.
+  // exactly what a future filter-chip / active-filter-count UI would read.
   describe('filters — exact shape (no stale undefined-valued keys after clearing)', () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -466,7 +466,7 @@ describe('LibraryStore', () => {
     });
   });
 
-  // Navigation (QoL round 2, 2026-08-20). Rows became link-navigable — pack/key/bpm/tag cells
+  // Navigation. Rows became link-navigable — pack/key/bpm/tag cells
   // change the browse state on click — which is only safe if every such change is reversible.
   describe('back stack', () => {
     it('starts empty: there is nothing to go back to on arrival', () => {
@@ -595,7 +595,7 @@ describe('LibraryStore', () => {
     });
   });
 
-  // Review, PR #14: a snapshot must be an inert value. A shallow spread left `tags`/`scope`
+  // A snapshot must be an inert value. A shallow spread left `tags`/`scope`
   // aliased to the live filters and stored MobX proxies in the history, so a future in-place edit
   // of a nested filter value could reach back and rewrite the past.
   describe('history snapshots are inert values', () => {

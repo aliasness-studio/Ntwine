@@ -1,5 +1,4 @@
-// Task 14: the real PlayPort (design doc §"Preview playback") — replaces renderer.tsx's no-op
-// stub. WebAudio, not `<audio>`: one persistent AudioContext -> shared master GainNode (volume)
+// The real PlayPort. WebAudio, not `<audio>`: one persistent AudioContext -> shared master GainNode (volume)
 // -> destination; per play, a throwaway per-voice GainNode + AudioBufferSourceNode. Retrigger and
 // `stop()` both silence via a ~10ms linear ramp on the OLD voice's own gain node — never the
 // master, which stays untouched so the NEW voice's onset is never muted by its own stop ramp.
@@ -11,17 +10,17 @@ import type { PlayPort } from '../stores/PlayerStore';
 
 export interface PreviewPlayerDeps {
   fetchBytes(url: string): Promise<ArrayBuffer>;
-  // The §4 single sanctioned PCM IPC exception (AIFF fallback — Chromium can't decode AIFF, and
+  // The single sanctioned PCM-over-IPC exception (AIFF fallback — Chromium can't decode AIFF, and
   // 16 library files are .aif). `null` means main refused it (PREVIEW_MAX_BYTES/SECONDS caps) —
   // that's "can't play", not an error: logged and dropped, never thrown.
   decodeFallback(
     sampleId: number,
   ): Promise<{ sampleRate: number; channels: Float32Array[] } | null>;
-  // Controller-resolved deviation from the Task 14 brief's Produces block: `play(sampleId)` only
+  // `play(sampleId)` only
   // ever has a sampleId, not a URL, so the `sample://s/<id>` template has to live SOMEWHERE. It
   // already lives once, in preload's `sampleUrl` (api.ts) — duplicating that template string in
   // here would be a second, independently-maintained copy of "what's this sample's URL" (the
-  // owner's one-question-one-gate rule). `sampleUrl` is added to deps instead; renderer.tsx wires
+  // one-question-one-gate rule). `sampleUrl` is added to deps instead; renderer.tsx wires
   // it straight to `api.sampleUrl`.
   sampleUrl(sampleId: number): string;
   // Optional so tests can inject a stub (no real WebAudio in the vitest `environment: 'node'` test
@@ -30,10 +29,10 @@ export interface PreviewPlayerDeps {
   ctx?: BaseAudioContext;
 }
 
-// Typed as the brief specifies (`ctx?: BaseAudioContext`) — but `BaseAudioContext` itself has no
+// Typed `ctx?: BaseAudioContext` — but `BaseAudioContext` itself has no
 // `resume`/`close` (those are `AudioContext`-only; verified against the installed
-// typescript/lib.dom.d.ts). Rather than widening the deps type (a second deviation beyond the
-// documented `sampleUrl` one), `canResume`/`canClose` duck-type at the actual call sites: a real
+// typescript/lib.dom.d.ts). Rather than widening the deps type, `canResume`/`canClose` duck-type
+// at the actual call sites: a real
 // `AudioContext` always has both, so production is unaffected; a minimal test stub can supply
 // either, neither, or both, and either way nothing throws.
 function canResume(
@@ -51,7 +50,7 @@ function canClose(ctx: BaseAudioContext): ctx is BaseAudioContext & { close: () 
 // instead of a repeated magic number (ipc.ts's PREVIEW_MAX_BYTES/SECONDS is the same idiom).
 export const RETRIGGER_RAMP_SECONDS = 0.01;
 
-// "last N=16 decoded AudioBuffers" (Task 14 brief) — simple Map + oldest-first eviction, not a
+// Keeps the last N=16 decoded AudioBuffers — simple Map + oldest-first eviction, not a
 // real LRU (a cache hit never re-inserts/reorders). Exported for the same reason as the ramp
 // constant above.
 export const MAX_CACHED_BUFFERS = 16;
@@ -151,7 +150,7 @@ class PreviewPlayer implements PlayPort {
       buffer = await this.resolveBuffer(sampleId, ctx);
     } catch (err) {
       // Genuinely unexpected (fetchBytes network failure, decodeFallback itself throwing rather
-      // than resolving null, ...) — the §4 "refused" path below has its own, more specific log;
+      // than resolving null, ...) — the "refused" path below has its own, more specific log;
       // this is the backstop that keeps play() from ever producing an unhandled rejection.
       console.error(`previewPlayer: sample ${sampleId} could not be prepared for playback`, err);
       return;
@@ -192,7 +191,7 @@ class PreviewPlayer implements PlayPort {
       // but not ours alone to corrupt) stays intact.
       buffer = await ctx.decodeAudioData(bytes.slice(0));
     } catch {
-      // The §4 single exception: Chromium can't decode AIFF (16 library files are .aif) — this is
+      // The single PCM-over-IPC exception: Chromium can't decode AIFF (16 library files are .aif) — this is
       // the ONE retry, not a generic "try again" loop.
       const fallback = await this.deps.decodeFallback(sampleId);
       if (fallback === null) {
@@ -202,8 +201,8 @@ class PreviewPlayer implements PlayPort {
         return null;
       }
       // Not an error — the AIFF path working exactly as designed — but greppable evidence that it
-      // fired at all, both for hand-QA (brief Step 5: "verify in devtools console that the
-      // fallback fired") and for future field debugging of "why did this one sample sound off".
+      // fired at all, both for manual testing (check the devtools console that the fallback
+      // fired) and for future field debugging of "why did this one sample sound off".
       console.info(`previewPlayer: sample ${sampleId} — wav decode failed, used the PCM fallback`);
       buffer = this.bufferFromPcm(ctx, fallback);
     }

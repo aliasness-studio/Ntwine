@@ -1,4 +1,4 @@
-// Read-only renderer snapshot for the e2e suite (e2e spec §3.1). Types only — no runtime code.
+// Read-only renderer snapshot for the e2e suite. Types only — no runtime code.
 export interface E2ESnapshot {
   rows: number;
   resultCount: number;

@@ -1,5 +1,5 @@
-// LIBRARY rail section (Task 8 brief / design spec §5.1): sits above PACKS in the same
-// PacksScroll — All Samples (moved in from PackRail, Task 13), Favorites, one row per
+// LIBRARY rail section: sits above PACKS in the same
+// PacksScroll — All Samples (moved in from PackRail), Favorites, one row per
 // `userLayer.collections`, and a "+ New collection" affordance. Deliberately mirrors PackRail's
 // listbox idiom exactly (role="listbox"/"option", aria-selected, styled-components, Name/Count
 // as the first/last <span> per option) so both rails read as one visual system and the e2e
@@ -31,7 +31,7 @@ const List = styled.div`
   gap: 2px;
 `;
 
-// `$dragOver` (Task 13 / spec §7): "the hovered collection row highlights" — an inset box-shadow
+// `$dragOver`: the hovered collection row highlights — an inset box-shadow
 // rather than an `outline` so the highlight follows the button's own `border-radius` (outline
 // doesn't, in most browsers) and layers legibly over `$active`'s background tint when a row is
 // BOTH the current scope AND a live drop target at once.
@@ -183,7 +183,7 @@ const NewCollectionButton = styled.button`
 `;
 
 // Same inline-SVG reasoning as App.tsx's GearIcon/ChevronIcon: a system-font heart dingbat
-// renders inconsistently across platforms, so the Favorites row's glyph (spec §5.1) is a small
+// renders inconsistently across platforms, so the Favorites row's glyph is a small
 // filled path instead — the standard "favorite" heart shape, `currentColor` so it inherits
 // `IconSlot`'s accent color for free.
 function HeartIcon() {
@@ -223,31 +223,30 @@ export const LibraryRail = observer(function LibraryRail() {
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
 
-  // Task 13 / spec §7: which drop target (if any) is currently drag-hovered — 'favorites' or
+  // Which drop target (if any) is currently drag-hovered — 'favorites' or
   // `collection:${id}`, the SAME identifier string threaded through the dev probe below, so hover
   // state and the debug payload's `targetId` are always one computed value, not two independently
   // -maintained identities for the same target.
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   // Gates the `dragover` dev-probe line to the FIRST over event per hover session — `dragover`
   // fires continuously while the pointer sits still over a target, and logging every one of those
-  // would flood devtools during the morning hands-on this probe exists for (spec §7's feasibility
-  // note). Reset whenever hover (re)starts on a target via `dragenter`.
+  // would flood devtools during the manual testing this probe exists for. Reset whenever hover
+  // (re)starts on a target via `dragenter`.
   const loggedOverRef = useRef<string | null>(null);
 
   // A native OS drag session (`webContents.startDrag`) can end without ever delivering a `drop`
   // or `dragleave` back to this window — e.g. the app loses focus mid-drag. Window `blur` is the
-  // backstop that guarantees hover styling never gets stuck highlighted (spec §7: "Hover styling
-  // clears on drop, dragleave, window blur, and slot clear, independently of any data write").
+  // backstop that guarantees hover styling never gets stuck highlighted (hover styling
+  // clears on drop, dragleave, window blur, and slot clear, independently of any data write).
   useEffect(() => {
     const onBlur = (): void => setDragOverId(null);
     window.addEventListener('blur', onBlur);
     return () => window.removeEventListener('blur', onBlur);
   }, []);
 
-  // Dev probe (Codex consult B, spec §7): a `console.debug` breadcrumb so the morning hands-on can
-  // see in devtools whether Electron even delivers DOM drag events over a native `startDrag`
-  // session (Ruling R1 — unproven as of this session). Reads `peekDragSource()` rather than taking
-  // a sample id parameter: every call site below is already inside a slot-gated handler, so this
+  // Dev probe: a `console.debug` breadcrumb so manual testing can see in devtools whether
+  // Electron even delivers DOM drag events over a native `startDrag` session. Reads
+  // `peekDragSource()` rather than taking a sample id parameter: every call site below is already inside a slot-gated handler, so this
   // reports the SAME value the gate itself just checked, not a second copy of it.
   const debugDrag = (phase: 'enter' | 'over' | 'drop', targetId: string): void => {
     console.debug('[ntwine:drag-in]', phase, {
@@ -256,13 +255,13 @@ export const LibraryRail = observer(function LibraryRail() {
     });
   };
 
-  // Discrimination rule (spec §7): an empty slot means every file drop is ignored, and not merely
+  // Discrimination rule: an empty slot means every file drop is ignored, and not merely
   // `onDrop` — `dragenter`/`dragover` handling, the hover highlight, and `preventDefault()` are
   // ALL gated on a non-empty slot together, so an external Finder/Explorer drag over the rail
   // never shows a copy cursor or leaves a stuck hover state. `e.dataTransfer &&` guards the
   // `dropEffect` write because a synthetically-dispatched drag event (Playwright's
-  // `dispatchEvent`, Task 15's synthetic seam) carries no real `DataTransfer` at runtime, unlike
-  // what the DOM lib's `DragEvent` typing promises.
+  // `dispatchEvent`, the E2E suite's synthetic seam) carries no real `DataTransfer` at runtime,
+  // unlike what the DOM lib's `DragEvent` typing promises.
   const handleDragEnter =
     (targetId: string) =>
     (e: DragEvent<HTMLButtonElement>): void => {
@@ -296,11 +295,11 @@ export const LibraryRail = observer(function LibraryRail() {
     if (loggedOverRef.current === targetId) loggedOverRef.current = null;
   };
 
-  // `onDrop` consumes the slot FIRST (spec §7's own ordering). An empty result — the slot was
+  // `onDrop` consumes the slot FIRST. An empty result — the slot was
   // already claimed (a fast second drag, or a drop that raced a late `finally`) — clears hover and
   // bails before `preventDefault`, rather than this handler pretending a drop it can't identify
-  // was ours. Hover clears unconditionally, independent of whether the write actually happens
-  // (spec §7), so a drop that turns out empty never leaves the target looking armed.
+  // was ours. Hover clears unconditionally, independent of whether the write actually happens,
+  // so a drop that turns out empty never leaves the target looking armed.
   const handleDrop =
     (targetId: string, apply: (src: DragSource) => void) =>
     (e: DragEvent<HTMLButtonElement>): void => {
@@ -318,7 +317,7 @@ export const LibraryRail = observer(function LibraryRail() {
   // one that moved here).
   const allSamplesActive = scope === undefined;
   const favoritesActive = scope?.kind === 'favorites';
-  // The exact expression PackRail deletes (Task 8 brief Step 3b): `userLayer`/`listLibraryRail`
+  // `userLayer`/`listLibraryRail`
   // carries no total, so this row keeps the same PRESENT-only sum PackRail's old All Samples row
   // read from `library.packs` — not `userLayer.favoritesCount`-style rail data.
   const totalPresentSamples = library.packs.reduce((s, p) => s + p.sampleCount, 0);
@@ -422,7 +421,7 @@ export const LibraryRail = observer(function LibraryRail() {
 
           if (renamingId === c.id) {
             return (
-              // Task 15 carried fix (Task 8 deferred minor): this branch swaps the collection's
+              // This branch swaps the collection's
               // normal `Item role="option"` for this row while renaming — it must keep exposing
               // the SAME role inside the `Library` listbox, or the listbox's ARIA structure (and
               // any getByRole('option') lookup against it) breaks for exactly the row being
@@ -478,11 +477,10 @@ export const LibraryRail = observer(function LibraryRail() {
                 <Name title={c.name}>{c.name}</Name>
                 <Count>{c.count}</Count>
               </Item>
-              {/* Collection-local context menu (design spec §5.1): Rename…/Delete… only — the
-                  full row context menu (favorite/tags/add-to-collection) is Task 10, not this
-                  rail. Dismissed only by choosing an action here, not by Esc/click-outside — a
-                  deliberate simplification for this stopgap two-button box; Task 10's real menu
-                  should get the full outside-click/Esc treatment when it lands. */}
+              {/* Collection-local context menu: Rename…/Delete… only — the
+                  full row context menu (favorite/tags/add-to-collection) is RowContextMenu, not
+                  this rail. Dismissed only by choosing an action here, not by Esc/click-outside —
+                  a deliberate simplification for this two-button box. */}
               {menu.kind === 'menu' && menu.collectionId === c.id && (
                 <MenuBox>
                   <MenuButton type="button" onClick={() => startRename(c)}>

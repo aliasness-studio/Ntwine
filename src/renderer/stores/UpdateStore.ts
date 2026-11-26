@@ -1,4 +1,4 @@
-// UpdateStore (release pipeline PR 2, Task 8): mirrors main's self-update state machine
+// UpdateStore: mirrors main's self-update state machine
 // (src/main/updater.ts) into the renderer as observables — what the update banner reads, plus the
 // two actions it can take (restart-to-install when `ready`, open the releases page when a
 // signature mismatch left the update `failed`). Main owns every decision; this store only

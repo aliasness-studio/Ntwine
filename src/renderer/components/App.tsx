@@ -1,9 +1,9 @@
-// The three-region window (Task 13 brief, Step 1 / spec §7): a CSS grid with a 240px rail
+// The three-region window: a CSS grid with a 240px rail
 // spanning both rows, a 48px top bar, and the list filling the rest. The rail itself is two
-// independent sections (QoL round 1): a packs scroller that takes all spare height, and a
+// independent sections: a packs scroller that takes all spare height, and a
 // filter dock pinned below it that is always on screen — collapsible down to its header row so
 // the packs scroller can have the full rail. Also owns the top-level FirstRun/library switch
-// (spec §3.1 item 6) plus the settings-sheet and dock-collapsed booleans — none of which belong
+// plus the settings-sheet and dock-collapsed booleans — none of which belong
 // in a store (they're one-shot UI wiring, not browsing/playback/import STATE).
 import { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
@@ -144,7 +144,7 @@ const RailFooter = styled.div`
   align-items: center;
   /* Was flex-end when the gear was the only occupant. The transport dock takes the left edge and
      the gear stays pinned right, so the settings affordance doesn't move from where it has always
-     been (spec §7, "small gear, bottom of the rail"). */
+     been (a small gear at the bottom of the rail). */
   justify-content: space-between;
   gap: 8px;
   padding: 8px;
@@ -170,7 +170,7 @@ const GearButton = styled.button`
 `;
 
 // A small inline SVG rather than a Unicode glyph — a ring + 8 rotated teeth — so the "small gear"
-// affordance (spec §7) doesn't depend on how a particular system font happens to render a dingbat
+// affordance doesn't depend on how a particular system font happens to render a dingbat
 // character. `currentColor` inherits `GearButton`'s own `color`, so the hover state above (and
 // dark-theme contrast generally) applies for free.
 const GEAR_TEETH_DEGREES = [0, 45, 90, 135, 180, 225, 270, 315];
@@ -204,7 +204,7 @@ export function App() {
     () => window.localStorage.getItem(FILTERS_COLLAPSED_KEY) === '1',
   );
   const initedRef = useRef(false);
-  // Cross-component focus orchestration (design spec §5.4): App renders both TopBar and
+  // Cross-component focus orchestration: App renders both TopBar and
   // SampleList, so it's the one place that can reach BOTH forwarded handles — neither sibling has
   // any other way to reach the other's DOM node.
   const topBarRef = useRef<TopBarHandle>(null);
@@ -231,7 +231,7 @@ export function App() {
 
   // Fires exactly once, whichever path reaches `{ kind: 'library' }` first — either directly
   // (already imported at launch) or via FirstRun's `onImported` callback below. `library.init()`
-  // is safe to call before an import has ever run too (Task 12: an empty catalog just answers
+  // is safe to call before an import has ever run too (an empty catalog just answers
   // with empty arrays), but there is no reason to query a library shell nobody can see yet.
   useEffect(() => {
     if (load.kind === 'library' && !initedRef.current) {
@@ -240,10 +240,10 @@ export function App() {
     }
   }, [load.kind, library]);
 
-  // Cmd/Ctrl+F (Task 12, design spec §5.4 / Task 11 review carry): window-level, CAPTURE phase —
-  // Task 11's popover/nickname-editor inputs blanket-`stopPropagation` every keydown on BUBBLE, so
+  // Cmd/Ctrl+F: window-level, CAPTURE phase —
+  // the popover/nickname-editor inputs blanket-`stopPropagation` every keydown on BUBBLE, so
   // a bubble-phase (or React-synthetic, which is bubble-delegated) listener would never see this
-  // combo fired from inside one, but spec §5.4 requires Cmd/Ctrl+F to focus search from anywhere,
+  // combo fired from inside one, but Cmd/Ctrl+F must focus search from anywhere,
   // popovers included. Capture always completes top-down before bubble starts, so a `window`
   // capture listener sees every keydown regardless of what a descendant does with it afterward.
   // `topBarRef.current` is null until the library view below actually mounts (the loading/

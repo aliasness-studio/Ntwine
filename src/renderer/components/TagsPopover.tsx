@@ -1,4 +1,4 @@
-// TagsPopover (Task 11 brief / design spec §5.3): the in-app tags editor for one row, opened via
+// TagsPopover: the in-app tags editor for one row, opened via
 // the row context menu's "Tags…" action (`UserLayerStore.openTagsPopover`). `SampleList` anchors
 // it at the target row's own virtual position (the `top` prop, TanStack Virtual coordinates) as a
 // sibling of the rows inside the SAME `Inner` container `SampleRow` renders into, so it scrolls
@@ -86,7 +86,7 @@ const UserTagChip = styled(Chip)`
   color: ${(p) => p.theme.color.accentStrong};
 `;
 
-// Splice tags are read-only here (brief: "splice tags read-only muted, no ✕") — muted fill/text,
+// Splice tags are read-only here (muted, no ✕) — muted fill/text,
 // no remove affordance at all, so there's nothing to mistake for an interactive chip.
 const SpliceTagChip = styled(Chip)`
   background: ${(p) => p.theme.color.bg};
@@ -114,7 +114,7 @@ export const TagsPopover = observer(function TagsPopover({ row, top, onClose }: 
   const [value, setValue] = useState('');
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // spec §5.3: "loaded via loadUserTags() on popover open" — this component only ever mounts
+  // Tag names load via loadUserTags() on popover open — this component only ever mounts
   // while the popover is open (SampleList's conditional render), so a mount-only effect IS "on
   // popover open". `UserLayerStore.userTagNames`'s own field comment names this exact call site.
   useEffect(() => {
@@ -139,7 +139,7 @@ export const TagsPopover = observer(function TagsPopover({ row, top, onClose }: 
     };
   }, [onClose]);
 
-  // Prefix-filtered via normalizeUserName (brief: "match via normalizeUserName") — empty input
+  // Prefix-filtered via normalizeUserName — empty input
   // shows no suggestions rather than the entire vocabulary, and a tag the row already carries is
   // never suggested again (its chip with a ✕ is already right below).
   const normalizedValue = normalizeUserName(value);

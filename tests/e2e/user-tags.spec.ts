@@ -59,8 +59,8 @@ test('T opens the tags popover; adding/removing a user tag updates the row chip 
   await expect(firstRow.getByTestId('user-tag-chip')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^bounce\s*1$/ })).toBeVisible(); // 2 -> 1, not gone: AD_Snare_01.wav still carries it
 
-  // --- CARRIED ADDITION (Task 12 review, binding): the focus-return guard. SampleList refocuses
-  // the list on a popover close ONLY when nothing else already claimed focus (fix round 1's own
+  // --- The focus-return guard. SampleList refocuses
+  // the list on a popover close ONLY when nothing else already claimed focus (see its own
   // comment there) — without that guard, closing this still-open popover by clicking the search
   // box would yank focus back to the list, and the very next keystroke would hit the list's own
   // F/T/C/N/Delete dispatch instead of landing in the box the user just clicked.
