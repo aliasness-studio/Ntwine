@@ -304,7 +304,7 @@ app.whenReady().then(async () => {
     sendProgress: (p: ImportProgress) => sendToWindow('ntwine:import-progress', p),
   });
 
-  // Self-update (release pipeline PR 2): packaged darwin/win32 only (shouldRunUpdater) — dev,
+  // Self-update: packaged darwin/win32 only (shouldRunUpdater) — dev,
   // e2e and Linux runs never construct it, never touch `autoUpdater`, and the bridge's update
   // methods answer from `updater: null` (permanent idle) — or, in an e2e run that pins
   // NTWINE_E2E_UPDATE_STATE, from a fixed-state stub that never touches `autoUpdater`.
