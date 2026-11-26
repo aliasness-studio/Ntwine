@@ -55,7 +55,7 @@ function makeFakeApi(
     deleteCollection: vi.fn(async () => {}),
     addToCollection: vi.fn(async () => {}),
     removeFromCollection: vi.fn(async () => {}),
-    // Self-update (release pipeline PR 2): 5 bridge methods, inert here.
+    // Self-update: 5 bridge methods, inert here.
     getUpdateState: vi.fn(async () => ({ kind: 'idle' as const })),
     onUpdateState: vi.fn(() => () => {}),
     installUpdate: vi.fn(async () => {}),
@@ -65,7 +65,7 @@ function makeFakeApi(
 }
 
 // `library` is a REAL `LibraryStore` instance, not a plain object literal double: `LibraryStore`
-// still has private methods (`applyDebouncedSearch`/`patchFilters`) after this task's edits, and
+// has private methods (`applyDebouncedSearch`/`patchFilters`), and
 // TS only considers a type with private members assignable from the same declaration — a hand-
 // rolled `{ rerun: vi.fn(), ... }` object cannot structurally satisfy `UserLayerStore`'s
 // `library: LibraryStore` constructor parameter. `vi.spyOn` on its public `rerun`/`refreshTags`/
@@ -170,7 +170,7 @@ describe('UserLayerStore', () => {
     });
   });
 
-  // Task 13 / spec §7: the drag-in write path for dropping a row onto the Favorites rail target.
+  // The drag-in write path for dropping a row onto the Favorites rail target.
   // Unlike `toggleFavorite` above, a drop only ever carries the dragged sample's id (the drag
   // slot has no `SampleRow`, so there's no current `favorite` flag to negate) — this always sets
   // `on` explicitly, mirroring `api.setFavorite`'s own name/shape 1:1, the same "store method
@@ -280,7 +280,7 @@ describe('UserLayerStore', () => {
       expect(rerunSpy).not.toHaveBeenCalled();
     });
 
-    // Fix round 1 (review finding): the catch must be narrow to the invoke — a successful create
+    // The catch must be narrow to the invoke — a successful create
     // whose FOLLOW-UP refresh fails is not a name collision, and must not be reported as one (a
     // caller retrying the same name on that `{ error }` would then hit a REAL collision on top of
     // an already-created collection). Pins the fix by asserting the opposite of what the old,
@@ -326,7 +326,7 @@ describe('UserLayerStore', () => {
       expect(rerunSpy).not.toHaveBeenCalled();
     });
 
-    // Fix round 1 (review finding) — mirrors createCollection's same-shaped test above.
+    // Mirrors createCollection's same-shaped test above.
     it('a refresh failure AFTER a successful rename propagates as a rejection, not { error }', async () => {
       const { api, library } = makeStores({
         listLibraryRail: async () => {
@@ -418,11 +418,11 @@ describe('UserLayerStore', () => {
     });
   });
 
-  // Task 11 (design spec §5.3): open-state transitions for the tags/collection popovers and the
+  // Open-state transitions for the tags/collection popovers and the
   // inline nickname editor. Pure synchronous UI state (no `api` call involved) — these tests pin
   // the FIELD transitions only; `TagsPopover`'s own `loadUserTags()`-on-mount and the
-  // component-level rendering/interaction are this task's component files, not this store, per
-  // the brief's "store-level unit (open/close transitions); e2e Task 14/15" split.
+  // component-level rendering/interaction belong to the component files and the e2e suite, not
+  // this store.
   describe('popover / nickname-edit open-state', () => {
     it('starts with both closed', () => {
       const { api, library } = makeStores();
@@ -489,11 +489,11 @@ describe('UserLayerStore', () => {
       expect(store.nicknameEditId).toBeNull();
     });
 
-    // Only one editing surface live at a time (brief: "only one popover open at a time — the
-    // store field enforces it"), extended here to cover the nickname editor too: without this
+    // Only one editing surface live at a time (only one popover open at a time — the
+    // store field enforces it), extended here to cover the nickname editor too: without this
     // cross-clear, a popover left open on one row while a context-menu action starts a nickname
     // edit elsewhere would leave two uncoordinated edit affordances open, and Esc (which "unwinds
-    // one layer" per spec §5.4) would only ever reach whichever one's listener catches it first.
+    // one layer") would only ever reach whichever one's listener catches it first.
     it('opening a popover (either kind) closes an in-progress nickname edit', () => {
       const { api, library } = makeStores();
       const store = new UserLayerStore(api, library);

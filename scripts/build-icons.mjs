@@ -14,7 +14,7 @@
 // window to give it.
 //
 // If a run dies instantly with `[Error: UnknownVizError]` and no output, just run it again — that
-// is Chromium's display compositor failing to come up at launch, on this Windows box roughly one
+// is Chromium's display compositor failing to come up at launch, seen on Windows roughly one
 // run in three. It happens before any of this file executes, so there is nothing here to harden
 // against it; a second `yarn icons` has always worked.
 import { app, BrowserWindow } from 'electron';

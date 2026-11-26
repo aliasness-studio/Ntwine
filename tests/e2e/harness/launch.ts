@@ -19,7 +19,7 @@ function newestMtimeUnder(dir: string): number {
 }
 
 /** `.vite/build/main.js` is written by BOTH `yarn start` (dev) and `electron-forge package` (prod);
- * only a CURRENT production build is a valid launch target (e2e spec §3.3): a dev build is
+ * only a CURRENT production build is a valid launch target: a dev build is
  * rejected by content, a stale production build (older than anything under src/) by mtime — a
  * stale build would make a freshly added data-testid read as a locator bug. */
 export function assertProductionArtifact(): void {
@@ -67,7 +67,7 @@ export async function launchNtwine(opts: LaunchOptions): Promise<Launched> {
   };
   // The RUNNER is Electron-as-Node (yarn e2e:only); the APP must not be.
   delete env.ELECTRON_RUN_AS_NODE;
-  // A launch that did not ASK for an override must not inherit one (review, PR #13). `env` starts
+  // A launch that did not ASK for an override must not inherit one. `env` starts
   // as a copy of `process.env`, so a developer with NTWINE_APP_DATA or NTWINE_LIBRARY_ROOT exported
   // in their shell would have it ride in and silently replace the fixture's own dirs — and the
   // specs most damaged by that are precisely the ones that omit an override on purpose, to drive

@@ -1,9 +1,8 @@
-// React context wiring for the three MobX stores (Task 12), instantiated once in renderer.tsx
-// and handed down from there via `<StoreContext.Provider>` ("components get stores via a React
-// context provider you create in renderer.tsx" — Task 13 brief). Not in Task 13's literal Files
-// list — added because the context OBJECT itself needs one importable home every component can
-// reach without a circular dependency: App.tsx renders PackRail/FilterPanel/TopBar/SampleList/
-// SettingsSheet, so defining the context IN App.tsx would make every one of those import back
+// React context wiring for the three MobX stores, instantiated once in renderer.tsx
+// and handed down from there via `<StoreContext.Provider>`. Its own file because the context
+// OBJECT itself needs one importable home every component can reach without a circular
+// dependency: App.tsx renders PackRail/FilterPanel/TopBar/SampleList/SettingsSheet, so defining
+// the context IN App.tsx would make every one of those import back
 // from the file that imports them. Defining it in renderer.tsx (the entry point) would work at
 // runtime — ESM module caching means it's still one instance — but makes every leaf component
 // import the file that calls `createRoot(...).render(...)`, a real footgun for whoever adds a

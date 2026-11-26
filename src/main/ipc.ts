@@ -33,10 +33,10 @@ export interface LibraryRootDeps {
  *   3. `resolveDefaultLibraryRoot` — Splice's own reported `splice_folder`, else the platform's
  *      stock location (paths.ts).
  *
- * Step 3 replaced a hardcoded `~/Splice`, which was simply wrong on Windows (real install:
+ * Precedence 3 replaced a hardcoded `~/Splice`, which was simply wrong on Windows (real install:
  * `Documents\Splice`) and made first-run refuse every row until the user re-pointed the folder by
  * hand. Exported so main.ts builds the SAME live getter it hands to `registerProtocols`/
- * `registerDragHandler` — one definition of "what's the current root" (owner's "one question, two
+ * `registerDragHandler` — one definition of "what's the current root" (the "one question, two
  * gates" rule), not several that could drift the moment a consumer forgets the default.
  */
 export function currentLibraryRoot(catalog: Catalog, deps: LibraryRootDeps): string {
@@ -64,9 +64,9 @@ export function libraryRootDeps(e2eDefault?: string | null): LibraryRootDeps {
   };
 }
 
-// Splice DB discovery (spec §5 step 1) answered once here and reused by both `getState`'s
+// Splice DB discovery answered once here and reused by both `getState`'s
 // `spliceDbFound` and `runImport`'s own `spliceDbPath` — the same "one question, two gates"
-// reasoning as `currentLibraryRoot` above. Precedence (Windows-port audit blocker fix): a
+// reasoning as `currentLibraryRoot` above. Precedence: a
 // hand-picked `splice_db_path` (persisted by ntwine:pickSpliceDb below) wins WHILE ITS FILE
 // STILL EXISTS — the win32 detection glob is a best-guess, and the picker is the escape hatch
 // when it misses. A stale override (file moved/deleted) falls back to detection instead of
@@ -87,8 +87,8 @@ export const PREVIEW_MAX_SECONDS = 60;
 export interface DecodePreviewPcmDeps {
   // Same `(sampleId) => absPath | null` shape as drag.ts's `registerDragHandler` — in production
   // both are `resolveSampleAbsPath` closed over the live catalog/libraryRoot (see main.ts); a
-  // test can stub this directly without a real catalog, which is what "a stubbed resolver" in
-  // the Task 11 brief's Step 7 refers to.
+  // test can stub this directly without a real catalog, e.g. decodePreviewPcm's own tests in
+  // ipc.test.ts.
   resolvePath: (sampleId: number) => string | null;
   forkWorker: () => WorkerLike;
   // Injected so the byte-cap test doesn't need a real 50 MB fixture file on disk — defaults to
@@ -110,7 +110,7 @@ interface PcmWorkerReplyFail {
 type PcmWorkerReply = PcmWorkerReplyOk | PcmWorkerReplyFail;
 
 /**
- * The §4 "ONE exception": decodes a sample's full PCM for the AIFF preview fallback (spec §9.3)
+ * The ONE PCM-over-IPC exception: decodes a sample's full PCM for the AIFF preview fallback
  * — off the main event loop (through the same one-shot-per-call `forkWorker` seam queue.ts uses
  * for the background peaks pass, `kind: 'pcm'` instead of the default peaks path — see
  * peaksWorker.ts), size- and duration-capped so a renderer bug or a hostile sample can't hand
@@ -122,7 +122,7 @@ type PcmWorkerReply = PcmWorkerReplyOk | PcmWorkerReplyFail;
  * decode (`channels[0].length / sampleRate`) — file size on disk doesn't reliably predict decoded
  * duration (compression, bit depth, channel count all vary it), so the worker always runs first
  * and this is a post-hoc refusal, not a pre-flight one. Either refusal returns null, never throws
- * — "no library sample is near either limit" (Task 11 brief) makes this a hard-abuse guard, not a
+ * — no library sample is near either limit, which makes this a hard-abuse guard, not a
  * real-world UX path.
  */
 export async function decodePreviewPcm(
@@ -159,7 +159,7 @@ export async function decodePreviewPcm(
 
 export interface RegisterIpcDeps {
   catalog: Catalog;
-  // Task 6: the user-layer CRUD surface (src/main/user/userDb.ts) — `openUserDb` has already run
+  // The user-layer CRUD surface (src/main/user/userDb.ts) — `openUserDb` has already run
   // by the time this is wired (main.ts's whenReady), so every handler below can call straight
   // through to it.
   userDb: UserDb;
@@ -169,7 +169,7 @@ export interface RegisterIpcDeps {
   // `mainWindow.webContents.send('ntwine:import-progress', p)` — kept as an injected callback
   // here so ipc.ts itself never needs to know about BrowserWindow).
   sendProgress: (p: ImportProgress) => void;
-  // Task 1 (E2E mode): overrides currentLibraryRoot's fallback default at every call site below —
+  // E2E mode: overrides currentLibraryRoot's fallback default at every call site below —
   // main.ts wires this to `e2e?.libraryRoot`, undefined outside E2E mode (production behaviour
   // unchanged).
   defaultLibraryRoot?: string;
@@ -232,15 +232,14 @@ export function runWaveformsInBackground(
 /**
  * Wires one `ipcMain.handle` per `NtwineApi` method (channel names `ntwine:<method>`) onto
  * `deps`. `startDrag` isn't here — it's wired by drag.ts's own `registerDragHandler`, called
- * separately from main.ts; as of Task 6 that's ALSO `ipcMain.handle` (promoted from `.on` so
- * `webContents.startDrag`'s blocking-until-drag-end becomes the invoke's own resolution, design
- * spec §4), just not registered from this function. `sampleUrl`/`coverUrl` aren't here either —
+ * separately from main.ts; that's ALSO `ipcMain.handle` (not `.on`, so
+ * `webContents.startDrag`'s blocking-until-drag-end becomes the invoke's own resolution), just not registered from this function. `sampleUrl`/`coverUrl` aren't here either —
  * pure template-string helpers built entirely in preload.ts, no IPC round-trip.
  *
  * Every query-style handler (`querySamples`/`listPacks`/`listTags`/`getPeaks`) is safe to call
  * before any import has ever run: `openCatalog` always creates a valid (if empty) schema, so
  * these just return `[]`/`{}` from ordinary SQL over empty tables — no special-casing needed, and
- * no handler here ever throws for "nothing imported yet." The Task 6 user-layer handlers below
+ * no handler here ever throws for "nothing imported yet." The user-layer handlers below
  * share that discipline for a different reason: `openUserDb` (main.ts) always creates its own
  * valid-if-empty schema too, and a sampleId that resolves to no catalog row is a silent no-op
  * (see `hashOf`), never a throw — a renderer racing a since-changed result set is routine, not an
@@ -269,8 +268,8 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     imported: catalog.getMeta('imported') === '1',
     // The EFFECTIVE root, not the raw meta key: pre-import there is no persisted value, and the
     // first-run screen's whole job is to show the folder the import is actually about to use.
-    // Showing a bare null there (rendered as a hardcoded "~/Splice (default)") is what let the
-    // owner's first real import fail against a path the app was never going to read.
+    // Showing a bare null there (rendered as a hardcoded "~/Splice (default)") is what let an
+    // early real import fail against a path the app was never going to read.
     libraryRoot: liveRoot(),
     spliceDbFound: resolveSpliceDb(catalog, app.getPath('appData')) !== null,
   }));
@@ -295,14 +294,14 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     if (result.canceled || result.filePaths.length === 0) return null;
     const newRoot = result.filePaths[0];
-    // spec §8 "library root moved": persist the new root, re-check existence — NOT a re-import.
+    // Library root moved: persist the new root, re-check existence — NOT a re-import.
     catalog.setMeta('library_root', newRoot);
     statPass(catalog, newRoot);
     return newRoot;
   });
 
   ipcMain.handle('ntwine:pickSpliceDb', async () => {
-    // The detection escape hatch (Windows-port audit blocker): when the glob misses — an
+    // The detection escape hatch: when the glob misses — an
     // unverified win32 layout, a nonstandard install, linux — the user points at sounds.db by
     // hand. Validated BEFORE persisting: a random file must fail loudly here, not as a broken
     // import later; the renderer surfaces the thrown message via ipcError's unwrap. Persisted to
@@ -344,8 +343,8 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     return result;
   });
 
-  // sampleId -> file_hash for every user-layer write below (design spec §4: "the renderer never
-  // sees hashes"). Deliberately a bare `.prepare()` per call, not a hoisted statement like the
+  // sampleId -> file_hash for every user-layer write below (the renderer never
+  // sees hashes). Deliberately a bare `.prepare()` per call, not a hoisted statement like the
   // rest of this module's hot paths — these are user-triggered one-at-a-time writes (a heart
   // click, a tag add), never a per-row query loop. An id with no matching row (stale renderer
   // state — the row was deleted/re-imported since the id was read) resolves to null; every
@@ -357,15 +356,14 @@ export function registerIpc(deps: RegisterIpcDeps): void {
         | undefined
     )?.h ?? null;
 
-  // User layer (Task 6, design spec §4). Synchronous SQLite under the hood throughout (better-
+  // User layer. Synchronous SQLite under the hood throughout (better-
   // sqlite3, via userDb) — no handler here awaits anything internally, the same discipline
   // querySamples/listPacks/listTags above already keep: handlers answering in registration order
   // is what keeps LibraryStore's un-sequenced re-queries safe. `createCollection`/
   // `renameCollection` deliberately do NOT catch `UserNameError` — the rejection reaches the
   // renderer wrapped by Electron (`ipcRenderer.invoke` cannot structured-clone a custom `Error`
-  // subclass); the renderer's `ipcErrorMessage` (`src/renderer/ipcError.ts`, Task 15 fix round 1)
-  // strips that decoration back to this message before it reaches the inline editor error
-  // (spec §2.3/§5.1/§5.3).
+  // subclass); the renderer's `ipcErrorMessage` (`src/renderer/ipcError.ts`)
+  // strips that decoration back to this message before it reaches the inline editor error.
   ipcMain.handle('ntwine:setFavorite', async (_event, sampleId: number, on: boolean) => {
     const hash = hashOf(sampleId);
     if (hash === null) return;
@@ -416,7 +414,7 @@ export function registerIpc(deps: RegisterIpcDeps): void {
     userDb.removeFromCollection(collectionId, hash);
   });
 
-  // Startup resume (spec §5 "resumable"): a quit mid-waveform-pass must not orphan pending
+  // Startup resume: a quit mid-waveform-pass must not orphan pending
   // placeholder rows forever. Only when an import has actually completed — pre-import there are
   // no sample rows at all, so pendingPeakIds would just be a wasted empty query — and only when
   // there's real work outstanding, matching runWaveformsInBackground's own "fire-and-forget"

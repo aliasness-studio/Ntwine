@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { emptyStateText } from './emptyState';
 
 describe('emptyStateText', () => {
-  it('favorites scope gets its own empty-state copy (spec §5.1)', () => {
+  it('favorites scope gets its own empty-state copy', () => {
     expect(emptyStateText({ kind: 'favorites' })).toBe(
       'No favorites yet — press F on a sample you love.',
     );
   });
 
-  it('collection scope gets its own empty-state copy (spec §5.1)', () => {
+  it('collection scope gets its own empty-state copy', () => {
     expect(emptyStateText({ kind: 'collection', collectionId: 'c1' })).toBe(
       'Drag samples here, or press C on a selected sample.',
     );

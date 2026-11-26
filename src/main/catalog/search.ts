@@ -5,7 +5,7 @@ interface SearchHitRow {
 }
 
 /**
- * Rebuilds `sample_search` (spec §6) from the current `samples`/`packs`/`tags` state: DELETE
+ * Rebuilds `sample_search` (db.ts) from the current `samples`/`packs`/`tags` state: DELETE
  * every existing row, then re-INSERT one row per sample. Whole-table delete-then-reinsert
  * rather than incremental sync — v1 only ever rebuilds at import time (db.ts's DDL comment:
  * "No live sync triggers in v1"), so there is no drift to reconcile incrementally, and a full
@@ -48,11 +48,11 @@ export function rebuildSearch(catalog: Catalog): void {
  * default tokenizer (unicode61 — no `tokenize=` override in the DDL) case-folds both indexed
  * text and query tokens, which is what makes matches case-insensitive with no extra work here.
  *
- * Single-token by contract (Task 4, spec §3.4) — `querySamples` (queries.ts) is the only caller,
+ * Single-token by contract — `querySamples` (queries.ts) is the only caller,
  * and it now does the multi-token AND/per-source-union composition itself: each whitespace-split
  * token's FTS hit (this function) is unioned with any nickname/user-tag hit for the SAME token
  * before the running result is intersected across tokens. Multi-token composition inside FTS5's
- * own query string (this function's previous, pre-Task-4 job — see git history) can't do that
+ * own query string (this function's previous job — see git history) can't do that
  * union, since a nickname/tag hit never has a `sample_search` row to match against.
  *
  * A double-quote inside the token is escaped by doubling it (`"` -> `""`), the same rule SQL

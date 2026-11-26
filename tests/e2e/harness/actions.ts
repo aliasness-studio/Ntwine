@@ -1,7 +1,5 @@
-// Shared action helpers over the real renderer (Task 4 brief, Interfaces block). Every locator
-// strategy here is transcribed verbatim from the brief — accessible-name/role/testid based, never
-// a CSS class or a `waitForTimeout`. `waitForWaveform`/`isRealWaveform` are added to this file by
-// Task 7.
+// Shared action helpers over the real renderer. Every locator strategy here is
+// accessible-name/role/testid based, never a CSS class or a `waitForTimeout`.
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { E2ESnapshot } from '../../../src/shared/e2eTypes';
 
@@ -31,7 +29,7 @@ export async function readCount(page: Page): Promise<number> {
   return Number(match[1]);
 }
 
-/** The live `window.__ntwineE2E` snapshot (e2e spec §3.1) — armed only under `NTWINE_E2E=1`. */
+/** The live `window.__ntwineE2E` snapshot — armed only under `NTWINE_E2E=1`. */
 export async function snapshot(page: Page): Promise<E2ESnapshot> {
   return page.evaluate(() => window.__ntwineE2E!());
 }
@@ -93,8 +91,7 @@ export function rowByFilename(page: Page, filename: string): Locator {
  * Selects a row the way "click the row" is meant: on its filename cell, which is the one cell that
  * is never a link.
  *
- * A bare `rowByFilename(...).click()` targets the row's geometric CENTRE, and since the QoL round-2
- * navigation work a row's pack / key / bpm / tag cells are buttons that navigate instead of
+ * A bare `rowByFilename(...).click()` targets the row's geometric CENTRE, and a row's pack / key / bpm / tag cells are buttons that navigate instead of
  * selecting. Which cell the centre lands on is a function of the flex layout at the current window
  * width — on a wide window it's the pack column — so "click the row" has to name a target rather
  * than trust the midpoint.
@@ -109,14 +106,14 @@ export async function openSettings(page: Page): Promise<void> {
 }
 
 /** The favorite-heart button on a row (`SampleRow.tsx`'s `HeartButton` — `aria-pressed`,
- * `aria-label="Favorite"`, rendered only on non-missing rows, design spec §5.2). Click toggles
+ * `aria-label="Favorite"`, rendered only on non-missing rows). Click toggles
  * without changing selection or playback. */
 export function rowHeart(page: Page, filename: string): Locator {
   return rowByFilename(page, filename).getByRole('button', { name: 'Favorite' });
 }
 
 /** Selects the row by filename (focusing the list as a side effect, same as any other row click
- * in this file) and presses `T` (design spec §5.4) to open its Tags popover — waits for the
+ * in this file) and presses `T` to open its Tags popover — waits for the
  * popover's `aria-label="Add tag"` input so callers can act on it immediately. Safe to call again
  * for a different row without closing the first: `UserLayerStore.openTagsPopover` just overwrites
  * `openPopover`, and `SampleList` remounts `TagsPopover` under a fresh `key={sampleId}`. */

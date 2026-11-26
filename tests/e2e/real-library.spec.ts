@@ -12,7 +12,7 @@ const realAppData = (): string | null =>
   : process.platform === 'win32' ? (process.env.APPDATA ?? null)
   : null;
 
-// Opt-in real-library smoke (e2e spec's real-import section): imports the developer's actual
+// Opt-in real-library smoke: imports the developer's actual
 // Splice library end-to-end and asserts the top-bar count against a live `select count(*)` from
 // the real sounds.db. Excluded from the `default` Playwright project by its `@real` title
 // (playwright.config.ts grepInvert); the in-body `test.skip` below is a second, independent gate
@@ -36,9 +36,8 @@ test('@real the real Splice library imports completely', async () => {
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-real-'));
   const l = await launchNtwine({ userData: join(root, 'ud'), appData: appData!, libraryRoot: process.env.NTWINE_E2E_REAL_LIBRARY_ROOT ?? join(homedir(), 'Splice') });
   try {
-    // Deviation from the brief's verbatim call, disclosed in the task report: FirstRun.tsx
-    // withholds the library view until snapshot+catalog+stat+COVERS all finish (spec §3.1 item
-    // 6), and 612 sequential live `net.fetch` cover fetches routinely exceed Playwright's 30s
+    // FirstRun.tsx withholds the library view until snapshot+catalog+stat+COVERS all finish,
+    // and 612 sequential live `net.fetch` cover fetches routinely exceed Playwright's 30s
     // default action timeout — measured first-hand (`locator.waitFor: Timeout 30000ms exceeded`)
     // against this exact real library before this line existed. `page.setDefaultTimeout` is
     // scoped to THIS test's own Page instance (from this test's own `launchNtwine` call above),

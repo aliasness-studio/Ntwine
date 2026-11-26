@@ -1,4 +1,4 @@
-// Pure empty-state copy selection for SampleList's EmptyState (Task 8 brief / design spec §5.1).
+// Pure empty-state copy selection for SampleList's EmptyState.
 // Split out as its own unit-testable module so the three exact strings are pinned without
 // mounting SampleList's virtualized DOM. `scope` mirrors `library.filters.scope` (`Scope |
 // undefined`) exactly — only favorites/collection scopes get bespoke copy; every other scope

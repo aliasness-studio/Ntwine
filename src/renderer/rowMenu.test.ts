@@ -26,7 +26,7 @@ const baseRow: SampleRow = {
 };
 
 describe('menuItemsFor', () => {
-  it('a non-favorited row gets a "Favorite" item (spec §5.2 label flip)', () => {
+  it('a non-favorited row gets a "Favorite" item (label flip)', () => {
     const items = menuItemsFor(baseRow, undefined);
     expect(items.find((i) => i.id === 'favorite')).toEqual({ id: 'favorite', label: 'Favorite' });
   });
@@ -39,7 +39,7 @@ describe('menuItemsFor', () => {
     });
   });
 
-  it('a collection scope adds "removefrom" (brief: only when scope?.kind === "collection")', () => {
+  it('a collection scope adds "removefrom" (only when scope?.kind === "collection")', () => {
     const items = menuItemsFor(baseRow, { kind: 'collection', collectionId: 'c1' });
     expect(items.map((i) => i.id)).toContain('removefrom');
   });
@@ -54,7 +54,7 @@ describe('menuItemsFor', () => {
     ).not.toContain('removefrom');
   });
 
-  it('a missing row gets no menu at all, in every scope (spec §5.2: missing rows are read-only)', () => {
+  it('a missing row gets no menu at all, in every scope (missing rows are read-only)', () => {
     expect(menuItemsFor({ ...baseRow, missing: true }, undefined)).toEqual([]);
     expect(
       menuItemsFor({ ...baseRow, missing: true }, { kind: 'collection', collectionId: 'c1' }),

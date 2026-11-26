@@ -29,8 +29,8 @@ export function wrapPlayPort(base: PlayPort, armed: boolean): { port: PlayPort; 
  * Attaches `__ntwineE2E` synchronously when armed; touches nothing when not.
  *
  * `target`'s property is typed `unknown`, not `() => E2ESnapshot`: under `strictFunctionTypes`,
- * a property typed as a function is checked contravariantly, and the unit test above (verbatim
- * per the e2e spec) passes bare `{ __ntwineE2E?: unknown }` / `{ __ntwineE2E?: () => unknown }`
+ * a property typed as a function is checked contravariantly, and the unit test
+ * passes bare `{ __ntwineE2E?: unknown }` / `{ __ntwineE2E?: () => unknown }`
  * test doubles that a stricter target type rejects at the call site even though the assignment
  * itself is always sound (any concrete reader is assignable into an `unknown` slot). The real
  * call site (`renderer.tsx`, `installE2ESnapshot(window, ...)`) is unaffected — `Window`'s own

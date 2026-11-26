@@ -1,5 +1,5 @@
-// 200 buckets x [min, max] Int8 pairs interleaved = 400 bytes (spec §5.1; db.ts's `waveforms`
-// schema comment: "peaks BLOB NOT NULL, -- spec §5.1: 200 min/max pairs, Int8"). Exported so
+// 200 buckets x [min, max] Int8 pairs interleaved = 400 bytes (db.ts's `waveforms`
+// schema comment: "peaks BLOB NOT NULL, -- 200 min/max pairs, Int8"). Exported so
 // callers that need the on-disk shape (byte count, bucket count) can reference this constant
 // instead of repeating the literal 200.
 export const DEFAULT_PEAKS_BUCKETS = 200;
@@ -17,8 +17,8 @@ function clampInt8(v: number): number {
 }
 
 /**
- * Reduces one or more decoded audio channels (Task 3's `decodeAudio` output) to a fixed-size
- * peak-bucket overview for the browse-list waveform thumbnail (spec §5.1): `buckets` buckets
+ * Reduces one or more decoded audio channels (decode.ts's `decodeAudio` output) to a fixed-size
+ * peak-bucket overview for the browse-list waveform thumbnail: `buckets` buckets
  * (200 by default), each an interleaved [min, max] Int8 pair — 400 bytes at the default bucket
  * count.
  *
@@ -43,7 +43,7 @@ function clampInt8(v: number): number {
  * the way a proportional `floor(i * n / buckets)` boundary formula would produce instead.
  *
  * Quantization: `floor(sample * 127)`, then clamped to ±127. Floor (not round) is what
- * reproduces the brief's own worked values exactly — a 0.5 DC signal floors to 63, not 64; a
+ * reproduces the expected worked values exactly — a 0.5 DC signal floors to 63, not 64; a
  * +/-1.0 signal floors to +/-127 exactly, needing no clamp. The clamp itself only matters for a
  * decoded sample outside [-1, 1] (a rare over-range/inter-sample-peak decode): without it,
  * assigning an out-of-range number into an `Int8Array` silently WRAPS (two's-complement
@@ -56,9 +56,9 @@ export function computePeaks(
 ): Int8Array {
   // Guarded BEFORE the allocation below, not after: `new Int8Array(buckets * 2)` with a
   // negative `buckets` throws its own uncontrolled RangeError ("Invalid typed array length"),
-  // which would fire first if this check came after the allocation — a real bug caught in
-  // review round 1, since a caller-facing contract violation deserves a named, clear error, not
-  // whatever message TypedArray's own allocator happens to produce.
+  // which would fire first if this check came after the allocation, and a caller-facing
+  // contract violation deserves a named, clear error, not whatever message TypedArray's own
+  // allocator happens to produce.
   if (buckets <= 0) {
     throw new Error(`computePeaks: buckets must be > 0, got ${buckets}`);
   }

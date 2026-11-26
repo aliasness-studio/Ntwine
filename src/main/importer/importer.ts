@@ -39,16 +39,16 @@ interface SampleUpsertParams {
 }
 
 /**
- * Transactional upsert of one Splice snapshot read (`{ samples, packs }`, per Task 5's
- * `readSplice`) into Ntwine's catalog (spec §5 step 3). Idempotent by construction:
+ * Transactional upsert of one Splice snapshot read (`{ samples, packs }`, per spliceDb.ts's
+ * `readSplice`) into Ntwine's catalog. Idempotent by construction:
  *
  *  - packs upsert keyed on `splice_uuid` (the catalog schema's own UNIQUE column).
  *  - samples upsert keyed on `file_hash` (UNIQUE, NOT NULL) — `ON CONFLICT DO UPDATE`, so a
  *    re-run updates the existing row in place rather than deleting/reinserting. That matters:
- *    `sample_tags` and (later) `waveforms` reference `samples.id`, and Task 8's `missing` flag
+ *    `sample_tags` and `waveforms` reference `samples.id`, and `statPass`'s `missing` flag
  *    lives on the same row — none of that may get invalidated just by re-running import.
- *  - `missing` is deliberately left out of the UPDATE SET list: it's Task 8's existence-check
- *    column, and an upsert must never resurrect a row Task 8 already flagged missing=1 just
+ *  - `missing` is deliberately left out of the UPDATE SET list: it's `statPass`'s existence-check
+ *    column, and an upsert must never resurrect a row `statPass` already flagged missing=1 just
  *    because Splice's metadata for it happens not to have changed.
  *  - tags: `INSERT OR IGNORE` on `tags.name` (UNIQUE) so the tag vocabulary never duplicates,
  *    then each sample's `sample_tags` links are fully rebuilt (delete-then-reinsert) every
@@ -118,7 +118,7 @@ export function buildCatalog(
     }
 
     // A mid-sync Splice DB really contains rows whose local_path is still NULL (file not yet
-    // downloaded — proven live 2026-08-19: 46 of 4,197). Nothing to import for those: no path
+    // downloaded — observed on a real library: 46 of 4,197). Nothing to import for those: no path
     // to store, stat, play, or drag. Skipped, not fatal; the next (idempotent) re-import picks
     // them up once Splice fills the path in.
     const downloaded = input.samples.filter(
@@ -164,10 +164,10 @@ export function buildCatalog(
 }
 
 /**
- * Existence pass (spec §5 step 4): stat every sample's file under `libraryRoot` and set/clear
+ * Existence pass: stat every sample's file under `libraryRoot` and set/clear
  * `samples.missing` accordingly. Resolves each row's stored `rel_path` back to a native absolute
- * path via `transform.ts`'s `relPathToAbs` (shared with `queue.ts`'s `absPathsFor` — Task 10
- * review round 1 hoisted this out of two independently-maintained copies).
+ * path via `transform.ts`'s `relPathToAbs` (shared with `queue.ts`'s `absPathsFor` rather than
+ * two independently-maintained copies).
  *
  * Unconditional, not delta-only: every row gets its `missing` column freshly SET to the
  * just-observed 0/1 on every call, never merely set-when-newly-missing. That is what makes this
@@ -204,13 +204,13 @@ export function statPass(
 
 // Named alias for `downloadCovers`'s own `fetchFn` parameter shape (covers.ts is the source of
 // truth for the real signature; this is purely a convenience type for `ImportDeps` and its
-// callers, so Task 11 doesn't have to repeat the structural type by hand when building one).
+// callers, so ipc.ts doesn't have to repeat the structural type by hand when building one).
 export type CoversFetch = (
   url: string,
 ) => Promise<{ ok: boolean; arrayBuffer(): Promise<ArrayBuffer> }>;
 
-// The real Splice metadata db is named this on every platform verified so far (spec §2.2;
-// `paths.ts`'s own resolver glob ends in the same literal). `snapshotSpliceDb` preserves the
+// The real Splice metadata db is named this on every platform verified so far
+// (`paths.ts`'s own resolver glob ends in the same literal). `snapshotSpliceDb` preserves the
 // source filename via `basename(src)`, so a prior snapshot in `snapshotDir` always lands at
 // this same name too — which is what makes the fallback lookup below a plain `existsSync` on
 // one known path rather than a directory scan.
@@ -236,7 +236,7 @@ interface CoverCandidateCountRow {
  * Count of packs `downloadCovers` might actually call `fetchFn` for, so the covers phase's
  * reported `total` means "candidates downloadCovers would consider," not just "every pack in
  * the catalog." Built from `COVER_CANDIDATE_WHERE` — covers.ts's own exported fragment — rather
- * than a second hand-written copy of the same condition (owner's "one question, two gates"
+ * than a second hand-written copy of the same condition (the "one question, two gates"
  * rule: this count and `downloadCovers`'s own query must answer "is this pack a candidate" from
  * ONE shared definition, not two independently-maintained ones that could silently drift). A
  * skip-existing candidate (already cached on disk) still counts here — this is "how many are
@@ -254,20 +254,20 @@ function countCoverCandidates(catalog: Catalog): number {
 }
 
 /**
- * Runs the whole import pipeline (spec §5 steps 2-5) in order — snapshot, catalog build,
+ * Runs the whole import pipeline in order — snapshot, catalog build,
  * existence check, covers — reporting one start and one completion `ImportProgress` event per
  * phase via `onProgress` (`covers` additionally ticks once per pack it actually attempts a
  * fetch for). Resolves with the ids of every non-missing sample that has no `waveforms` row yet
- * (`pendingPeakIds`) — the seam Task 10's background decode queue consumes. This function never
- * decodes audio or touches the `waveforms` table itself.
+ * (`pendingPeakIds`) — the seam the background decode queue (waveforms/queue.ts) consumes. This
+ * function never decodes audio or touches the `waveforms` table itself.
  *
- * `runImport`/`ImportDeps` IS the `LibraryImporter` seam spec §3.2 promises ("the importer is
- * behind a LibraryImporter interface so a second strategy slots in without surgery"): there is
+ * `runImport`/`ImportDeps` IS the `LibraryImporter` seam (the importer sits behind a
+ * LibraryImporter interface so a second strategy slots in without surgery): there is
  * no separate marker interface to implement — a second strategy (e.g. a future NI-expansions
  * importer) is simply another `runImport`-shaped async function accepting the same `ImportDeps`
- * shape, swappable wherever Task 11's IPC handler calls this one.
+ * shape, swappable wherever ipc.ts's IPC handler calls this one.
  *
- * Snapshot resolution (spec §5 step 2): `deps.spliceDbPath` wins when given — copied into
+ * Snapshot resolution: `deps.spliceDbPath` wins when given — copied into
  * `snapshotDir` via `snapshotSpliceDb`. When it's `null` (the live Splice db couldn't be
  * located this run), a snapshot already sitting in `snapshotDir` from a previous run is read in
  * place instead — NOT re-copied onto itself, which would be both unnecessary (it already IS the
@@ -287,7 +287,7 @@ export async function runImport(
   const now = deps.now ?? (() => new Date().toISOString());
 
   try {
-    // --- snapshot (spec §5 step 2) -----------------------------------------
+    // --- snapshot ----------------------------------------------------------
     const priorSnapshotPath = join(deps.snapshotDir, SPLICE_DB_FILENAME);
     onProgress({
       phase: 'snapshot',
@@ -317,7 +317,7 @@ export async function runImport(
       message: `Snapshot ready: "${snapshotPath}"`,
     });
 
-    // --- catalog (spec §5 step 3) -------------------------------------------
+    // --- catalog -----------------------------------------------------------
     onProgress({ phase: 'catalog', done: 0, total: 1, message: 'Reading Splice metadata…' });
     const data = readSplice(snapshotPath);
     buildCatalog(deps.catalog, data, deps.libraryRoot);
@@ -333,7 +333,7 @@ export async function runImport(
         (pending > 0 ? ` (${pending} not downloaded yet — re-run import once Splice finishes)` : ''),
     });
 
-    // --- stat (spec §5 step 4) -----------------------------------------------
+    // --- stat --------------------------------------------------------------
     onProgress({ phase: 'stat', done: 0, total: 1, message: 'Checking files on disk…' });
     const { present, missing } = statPass(deps.catalog, deps.libraryRoot);
     onProgress({
@@ -343,7 +343,7 @@ export async function runImport(
       message: `${present} present, ${missing} missing`,
     });
 
-    // --- covers (spec §5 step 5) -----------------------------------------------
+    // --- covers ------------------------------------------------------------
     const coverTotal = countCoverCandidates(deps.catalog);
     onProgress({
       phase: 'covers',
@@ -373,8 +373,8 @@ export async function runImport(
       message: `${ok} covers downloaded, ${failed} failed`,
     });
 
-    // Meta stamps land only after every phase above has actually completed (per the brief: "after
-    // the covers phase completes") — a run that throws partway through must never look imported.
+    // Meta stamps land only after every phase above has actually completed (after the covers
+    // phase completes) — a run that throws partway through must never look imported.
     deps.catalog.setMeta('imported', '1');
     deps.catalog.setMeta('library_root', deps.libraryRoot);
     deps.catalog.setMeta('imported_at', now());

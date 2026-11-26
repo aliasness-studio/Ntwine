@@ -2,10 +2,9 @@ import { expect, test } from './harness/fixtures';
 
 // The exact `window.ntwine` bridge surface (preload.ts's `api` object, `NtwineApi` in
 // ipcTypes.ts), sorted — a method silently added/removed/renamed shows up as an array diff rather
-// than a vague count mismatch. Task 6 (design spec §4) grew this from 12 to 23: the 11 user-layer
-// methods below, plus `startDrag` promoted from `send` to `invoke` (same method, unchanged count).
-// The Splice-DB picker fallback (Windows-port audit blocker) grew it 23 -> 24: `pickSpliceDb`.
-// Self-update (release pipeline PR 2) grew it 24 -> 29: `getAppVersion`, `getUpdateState`,
+// than a vague count mismatch. It includes the 11 user-layer methods, `startDrag` (an `invoke`,
+// not a `send`), the Splice-DB picker fallback `pickSpliceDb`, and the five self-update methods
+// `getAppVersion`, `getUpdateState`,
 // `installUpdate`, `onUpdateState`, `openReleasesPage` (present even though e2e never runs the
 // updater — the bridge surface does not depend on shouldRunUpdater).
 const NTWINE_API_METHODS = [

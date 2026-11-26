@@ -1,4 +1,4 @@
-// Filter controls (Task 13 brief, Step 1 / spec §7): type toggle, key select, BPM range, tag
+// Filter controls: type toggle, key select, BPM range, tag
 // chips. Every control here is a thin view over `LibraryStore`'s existing actions
 // (`toggleType`/`setKey`/`setBpmRange`/`toggleTag`) — no filter logic lives in this component.
 import { observer } from 'mobx-react-lite';
@@ -7,7 +7,7 @@ import styled from 'styled-components';
 import { formatKey, PITCH_CLASSES } from '../../shared/keyDisplay';
 import { useStores } from './StoreContext';
 
-// listTags() (Task 7) already returns tags sorted count-desc, name-asc — the first N of
+// listTags() already returns tags sorted count-desc, name-asc — the first N of
 // `library.tags` IS "top N by count" with no extra sort needed here.
 const TOP_TAG_COUNT = 20;
 

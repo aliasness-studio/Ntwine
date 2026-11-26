@@ -39,9 +39,9 @@ type WorkerReply = WorkerReplyOk | WorkerReplyFail;
 const DEFAULT_CONCURRENCY = 3;
 
 // The CJS main bundle emits `peaksWorker.js` beside `main.js` (vite.main.config.ts's second
-// `rollupOptions.input` entry, Task 10) — `__dirname` at runtime is `.vite/build/`, the same
-// directory `main.js` itself resolves from once packaged. Exported so the real call site (Task
-// 11's startup wiring) can build `() => utilityProcess.fork(WORKER_PATH)` without re-deriving
+// `rollupOptions.input` entry) — `__dirname` at runtime is `.vite/build/`, the same
+// directory `main.js` itself resolves from once packaged. Exported so the real call site (ipc.ts's
+// wiring) can build `() => utilityProcess.fork(WORKER_PATH)` without re-deriving
 // this path. Evaluated at module load purely as a string — safe under `vitest` too, where
 // `__dirname` points at the TS source directory instead and is simply never opened, since tests
 // only ever inject a fake `forkWorker`.
@@ -53,8 +53,8 @@ interface SampleRelPathRow {
 }
 
 // Resolves each id's stored `rel_path` back to a native absolute path via `transform.ts`'s
-// `relPathToAbs` — shared with `importer.ts`'s `statPass` (Task 10 review round 1 hoisted this
-// out of two independently-maintained copies; see `relPathToAbs`'s own doc comment).
+// `relPathToAbs` — shared with `importer.ts`'s `statPass` rather than two independently-maintained
+// copies (see `relPathToAbs`'s own doc comment).
 function absPathsFor(catalog: Catalog, libraryRoot: string, ids: number[]): Map<number, string> {
   if (ids.length === 0) return new Map();
   const rows = catalog.db
@@ -77,7 +77,7 @@ function absPathsFor(catalog: Catalog, libraryRoot: string, ids: number[]): Map<
  * `peaksWorker.ts` child, reached only through `forkWorker`/`WorkerLike`, never imported
  * directly here.
  *
- * Pool contract (binding, per the brief): one `WorkerLike` is forked per in-flight slot — i.e.
+ * Pool contract (binding): one `WorkerLike` is forked per in-flight slot — i.e.
  * `min(concurrency, sampleIds.length)` workers total, each a long-lived worker that is pumped
  * with its NEXT id only after replying to its current one ("one message at a time" per worker;
  * `min` rather than always forking exactly `concurrency` so an id list shorter than the
@@ -88,7 +88,7 @@ function absPathsFor(catalog: Catalog, libraryRoot: string, ids: number[]): Map<
  * left alone until that final drain.
  *
  * A per-id decode failure (`ok: false`) is not a queue failure: it's recorded via
- * `writePeaksFailed` (a `format = 0` row — Task 7's "failed" vs. "pending" distinction) and the
+ * `writePeaksFailed` (a `format = 0` row — queries.ts's "failed" vs. "pending" distinction) and the
  * queue continues; `runPeaksQueue`'s own promise only rejects if `forkWorker` itself throws
  * synchronously while priming the pool. `onProgress(done, total)` fires exactly once per settled
  * id (`done` 1..`total` in order — a single shared counter, so its value is monotonic regardless

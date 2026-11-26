@@ -3,16 +3,16 @@ import type { Catalog } from '../catalog/db';
 import { normalizeUserName } from '../../shared/userNames';
 
 // Re-exported for main-side convenience so every persisted-name call site in this module (and
-// its consumers, e.g. ipc.ts in later tasks) can import it alongside `openUserDb`/`UserDb`
+// its consumers, e.g. ipc.ts) can import it alongside `openUserDb`/`UserDb`
 // without a second import line back to `src/shared`.
 export { normalizeUserName };
 
 /**
  * Thrown by `addUserTag`/`createCollection`/`renameCollection` on an empty (post-trim) name, and
  * by collection create/rename on a `normalizeUserName` collision with a DIFFERENT collection
- * (design spec §2.3: collections never merge silently on collision — tags reuse silently
+ * (collections never merge silently on collision — tags reuse silently
  * instead, which is why only the collection path throws here). Callers surface `.message`
- * inline at the editor (design spec §5.1/§5.3).
+ * inline at the editor.
  */
 export class UserNameError extends Error {
   constructor(message: string) {
@@ -38,7 +38,7 @@ export interface UserDb {
   }; // present-only counts (join samples missing=0)
 }
 
-// Design spec §2.3, verbatim. Created inside the `user` schema alias ATTACHed in `openUserDb`
+// The user-layer schema. Created inside the `user` schema alias ATTACHed in `openUserDb`
 // below. The unqualified parent-table names in the REFERENCES clauses (`tags(id)`,
 // `collections(id)`) resolve to the SAME database as the child table being created — SQLite
 // foreign keys cannot cross an ATTACHed-database boundary — which is exactly what keeps these
@@ -89,7 +89,7 @@ const nowIso = (): string => new Date().toISOString();
 export function openUserDb(catalog: Catalog, userDbPath: string): UserDb {
   const { db } = catalog;
   db.prepare('ATTACH DATABASE ? AS user').run(userDbPath);
-  // Never depend on whichever default a platform's SQLite build ships (design spec §2.2):
+  // Never depend on whichever default a platform's SQLite build ships:
   // foreign_keys is a connection-wide pragma (no schema qualifier); journal_mode is set
   // per-schema for the newly attached `user` database, matching catalog.db's own WAL setting.
   db.pragma('foreign_keys = ON');
@@ -142,7 +142,7 @@ export function openUserDb(catalog: Catalog, userDbPath: string): UserDb {
   `);
 
   // Shared by addUserTag/createCollection/renameCollection — empty-after-trim is rejected before
-  // any write (design spec §2.3 "Name rules (tags AND collections, identical)").
+  // any write (the same name rules for tags AND collections).
   function requireNormalized(name: string): string {
     const normalized = normalizeUserName(name);
     if (normalized === '') throw new UserNameError('Name cannot be empty.');
@@ -179,7 +179,7 @@ export function openUserDb(catalog: Catalog, userDbPath: string): UserDb {
 
     listUserTagNames() {
       const rows = listTagNamesStmt.all() as { name: string }[];
-      // JS localeCompare, never SQL collation (Global Constraints).
+      // JS localeCompare, never SQL collation.
       return rows.map((r) => r.name).sort((a, b) => a.localeCompare(b));
     },
 

@@ -1,8 +1,7 @@
 import { isAbsolute, join, relative, sep } from 'node:path';
 import type { DownloadedSpliceSample } from './spliceDb';
 
-// Ntwine's normalized shape for one sample row — field names transcribed verbatim from the
-// brief's Interfaces line, same order.
+// Ntwine's normalized shape for one sample row.
 export interface NormalizedSample {
   fileHash: string;
   relPath: string;
@@ -47,8 +46,8 @@ function toSampleType(raw: string): 'oneshot' | 'loop' {
 //
 // `raw === null` is treated exactly like `raw === ''` (both mean "unknown"), not as a third,
 // unrecognized value — the real sounds.db stores a genuine SQL NULL here for the large majority
-// of "no chord type" rows (Task 13 hand-QA, 2026-08-17: 3,737 of 4,197), not the empty string
-// spec §2.2's own characterization implied. Confirmed firsthand via `sqlite3 sounds.db "SELECT
+// of "no chord type" rows (3,737 of 4,197 in a real library), not the empty string
+// one might assume. Confirmed firsthand via `sqlite3 sounds.db "SELECT
 // chord_type, typeof(chord_type), COUNT(*) FROM samples GROUP BY 1,2"`. This was the exact crash
 // on the very first real import (`buildCatalog`'s transaction aborted whole): `unknown chord_type
 // "null"` — the quoted "null" there is `${raw}` template-stringifying the JS value `null`, not a
@@ -63,14 +62,14 @@ function toChordType(raw: string | null): 'major' | 'minor' | null {
 
 // Containment check: `path.relative` + a `..`/absolute test, not a string-prefix test (a
 // prefix test would wrongly pass a sibling directory that merely starts with the same
-// characters, e.g. root "/lib" against a path under "/lib-evil/"). Same idiom Task 11's
-// protocol resolver uses for the same reason (spec plan, Task 11).
+// characters, e.g. root "/lib" against a path under "/lib-evil/"). Same idiom protocol.ts's
+// resolver uses for the same reason.
 function toRelPath(localPath: string, libraryRoot: string): string {
   const rel = relative(libraryRoot, localPath);
   const inside = rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
   if (!inside) {
-    // Both paths named, per the brief: a silent ../ rel_path would poison every row
-    // downstream (Task 11's containment check would then null every one out, one at a
+    // Both paths named: a silent ../ rel_path would poison every row
+    // downstream (protocol.ts's containment check would then null every one out, one at a
     // time, with no explanation) — fail loud at import instead.
     throw new Error(
       `normalizeSample: local_path "${localPath}" is outside library root "${libraryRoot}" — ` +
@@ -78,8 +77,8 @@ function toRelPath(localPath: string, libraryRoot: string): string {
     );
   }
   // Stored with POSIX separators regardless of host OS: rel_path must stay readable if the
-  // library root moves to (or is mounted from) a different platform (spec §2.3 — "so the
-  // library can move... without re-import"). `sep` here always matches whatever `relative`
+  // library root moves to (or is mounted from) a different platform (so the
+  // library can move without re-import). `sep` here always matches whatever `relative`
   // just used (both come from the platform-default `node:path`), so this is a no-op on
   // POSIX hosts and a real backslash->slash rewrite on Windows.
   return rel.split(sep).join('/');
@@ -94,10 +93,9 @@ function toRelPath(localPath: string, libraryRoot: string): string {
  *
  * Shared by `statPass` (importer.ts) and `runPeaksQueue`'s `absPathsFor` (queue.ts) — both
  * answer the same question ("where is this sample's file on disk"), so they compute it from
- * this ONE definition rather than two independently-maintained copies that could drift (owner's
- * "one question, two gates" rule; `COVER_CANDIDATE_WHERE`, Task 9 review round 1, hoisted for
- * the identical reason). Task 10 review round 1 hoisted this one, having initially left it
- * duplicated between `statPass` and `absPathsFor`.
+ * this ONE definition rather than two independently-maintained copies that could drift (the
+ * "one question, two gates" rule; `COVER_CANDIDATE_WHERE` in covers.ts is shared for
+ * the identical reason).
  */
 export function relPathToAbs(libraryRoot: string, relPath: string): string {
   return join(libraryRoot, ...relPath.split('/'));
@@ -107,7 +105,7 @@ export function relPathToAbs(libraryRoot: string, relPath: string): string {
  * Maps one raw Splice `samples` row onto Ntwine's normalized shape: null-sentinels resolved
  * (bpm 0, audio_key/chord_type '' -> null), tags parsed, local_path rewritten to a rel_path
  * under `libraryRoot`. Duration is milliseconds in both the source and `durationMs` — copied
- * verbatim, never rescaled (spec §2.3 pin). Throws — never guesses — on an unrecognized
+ * verbatim, never rescaled. Throws — never guesses — on an unrecognized
  * sample_type/chord_type or a local_path outside the library root.
  */
 export function normalizeSample(s: DownloadedSpliceSample, libraryRoot: string): NormalizedSample {

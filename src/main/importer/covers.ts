@@ -17,7 +17,7 @@ function isContained(root: string, resolved: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-// The single definition of "is this pack a candidate for a cover fetch" (owner's "one question,
+// The single definition of "is this pack a candidate for a cover fetch" (the "one question,
 // two gates" rule): a pack needs BOTH `cover_url` (something to fetch) and `splice_uuid`
 // (something stable to name the file after — see downloadCovers's own doc comment). Exported so
 // importer.ts's `countCoverCandidates` (the covers-phase progress total) computes the exact same
@@ -38,7 +38,7 @@ interface CoverCandidateRow {
 }
 
 /**
- * Covers pass (spec §5 step 5): download each pack's `cover_url` into `coversDir`, named
+ * Covers pass (the import pipeline's last phase): download each pack's `cover_url` into `coversDir`, named
  * `<splice_uuid>.jpg`, and record that bare filename in `packs.cover_file`. `cover_file` stores
  * a filename, never a path — `coversDir` supplies the directory at resolve time, the same
  * "root + stored-relative-leaf" split `libraryRoot`/`samples.rel_path` uses (transform.ts's
@@ -47,8 +47,8 @@ interface CoverCandidateRow {
  * deliberately never touches it (mirrors `missing` being left out of the samples upsert, per
  * importer.ts's own comment) — an existence/covers pass must never be undone by a re-import.
  *
- * Tolerant by design (spec §5 step 5 — "failures are logged and non-fatal; missing cover
- * renders a generic tile"): `fetchFn` resolving `{ ok: false }` *or* throwing/rejecting is
+ * Tolerant by design (failures are logged and non-fatal; a missing cover
+ * renders a generic tile): `fetchFn` resolving `{ ok: false }` *or* throwing/rejecting is
  * caught, logged, and counted in `failed` rather than aborting the pass — one broken pack must
  * never block every other pack's cover from downloading. A pack with no `cover_url` (Splice
  * simply didn't supply one) or no `splice_uuid` (nothing stable to name the file after) never
@@ -112,7 +112,7 @@ export async function downloadCovers(
       setCoverFile.run(filename, pack.id);
       ok++;
     } catch (err) {
-      // Non-fatal by contract (spec §5 step 5) — logged so a real run's console shows which
+      // Non-fatal by contract — logged so a real run's console shows which
       // pack failed and why, without aborting the rest of the pass.
       console.error(`downloadCovers: pack ${pack.id} — fetch threw`, err);
       failed++;

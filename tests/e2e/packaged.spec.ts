@@ -35,7 +35,7 @@ test('the packaged app boots, loads the renderer, and quits on the boot marker',
 });
 
 test('the packaged app refuses E2E mode without NTWINE_USER_DATA — and touches no app-data path first', async () => {
-  // Spec §4 also guards §7: the refusal must happen before any path under the real app-data root
+  // The refusal must also happen before any path under the real app-data root
   // is created. The developer's real `…/Ntwine/ntwine-data` already exists (it cannot be asserted
   // absent), so redirect the home root to a fresh temp dir and assert nothing appeared under it.
   // macOS: Chromium/Foundation resolve Application Support from $HOME. Windows: roaming AppData

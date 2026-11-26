@@ -5,13 +5,13 @@ import type { Catalog } from './catalog/db';
 import type { E2EEmit } from './e2e';
 import { relPathToAbs } from './importer/transform';
 
-// Same privileges for both custom schemes (spec §9.1 / §4): `standard` so relative/absolute
+// Same privileges for both custom schemes: `standard` so relative/absolute
 // resource resolution and the FileSystem API work; `secure` + `supportFetchAPI` so a page loaded
 // over sample:// (there isn't one, but a future dev-tools fetch() from the renderer must work
 // too) is treated like https; `stream` so <audio> doesn't insist on buffering the whole response
 // before playback can start.
 //
-// `corsEnabled: true` (Task 14 addition): `supportFetchAPI` alone makes fetch() usable BY a page
+// `corsEnabled: true`: `supportFetchAPI` alone makes fetch() usable BY a page
 // loaded FROM this scheme — it does not exempt a fetch() FROM a different origin (the renderer's
 // real origin, `http://localhost:5173` under `yarn start`'s Vite dev server, or `file://` in a
 // packaged build) INTO this scheme from ordinary CORS enforcement. previewPlayer.ts's
@@ -39,7 +39,7 @@ export const PROTOCOL_SCHEMES: CustomScheme[] = [
 ];
 
 /**
- * Registers the sample:// and cover:// schemes as privileged (spec §9.1). Electron's own hard
+ * Registers the sample:// and cover:// schemes as privileged. Electron's own hard
  * constraint — `registerSchemesAsPrivileged` "can only be used before the ready event... and can
  * be called only once" — is why this is split out from `registerProtocols` below: main.ts calls
  * this one at module scope (before `app.whenReady()`), and `registerProtocols` (which does the
@@ -54,8 +54,7 @@ export function registerProtocolSchemes(): void {
 // prefix test (`resolved.startsWith(root)`) wrongly accepts a SIBLING directory that merely
 // starts with the same characters — root "/tmp/lib" against "/tmp/library-evil/x.wav" passes a
 // naive prefix check (the literal characters do match) despite "library-evil" not being inside
-// "lib" at all. Same idiom transform.ts's `toRelPath` uses for the identical reason, and the
-// exact idiom named in the Task 11 brief.
+// "lib" at all. Same idiom transform.ts's `toRelPath` uses for the identical reason.
 function isContained(root: string, resolved: string): boolean {
   const rel = relative(root, resolved);
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
@@ -69,9 +68,9 @@ interface SampleAbsPathRow {
 /**
  * sampleId -> absolute file path, or null if there's no such row, the row is flagged
  * `missing`, or (hostile/corrupt DB content — see protocol.test.ts) the resolved path would
- * land outside `libraryRoot`. THE shared resolution core (owner's "one question, two gates"
+ * land outside `libraryRoot`. THE shared resolution core (the "one question, two gates"
  * rule): the sample:// branch of `resolveProtocolRequest` below, drag.ts's `resolvePath`
- * (re-pointed here at Task 11), and ipc.ts's `decodePreviewPcm` all answer "where is this
+ * (wired here by main.ts), and ipc.ts's `decodePreviewPcm` all answer "where is this
  * sample's file, if it's safe to hand out at all" through this one function rather than three
  * independently-maintained copies of the same containment logic.
  */
@@ -112,14 +111,14 @@ function resolveCoverAbsPath(catalog: Catalog, coversDir: string, packId: number
 // Anchored to the full string (`^...$`) and digits-only in the id position on purpose: a
 // traversal attempt like `sample://s/../etc` simply fails to match at all (never reaches the DB
 // lookup), and there's nothing to case-normalize since digits are the whole of what's parsed —
-// the one detail spec §4 flags about `standard: true` custom schemes ("case-normalizes the URL
-// host; numeric ids are immune") doesn't apply here at all.
+// the one known quirk of `standard: true` custom schemes (they case-normalize the URL host;
+// numeric ids are immune) doesn't apply here at all.
 const SAMPLE_URL_RE = /^sample:\/\/s\/(\d+)$/;
 const COVER_URL_RE = /^cover:\/\/p\/(\d+)$/;
 
 /**
- * Pure URL -> absolute path resolver for the sample:// and cover:// custom protocols (spec §4:
- * "sample:// URLs are opaque catalog ids, never paths"). Parses `sample://s/<id>` /
+ * Pure URL -> absolute path resolver for the sample:// and cover:// custom protocols (sample://
+ * URLs are opaque catalog ids, never paths). Parses `sample://s/<id>` /
  * `cover://p/<id>`, resolves through the catalog, and applies containment — never touches
  * `electron`'s `protocol`/`net` APIs itself, which is what makes it testable without a live app;
  * `registerProtocols` below is the thin Electron-wiring layer that calls this per-request.
@@ -146,7 +145,7 @@ export function resolveProtocolRequest(
 export interface RegisterProtocolsDeps {
   catalog: Catalog;
   // A getter, not a captured string: `libraryRoot` can change at runtime (NtwineApi's
-  // `pickLibraryRoot`, spec §8 "library root moved"), and this is registered once at startup —
+  // `pickLibraryRoot`, when the library root moves), and this is registered once at startup —
   // every request must re-read the CURRENT value rather than resolve against a stale snapshot
   // from whenever `registerProtocols` happened to run.
   getLibraryRoot: () => string;
@@ -155,10 +154,10 @@ export interface RegisterProtocolsDeps {
 }
 
 /**
- * Wires the sample:// and cover:// schemes to `resolveProtocolRequest` + `net.fetch` (spec
- * §9.1). Must run after `app.whenReady()` (unlike `registerProtocolSchemes` above).
+ * Wires the sample:// and cover:// schemes to `resolveProtocolRequest` + `net.fetch`.
+ * Must run after `app.whenReady()` (unlike `registerProtocolSchemes` above).
  *
- * electron#38749 (open, as of the spec's research pass): `protocol.handle` doesn't honor `Range`
+ * electron/electron#38749 (open when this was written): `protocol.handle` doesn't honor `Range`
  * requests, so seeking/scrubbing would snap to 0. v1 preview is play-from-start only, so this
  * doesn't block — but the TODO below is load-bearing for whoever builds scrub UI later.
  */
@@ -180,7 +179,7 @@ export function registerProtocols(deps: RegisterProtocolsDeps): void {
       });
     }
     if (resolved === null) return new Response(null, { status: 404 });
-    // TODO(#38749): manual Range support before any scrub UI.
+    // TODO(electron/electron#38749): manual Range support before any scrub UI.
     return net.fetch(pathToFileURL(resolved).toString());
   };
 

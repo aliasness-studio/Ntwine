@@ -1,4 +1,4 @@
-// Central MobX configuration (Task 12). Each store module imports this file for its side effect
+// Central MobX configuration. Each store module imports this file for its side effect
 // (`import './configure';`) rather than calling `configure(...)` itself — one definition of the
 // app's MobX settings, not three independently-maintained copies. The call below only actually
 // EXECUTES once per module registry no matter how many files import it (ESM/CJS module caching
@@ -11,7 +11,7 @@
 // anything after the method's first `await` resumes OUTSIDE that transaction — those tail
 // mutations must go through `runInAction` (or `flow`) explicitly, or MobX warns via
 // `console.warn` the moment something is actually observing (e.g. a `mobx-react-lite` `observer`
-// component, Task 13+).
+// component).
 import { configure } from 'mobx';
 
 configure({ enforceActions: 'observed' });

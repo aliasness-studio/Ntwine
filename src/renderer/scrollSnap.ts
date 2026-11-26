@@ -1,4 +1,4 @@
-// Keyboard-nav snap scroll (QoL round 1): when an arrow key lands the selection on a row that
+// Keyboard-nav snap scroll: when an arrow key lands the selection on a row that
 // isn't FULLY inside the list viewport, SampleList scrolls so that row becomes the top row (the
 // Splice "paging" feel) via the virtualizer's scrollToIndex(align: 'start'). This module is only
 // the visibility decision — pure math over the scroll geometry, so it unit-tests without a DOM.
@@ -15,7 +15,7 @@ export function isRowFullyVisible(
   return rowTop >= scrollTop && rowBottom <= scrollTop + viewportHeight;
 }
 
-// Task 11 fix round 1 (design spec §5.3, reviewer finding): a tags/collection popover renders
+// A tags/collection popover renders
 // just below its anchor row (`top = (rowIndex + 1) * rowHeight` — the row's own bottom edge, the
 // same coordinate space `isRowFullyVisible` above already uses for this fixed-height list) — this
 // decides whether that popover fits ENTIRELY inside the current viewport without any scrolling.

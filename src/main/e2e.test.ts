@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import { E2EConfigError, makeE2EEmitter, readE2EConfig } from './e2e';
 
-// Windows-safe absolute: the brief's `/tmp/...` literals are POSIX-only absolutes, and
+// Windows-safe absolute: `/tmp/...` literals are POSIX-only absolutes, and
 // `readE2EConfig` checks `isAbsolute`, which a POSIX literal fails on Windows.
 const ABS = path.resolve('e2e-tmp');
 

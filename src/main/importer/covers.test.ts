@@ -8,10 +8,9 @@ import { readSplice } from './spliceDb';
 import { buildCatalog } from './importer';
 import { downloadCovers } from './covers';
 
-// Step 1 (brief prose only — no verbatim code given, same as Task 6/8's other prose-only
-// steps): "stub fetchFn (one ok with 4 bytes, one ok:false, one throwing) -> files on disk for
-// ok, cover_file set only for ok, {ok:1, failed:2}, and a second run does not re-call fetch for
-// the ok pack (skip-existing)."
+// Stub fetchFn (one ok with 4 bytes, one ok:false, one throwing) -> files on disk for ok,
+// cover_file set only for ok, {ok:1, failed:2}, and a second run does not re-call fetch for
+// the ok pack (skip-existing).
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-covers-'));
 const freshCatalog = () => openCatalog(join(tmp(), 'catalog.db'));
@@ -24,7 +23,7 @@ const URL_OK = 'https://cdn.example.com/covers/ok.jpg';
 const URL_OK_FALSE = 'https://cdn.example.com/covers/okfalse.jpg';
 const URL_THROWS = 'https://cdn.example.com/covers/throws.jpg';
 
-// Exactly 4 bytes, per the brief ("one ok with 4 bytes") — proves the written file is the
+// Exactly 4 bytes — proves the written file is the
 // fetched body byte-for-byte, not a placeholder of some other length.
 const FOUR_BYTES = [1, 2, 3, 4];
 
@@ -143,7 +142,7 @@ describe('downloadCovers', () => {
     expect(coverFileByUuid(catalog, 'pack-no-cover')).toBeNull();
   });
 
-  // Review-wave finding: `splice_uuid` comes straight from the Splice sounds.db (untrusted
+  // `splice_uuid` comes straight from the Splice sounds.db (untrusted
   // input, same threat model protocol.test.ts's containment-trap tests use for `rel_path`) and
   // buildCatalog copies it into `packs.splice_uuid` verbatim, no path validation. downloadCovers
   // then builds `${splice_uuid}.jpg` and writes it under coversDir with no containment check — a

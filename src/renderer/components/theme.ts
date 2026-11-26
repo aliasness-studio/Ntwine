@@ -1,5 +1,4 @@
-// Dark, dense-but-calm palette (spec §7: "Visual design language: dark, dense-but-calm; detailed
-// look developed during implementation, not specified here") + the styled-components
+// Dark, dense-but-calm palette + the styled-components
 // `DefaultTheme` module augmentation, so every `styled.div` etc. and every `useTheme()` call
 // anywhere in the renderer gets full autocomplete/type-checking on `props.theme` for free — the
 // canonical styled-components v6 + TypeScript pattern (their own docs recommend augmenting
@@ -30,7 +29,7 @@ export const theme = {
     accent: '#e0a458',
     accentStrong: '#f0b876',
 
-    // Missing-file / corrupt-decode badges (spec §8) — a desaturated red-orange so it reads as
+    // Missing-file / corrupt-decode badges — a desaturated red-orange so it reads as
     // "attention" without competing with the accent color for what's interactive.
     danger: '#c9563f',
     dangerBg: '#3a231d',
@@ -38,8 +37,8 @@ export const theme = {
   space: (n: number): string => `${n * 4}px`,
   radius: { sm: '3px', md: '6px', pill: '999px' },
   font: {
-    // System stack only — spec requirement: "the app must work fully offline, no webfont
-    // fetches" — mirrored in index.html's own font-family (no @font-face/Google Fonts link).
+    // System stack only — the app must work fully offline, with no webfont fetches —
+    // mirrored in index.html's own font-family (no @font-face/Google Fonts link).
     family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
   },

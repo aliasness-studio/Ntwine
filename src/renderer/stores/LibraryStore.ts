@@ -1,4 +1,4 @@
-// LibraryStore (Task 12): the single source of browsing state — packs/tags for the rail and
+// LibraryStore: the single source of browsing state — packs/tags for the rail and
 // filter chips, the current (already-queried) row set, and the peaks cache the waveform
 // thumbnails read from. Every filter-shaped action (search, scope, type, bpm, key, tag) mutates
 // `filters` then re-queries; `filters` always mirrors the QueryFilters object the LAST
@@ -15,7 +15,7 @@ import type {
   TagFacet,
 } from '../../shared/ipcTypes';
 
-// spec §3.1 item 3 ("instant-as-you-type"): short enough to feel live, long enough that a fast
+// Instant-as-you-type search: short enough to feel live, long enough that a fast
 // typist's keystrokes collapse into one query instead of one per character.
 const SEARCH_DEBOUNCE_MS = 50;
 
@@ -63,7 +63,7 @@ export class LibraryStore {
   loading = false;
   peaksCache = new Map<number, ArrayBuffer>();
 
-  // Browser-style back stack (QoL round 2, 2026-08-20): every filter-shaped change snapshots the
+  // Browser-style back stack: every filter-shaped change snapshots the
   // state it replaced, so following a link out of a row — pack, key, bpm, tag — is always
   // reversible. Oldest-first; `back()` pops the tail.
   //
@@ -103,7 +103,7 @@ export class LibraryStore {
     // graph (the documented pattern for constructor-injected collaborators) rather than left to
     // the default auto-inference, which would otherwise wrap it as a deep observable for no
     // benefit.
-    // `history` is SHALLOW (review, PR #14): an observable array deep-converts whatever is pushed
+    // `history` is SHALLOW: an observable array deep-converts whatever is pushed
     // into it, so plain snapshots would be re-wrapped as proxies the moment they were stored.
     // Nothing ever mutates a history entry — they are pushed and popped whole — so deep
     // observability buys nothing and costs both a conversion per push and the guarantee that a
@@ -140,8 +140,8 @@ export class LibraryStore {
 
   /**
    * Loads the rail (packs) and the tag-chip facet list, THEN runs one initial unfiltered query
-   * so `rows` isn't empty until the user's first filter/search action — spec §3.1 frames
-   * browsing as the default view ("All Samples"), not an empty list waiting for input.
+   * so `rows` isn't empty until the user's first filter/search action — browsing is the
+   * default view ("All Samples"), not an empty list waiting for input.
    */
   async init(): Promise<void> {
     this.loading = true;
@@ -154,7 +154,7 @@ export class LibraryStore {
   }
 
   /**
-   * Re-fetches just the tag facet list (`listTags()`), leaving `packs`/`rows` untouched — Task 7:
+   * Re-fetches just the tag facet list (`listTags()`), leaving `packs`/`rows` untouched —
    * UserLayerStore calls this after a user-tag add/remove so a brand-new tag's chip (or a tag's
    * last removal) shows up in the facet list without re-fetching packs too, which `init()` would
    * do unnecessarily.
@@ -199,7 +199,7 @@ export class LibraryStore {
 
   /**
    * Clears the search box and its filter IMMEDIATELY — for the search crumb's ✕, which is a
-   * discrete control like every other crumb's, not a keystroke (review, PR #14). Routing it
+   * discrete control like every other crumb's, not a keystroke. Routing it
    * through `setSearch('')` would make it the one crumb that doesn't take effect until a debounce
    * elapses, and it would coalesce into whatever typing run preceded it instead of being its own
    * back step.
@@ -291,7 +291,7 @@ export class LibraryStore {
   private pushHistory(coalesceKey: string | null): void {
     if (coalesceKey !== null && coalesceKey === this.historyCoalesceKey) return;
     this.historyCoalesceKey = coalesceKey;
-    // `toJS`, not a spread (review, PR #14): a spread is SHALLOW, so `tags` (an array) and `scope`
+    // `toJS`, not a spread: a spread is SHALLOW, so `tags` (an array) and `scope`
     // (an object) would stay aliased to the live filters, and every entry would carry MobX proxies
     // into the history. `toJS` deep-copies and strips observables, so a snapshot is an inert value
     // that no later edit — in place or otherwise — can reach back and change.
@@ -299,7 +299,7 @@ export class LibraryStore {
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
   }
 
-  // Review round 1, Finding 1: a naive `{ ...this.filters, ...patch }` spread leaves a patch's
+  // A naive `{ ...this.filters, ...patch }` spread leaves a patch's
   // `undefined`-valued keys (e.g. `{ scope: undefined }` from `setScope(null)`) as stale OWN
   // properties instead of removing them — `querySamples` itself doesn't care (main-process
   // filters are read with `!== undefined` checks either way), but a future filter-chip/active-
@@ -323,7 +323,7 @@ export class LibraryStore {
     void this.rerun();
   }
 
-  // Public (Task 7, renamed from `runQuery`) — UserLayerStore's private `refresh()` calls this
+  // Public — UserLayerStore's private `refresh()` calls this
   // directly after a user-layer write (favorite/nickname/tag/collection membership) so the
   // CURRENT filters re-query against the just-changed catalog state, without UserLayerStore
   // reaching into `patchFilters`/`filters` itself or duplicating the `toJS` IPC-safety handling
@@ -334,7 +334,7 @@ export class LibraryStore {
     // object-typed fields as MobX observables (Proxies) by default, and `filters` isn't in the
     // constructor's `{ api: false, searchDebounceHandle: false }` exclusion list — it's real app
     // state, meant to be observed. That Proxy is exactly what a REAL `ipcRenderer.invoke` call
-    // cannot structured-clone (Task 13 hand-QA against the real library, 2026-08-17: every query
+    // cannot structured-clone (found in manual testing against a real library: every query
     // rejected with "An object could not be cloned" the instant a genuine Electron IPC boundary
     // was involved — a test-double `api` never surfaces this, since a plain mock function call
     // never serializes its arguments at all). `toJS` recursively converts the observable graph

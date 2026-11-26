@@ -1,17 +1,17 @@
-// CollectionPopover (Task 11 brief / design spec §5.3): the add-to-collection popover for one
+// CollectionPopover: the add-to-collection popover for one
 // row, opened via the row context menu's "Add to collection…" action
 // (`UserLayerStore.openCollectionPopover`). Same anchoring/store-reading posture as
 // `TagsPopover.tsx` — see that file's own doc comment for the reasoning shared by both.
 //
-// Type-ahead resolution (design spec §2.3's promise, restated in the brief): "an existing name
-// always resolves before any create fires." Concretely, `exactMatch` (a collection whose
+// Type-ahead resolution: an existing name
+// always resolves before any create fires. Concretely, `exactMatch` (a collection whose
 // `normalizeUserName(name)` equals the normalized input) ALWAYS wins on Enter, regardless of
 // which Enter variant was pressed — plain Enter adds to it, and Cmd/Ctrl+Enter also adds to it
 // rather than attempting a create that `createCollection` would just reject as a collision.
 // Cmd/Ctrl+Enter only reaches `createCollection` when no exact match exists. Absent an exact
 // match, plain Enter targets the first prefix-filtered suggestion (ordinary type-ahead: narrow as
-// you type, Enter commits the top result) — `userLayer.collections` already arrives A-Z (spec
-// §4), so "first" is a stable, deterministic choice, not an arbitrary one.
+// you type, Enter commits the top result) — `userLayer.collections` already arrives A-Z,
+// so "first" is a stable, deterministic choice, not an arbitrary one.
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
@@ -74,8 +74,7 @@ const Hint = styled.div`
   color: ${(p) => p.theme.color.textFaint};
 `;
 
-// Same pattern as LibraryRail's create/rename editors (design spec §2.3's inline collision
-// surface).
+// Same pattern as LibraryRail's create/rename editors (collisions surface inline).
 const AlertText = styled.span`
   font-size: 11px;
   color: ${(p) => p.theme.color.danger};
@@ -125,7 +124,7 @@ export const CollectionPopover = observer(function CollectionPopover({
   const exactMatch = userLayer.collections.find((c) => normalizeUserName(c.name) === normalizedValue);
   const highlighted = exactMatch ?? filtered[0];
 
-  // Fix round 1 (Important 1, reviewer finding): `addToCollection` has no `{ error }` contract of
+  // `addToCollection` has no `{ error }` contract of
   // its own (unlike `createCollection`) — it just rejects. The ORIGINAL version of this function
   // fired it with `void` (no await/catch) and unconditionally cleared `value`/`error` right after,
   // so a rejection (concrete trigger: the target collection is deleted between this popover

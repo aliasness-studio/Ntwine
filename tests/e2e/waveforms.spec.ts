@@ -24,7 +24,7 @@ test('every visible non-missing row fills its waveform with real peaks; the miss
     await waitForWaveform(nonMissing.nth(i).locator('canvas'), true);
   }
 
-  // AIFF real-decode proof (Task 5/6 review finding): rows.spec's "no couldn't-decode badge"
+  // AIFF real-decode proof: rows.spec's "no couldn't-decode badge"
   // assertion runs immediately after import — before the background waveform pass
   // (main/waveforms: decodeAudio -> computePeaks -> the `waveforms` table) has necessarily
   // reached these two rows — so it cannot fail via a real AIFF-decode regression in that

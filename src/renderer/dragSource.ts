@@ -1,4 +1,4 @@
-// Task 13 / design spec §7: the renderer-owned drag-source slot. It is the ONLY way LibraryRail's
+// The renderer-owned drag-source slot. It is the ONLY way LibraryRail's
 // drop targets can tell a real native row drag (SampleRow's `handleDragStart`) from an external
 // Finder/Explorer file drag over the app window — once `handleDragStart` calls `preventDefault`,
 // there is no HTML5 drag session of our own left, so `dataTransfer` at the drop site looks
@@ -8,7 +8,7 @@
 //
 // The session TOKEN (not just the sample id) exists because `startDrag`'s invoke can resolve
 // LATE relative to the rest of the app: the OS drag session blocks the main process until
-// mouse-up (spec §7), so by the time the renderer's `finally` runs, the slot it armed may already
+// mouse-up, so by the time the renderer's `finally` runs, the slot it armed may already
 // be empty (a drop consumed it) or may hold a DIFFERENT, newer drag (a second drag started before
 // the first's `finally` ran). `clearDragSource` only clears when its token still matches the live
 // slot, so a stale `finally` can never clobber a slot it doesn't own.
@@ -34,7 +34,7 @@ export function armDragSource(sampleId: number): symbol {
 /**
  * Reads the current slot without consuming it. Drop-target gating (`dragenter`/`dragover`) uses
  * this to tell an in-flight native row drag from an external file drag: a `null` result means
- * ignore everything about the current drag, per spec §7's discrimination rule.
+ * ignore everything about the current drag (the drop-target discrimination rule).
  */
 export function peekDragSource(): DragSource | null {
   return slot;

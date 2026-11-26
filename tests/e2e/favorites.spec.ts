@@ -6,7 +6,7 @@ import { launchNtwine } from './harness/launch';
 
 // LibraryRail.tsx's `Item` renders exactly two <span> children per option — Name then Count,
 // the same shape browse.spec.ts's own `countSpan` already documents for PackRail/LibraryRail
-// alike. user.db starts empty every test (design spec §8) and this spec never creates a
+// alike. user.db starts empty every test and this spec never creates a
 // collection, so the Library listbox is always exactly [All Samples, Favorites] — matched by
 // NAME (not index) so intent reads at each call site, tolerant of whitespace between the two
 // spans for the same reason `clickPack`/`toggleTag` (actions.ts) already are.
@@ -34,7 +34,7 @@ test('the heart toggles aria-pressed and the rail count, Favorites-scope selecti
   await expect(kick01Heart).toHaveAttribute('aria-pressed', 'true');
   await expect(countSpan(libraryOption(page, 'Favorites'))).toHaveText('1');
 
-  // --- 3-row selection-follow under Favorites scope (design spec §3.1) ---
+  // --- 3-row selection-follow under Favorites scope ---
   // All three rows share the Alpha Drums pack, so querySamples' `ORDER BY p.name, s.filename,
   // s.id` (queries.ts) puts them in this exact filename order — deterministic without a DB read,
   // the same reasoning preview.spec.ts's own keyboard-walk assertion already documents.

@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 
 /**
- * The app's E2E-mode contract (e2e spec §3.1). Pure on purpose: main.ts is un-importable under
+ * The app's E2E-mode contract. Pure on purpose: main.ts is un-importable under
  * Vitest (module-scope Electron side effects), so every decision lives here and main.ts only
  * wires the result. NOTHING is honoured unless NTWINE_E2E === '1'.
  */
@@ -19,7 +19,7 @@ export interface E2EConfig {
 
 export class E2EConfigError extends Error {}
 
-/** Absent → null; present but not absolute → E2EConfigError (the spec's env table says <abs …> for every key). */
+/** Absent → null; present but not absolute → E2EConfigError (every key takes an absolute path). */
 function absoluteOrNull(env: NodeJS.ProcessEnv, key: string): string | null {
   const value = env[key];
   if (value === undefined || value === '') return null;

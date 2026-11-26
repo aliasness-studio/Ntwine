@@ -59,7 +59,7 @@ interface UserTextRow {
 
 /**
  * Per-`samples.id` normalized text fragments contributed by the user layer — a sample's nickname
- * plus each of its user-tag names — for the search composition below (spec §3.4) to word-boundary
+ * plus each of its user-tag names — for the search composition below to word-boundary
  * match search tokens against, the same way `searchIdsForToken` matches them against FTS text.
  * Only called when `hasUser` (querySamples's own gate): the `user` schema alias must be ATTACHed
  * for `user.sample_state`/`user.sample_tags`/`user.tags` to exist at all.
@@ -104,13 +104,13 @@ function readUserTextWithIds(db: Catalog['db']): Map<number, { text: string[] }>
 }
 
 /**
- * Word-boundary prefix test (spec §3.4) between one normalized search token and one normalized
+ * Word-boundary prefix test between one normalized search token and one normalized
  * user-text fragment (a nickname or a user-tag name): true when the token starts the fragment, or
  * starts a word inside it. `' ' + tokenNorm` rather than a regex `\b` is enough because both sides
  * are already `normalizeUserName`d — internal whitespace is already collapsed to single spaces, so
  * the only word boundaries that can exist are "start of string" and "right after one of those
  * single spaces." This gives a nickname/tag hit the same "narrows as you type more words" prefix
- * feel `searchIdsForToken`'s FTS5 `"tok"*` already gives filename/pack/tag hits (spec §7) — so a
+ * feel `searchIdsForToken`'s FTS5 `"tok"*` already gives filename/pack/tag hits — so a
  * search box user can't tell which source answered their query from the matching behavior alone.
  */
 function wordPrefixMatch(text: string, tokenNorm: string): boolean {
@@ -118,7 +118,7 @@ function wordPrefixMatch(text: string, tokenNorm: string): boolean {
 }
 
 /**
- * Runs the samples list query used by browse + search (spec §7): composes `f`'s filters with
+ * Runs the samples list query used by browse + search: composes `f`'s filters with
  * AND, and returns rows shaped for the UI (`missing`/`hasPeaks`/`peaksFailed` coerced to real
  * booleans, `tags` gathered into an array) rather than raw driver output.
  *
@@ -127,24 +127,24 @@ function wordPrefixMatch(text: string, tokenNorm: string): boolean {
  * multi-tag sample out into duplicate rows. So tags are fetched separately — `sample_id, name`
  * for exactly the ids the first query already returned — and grouped onto each row in JS.
  *
- * `hasPeaks`/`peaksFailed` read `waveforms.format`, not just row presence: Task 10 writes a
+ * `hasPeaks`/`peaksFailed` read `waveforms.format`, not just row presence: the decode queue writes a
  * `format = 0` row for a failed decode specifically so "failed" is distinguishable from
- * "pending, no row yet" (spec §8's corrupt-file badge needs the distinction) — a bare
+ * "pending, no row yet" (the corrupt-file badge needs the distinction) — a bare
  * `sample_id IS NULL` check would have shown a failed decode as succeeded, since a `format = 0`
  * row still has a `sample_id`.
  *
  * BPM/key filters exclude unknown values for free: `s.bpm >= ?` (etc.) is SQL, and SQL's
  * three-valued logic means a NULL `bpm` makes the comparison NULL, not TRUE — WHERE only keeps
  * TRUE rows, so an unknown-bpm/-key row silently drops out of the result the moment either
- * filter is actually active (spec §3.1). No explicit `IS NOT NULL` is added, so as not to imply
+ * filter is actually active. No explicit `IS NOT NULL` is added, so as not to imply
  * the exclusion needs help it doesn't.
  *
- * User layer (Task 3, gated on `hasUser` — whether this connection ever ran `openUserDb`,
+ * User layer (gated on `hasUser` — whether this connection ever ran `openUserDb`,
  * src/main/user/userDb.ts): `favorite`/`nickname` are a 1:1 LEFT JOIN inlined into the row query
  * (`user.sample_state`'s PK is `sample_file_hash`, so unlike tags it can never fan a row out).
  * `userTags` gets its own third query for the same fan-out reason `tags` does, over exactly the
  * hashes the row query returned, then grouped and sorted with `localeCompare` in JS — never SQL
- * `ORDER BY`, which would sort by BINARY collation instead (Global Constraints). Without
+ * `ORDER BY`, which would sort by BINARY collation instead. Without
  * `hasUser`, every row reads its zero value (`favorite: false`, `nickname: null`,
  * `userTags: []`) and a `favorites`/`collection` scope short-circuits to `[]` before any SQL
  * referencing the `user` schema alias would run.
@@ -181,7 +181,7 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   // `id IN ()` is a SQLite syntax error, not an empty result set — so the rest of the WHERE clause
   // is never even built, let alone run, for a search with no hits.
   //
-  // Per-token search union (spec §3.4): a sample matches when EVERY token prefix-matches, at a
+  // Per-token search union: a sample matches when EVERY token prefix-matches, at a
   // word boundary, at least one of FTS text (searchIdsForToken), its nickname, or one of its
   // user-tag names — sources union PER token, tokens AND together. `userText` is read once per
   // call (not once per token): it's the same per-sample fragment set every token gets compared
@@ -250,7 +250,7 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   }
   if (f.tags !== undefined && f.tags.length > 0) {
     // ALL listed tags, not any — same contract as before the user layer, now extended per name
-    // to either source (spec §3.3): a sample qualifies for one wanted name if EITHER its Splice
+    // to either source: a sample qualifies for one wanted name if EITHER its Splice
     // tags OR (when `hasUser`) its user tags contain that name, and must qualify for EVERY
     // wanted name. One parenthesized `EXISTS ... OR EXISTS ...` is pushed per name — ANDed
     // together by the shared `where.join(' AND ')` below — replacing the old single
@@ -340,7 +340,7 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
   // `samples.id`. Only run when `hasUser`: without the `user` schema attached this table doesn't
   // exist, and every row's `userTags` is `[]` regardless (the map stays empty, `?? []` below
   // supplies it). No `ORDER BY` here — sorted with `localeCompare` in JS after grouping, never
-  // SQL's BINARY collation (Global Constraints).
+  // SQL's BINARY collation.
   const userTagsByHash = new Map<string, string[]>();
   if (hasUser && rows.length > 0) {
     const hashes = rows.map((r) => r.fileHash);
@@ -382,8 +382,8 @@ export function querySamples(catalog: Catalog, f: QueryFilters): SampleRow[] {
 }
 
 /**
- * Left-rail pack list (spec §7): only packs with at least one non-missing sample (spec §2.2 —
- * "the UI hides packs with zero present samples"). The inner join's `AND s.missing = 0` does
+ * Left-rail pack list: only packs with at least one non-missing sample (the UI hides packs
+ * with zero present samples). The inner join's `AND s.missing = 0` does
  * double duty as both that filter (a pack with none present has no join rows at all, so it
  * disappears from the GROUP BY entirely) and the definition of `sampleCount` — deliberately a
  * count of *present* samples, not every row ever imported for that pack, so the number next to a
@@ -404,7 +404,7 @@ export function listPacks(catalog: Catalog): PackRow[] {
 /**
  * Unions two `(name, sampleId)` tag-link row sets — one from Splice's `tags`, one from the user
  * layer's `user.tags` — into the merged facet list `listTags` returns once the user schema is
- * attached (spec §3.3). Merge key is `normalizeUserName(name)`, never the raw name: a user tag's
+ * attached. Merge key is `normalizeUserName(name)`, never the raw name: a user tag's
  * only guaranteed-unique/comparable column is its `normalized_name` (userDb.ts SCHEMA), and
  * folding Splice's own already-lowercase names through the same normalizer costs nothing — it's
  * idempotent on them — while giving both sides one shared comparison rule instead of two.
@@ -418,11 +418,11 @@ export function listPacks(catalog: Catalog): PackRow[] {
  *
  * `count` is `ids.size`, not two separate counts summed: `ids` is a `Set<sampleId>`, so a sample
  * carrying the same normalized name from BOTH sources still contributes exactly one id, and
- * therefore counts once — the "distinct matching samples from either source" contract spec §3.3
- * and this task's brief both call for, not a sum that would double-count it.
+ * therefore counts once — the "distinct matching samples from either source" contract, not a
+ * sum that would double-count it.
  *
  * Sort is JS, not SQL, for the same reason the merge itself is JS: count DESC then name ASC via
- * `localeCompare` (the Global Constraints' one display-sort comparator) — the same deterministic
+ * `localeCompare` (the app's one display-sort comparator) — the same deterministic
  * tie-break `listTags`'s pre-existing SQL `ORDER BY` already gave the splice-only path, just
  * computed after the union instead of inside a single-source `GROUP BY`.
  */
@@ -452,7 +452,7 @@ function mergeTagFacets(spliceRows: TagLinkRow[], userRows: TagLinkRow[]): TagFa
 }
 
 /**
- * Tag-chip facet (spec §7 baseline; either-source union spec §3.3): every tag name in use across
+ * Tag-chip facet (either-source union): every tag name in use across
  * BOTH Splice's own tags and — once the user schema is attached — the user layer's tags, with a
  * count of the DISTINCT non-missing samples carrying it from EITHER source (same "present, not
  * merely imported" reasoning as `listPacks`'s `sampleCount`), highest-count first, ties broken
@@ -514,16 +514,16 @@ interface PendingPeakIdRow {
 }
 
 /**
- * Ids of every non-missing sample with no `waveforms` row yet — Task 9's `runImport` calls this
- * once per pipeline run to hand off exactly the ids Task 10's background decode queue still
- * needs to process, and Task 10 will re-query it the same way on later runs. Lives here (not
- * inline in importer.ts) because both tasks need it.
+ * Ids of every non-missing sample with no `waveforms` row yet — `runImport` (importer.ts) calls
+ * this once per pipeline run to hand off exactly the ids the background decode queue
+ * (waveforms/queue.ts) still needs to process, and the queue re-queries it the same way on later
+ * runs. Lives here (not inline in importer.ts) because both need it.
  *
  * "No row" is the only pending signal: a sample with ANY `waveforms` row — succeeded
  * (`format != 0`) or a recorded failed decode (`format = 0`, the same distinction
- * `querySamples`'s `peaksFailed` column reads, added for Task 7 review round 1) — already has
+ * `querySamples`'s `peaksFailed` column reads) — already has
  * an answer and is excluded either way. Retrying a failed decode is a deliberate future action
- * (Task 10's), never an accidental side effect of calling this again. `missing` samples are
+ * (the decode queue's), never an accidental side effect of calling this again. `missing` samples are
  * excluded too — there is no file left to decode.
  */
 export function pendingPeakIds(catalog: Catalog): number[] {
@@ -540,7 +540,7 @@ export function pendingPeakIds(catalog: Catalog): number[] {
 }
 
 // `waveforms.format` markers (schema comment, db.ts: "bump to invalidate/recompute"). 1 is the
-// only real format so far; 0 is Task 10's own reserved "decode failed" marker — same row shape
+// only real format so far; 0 is the decode queue's reserved "decode failed" marker — same row shape
 // (the column is NOT NULL either way), just semantically empty. Named here so
 // writePeaks/writePeaksFailed never repeat the bare literals without the explanation living next
 // to them.
@@ -550,7 +550,7 @@ const PEAKS_FORMAT_FAILED = 0;
 // A failed decode still needs a NOT-NULL-satisfying `peaks` blob even though there's no real
 // bucket data — 400 zero bytes (200 zeroed [min, max] pairs) at bucket_count 200, matching the
 // exact fixture shape this file's own `pendingPeakIds`/`hasPeaks` tests already pinned for a
-// format=0 row before this function existed (Task 7 review round 1).
+// format=0 row before this function existed.
 const FAILED_PEAKS_PLACEHOLDER = Buffer.alloc(400);
 const FAILED_BUCKET_COUNT = 200;
 
@@ -576,12 +576,12 @@ const UPSERT_WAVEFORM_SQL = `
 `;
 
 /**
- * Writes a successful decode's peak buckets (Task 10's `computePeaks` output) into the
+ * Writes a successful decode's peak buckets (`computePeaks` output) into the
  * `waveforms` table, keyed by `sample_id`. `bucket_count` is read off `peaks.length / 2` (two
  * bytes — one min, one max — per bucket) rather than hardcoded to 200, so a future non-default
  * `buckets` argument to `computePeaks` is recorded accurately instead of silently mislabeled.
  *
- * `peaks.length` must be even (whole [min, max] pairs) and > 0 — guarded here (review round 1)
+ * `peaks.length` must be even (whole [min, max] pairs) and > 0 — guarded here
  * rather than trusted, since `computePeaks` is the only producer today but this function has no
  * way to enforce that at the type level; an empty or odd-length array would otherwise silently
  * write a nonsensical `bucket_count` (0, or a fractional pair count truncated by `/ 2`).
@@ -603,8 +603,8 @@ export function writePeaks(catalog: Catalog, sampleId: number, peaks: Int8Array)
 
 /**
  * Records a failed decode as a `format = 0` waveforms row — the mechanism that makes "failed"
- * distinguishable from "pending, no row yet" (spec §8's corrupt-file badge; `SampleRow.hasPeaks`/
- * `peaksFailed`, Task 7 review round 1). The placeholder peaks/bucket_count values are never read
+ * distinguishable from "pending, no row yet" (the corrupt-file badge; `SampleRow.hasPeaks`/
+ * `peaksFailed`). The placeholder peaks/bucket_count values are never read
  * as real data: `querySamples`/`pendingPeakIds` both key off `format`, not `peaks` content, for
  * exactly this row.
  */
@@ -626,9 +626,9 @@ interface PeaksRow {
  * Raw peak bytes for the given sample ids, keyed by id — `format = 0` (failed decode) rows
  * excluded, same as "no row yet": both come back simply absent from the result, never a value.
  *
- * Review round 1, Finding 1 (previously this function returned a failed decode's zeroed
+ * Previously this function returned a failed decode's zeroed
  * placeholder unfiltered, on the reasoning that filtering by success was `querySamples`'s
- * `hasPeaks`/`peaksFailed` flags' job, not this one's). That reasoning didn't hold up: those
+ * `hasPeaks`/`peaksFailed` flags' job, not this one's. That reasoning didn't hold up: those
  * flags are a query-time snapshot the renderer's `LibraryStore.peaksCache` doesn't refresh except
  * on an explicit re-query, so a sample whose decode fails strictly AFTER its row was last fetched
  * — the common case for a first-ever import, where every row's `peaksFailed` starts `false`

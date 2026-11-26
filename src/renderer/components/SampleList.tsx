@@ -1,6 +1,6 @@
-// The virtualized sample list (Task 13 brief, Steps 2-3). TanStack Virtual keeps the DOM node
+// The virtualized sample list. TanStack Virtual keeps the DOM node
 // count bounded to roughly the viewport + overscan regardless of `library.rows.length` (up to
-// 4,197 in the real library) — that bound is what makes "never jank" (spec §7) achievable at all.
+// 4,197 in the real library) — that bound is what makes "never jank" achievable at all.
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { observer } from 'mobx-react-lite';
 import {
@@ -63,10 +63,10 @@ const WAVEFORM_TICK_COALESCE_MS = 300;
 // when the visible range actually has an uncached, not-missing, not-failed row, which is false the
 // overwhelming majority of the time this timer fires.
 const WAVEFORM_POLL_MS = 1500;
-// Task 11 fix round 1 (Important 2): a fixed estimate, not a DOM measurement — mirrors ROW_HEIGHT/
+// A fixed estimate, not a DOM measurement — mirrors ROW_HEIGHT/
 // SampleRow.tsx's own FILENAME_TRUNCATE_MAX precedent of a fixed budget over pixel-measurement,
 // and lets the below-the-fold check run BEFORE the popover's first paint (measuring the real
-// rendered popover and correcting afterward would risk a visible post-open jump — spec §7's "never
+// rendered popover and correcting afterward would risk a visible post-open jump — the "never
 // jank" bar). Sized roomier than either popover's typical content (a short input plus a handful of
 // chips/suggestions/collection rows) needs, deliberately: a false "doesn't fit" just scrolls a bit
 // further than strictly necessary, while a false "fits" is the actual bug this constant exists to
@@ -100,7 +100,7 @@ const EmptyState = styled.div`
 `;
 
 export interface SampleListHandle {
-  /** App.tsx's TopBar-Esc-when-empty flow (design spec §5.4, via a callback prop TopBar itself
+  /** App.tsx's TopBar-Esc-when-empty flow (via a callback prop TopBar itself
    * has no other way to reach this container's DOM node through) calls this to hand focus back
    * here — the same node this component's own mount effect and row-click refocus below already
    * target. */
@@ -114,7 +114,7 @@ export const SampleList = observer(
 
     useImperativeHandle(ref, () => ({ focusList: () => scrollRef.current?.focus() }), []);
 
-    // Task 10 (design spec §5.2): the row context menu's open/closed state — which row, the scope
+    // The row context menu's open/closed state — which row, the scope
     // that was active when it opened (so `removefrom`'s dispatch target can't drift if something
     // changed it mid-open), and the cursor point the menu renders at. `null` is closed; SampleList
     // is the sole owner (RowContextMenu is presentational — see that file's own doc comment).
@@ -144,7 +144,7 @@ export const SampleList = observer(
     const virtualItemsRef = useRef(virtualItems);
     virtualItemsRef.current = virtualItems;
 
-    // Step 3: for the virtualizer's visible range, batch-request ids not yet in peaksCache.
+    // For the virtualizer's visible range, batch-request ids not yet in peaksCache.
     // `missing` rows have no file to decode; `peaksFailed` rows already have their answer (a
     // placeholder blob that must never be drawn — SampleRow enforces that again, independently, on
     // the read side). Depends on the first/last VISIBLE INDEX (primitives), not the `virtualItems`
@@ -175,19 +175,20 @@ export const SampleList = observer(
       if (packIds.length > 0) sharedCoverCache().warm(packIds);
     }, [firstIndex, lastIndex, library]);
 
-    // Peaks progressive-fill gotcha (Task 13 brief): `hasPeaks`/`peaksCache` are query-time
+    // Peaks progressive-fill gotcha: `hasPeaks`/`peaksCache` are query-time
     // snapshots that go stale mid-import as the background waveform pass keeps writing rows — a
     // sample decoded AFTER its row was queried never gets a peaks row without something re-asking.
     // Re-asking only on visible-range CHANGE (the effect above) would leave rows the user isn't
     // scrolling past stuck on the placeholder forever. Subscribed here via `api` directly — neither
     // LibraryStore nor ImportStore exposes a "waveforms tick" observable, and ImportStore's own
     // subscription only lives for the duration of ITS `run()` call, which would miss a background
-    // resume pass that started without FirstRun ever running this session (spec §5 "resumable").
+    // resume pass that started without FirstRun ever running this session (the import is
+    // resumable).
     // `library` is a stable reference for the app's lifetime (created once in renderer.tsx), so this
     // subscription is mount-once, cleaned up on unmount.
     //
-    // Ticks alone are not sufficient, discovered via real hand-QA against the full 4,197-sample
-    // library (2026-08-17, not reachable through any mocked-`api` unit test): `runWaveformsInBackground`
+    // Ticks alone are not sufficient, discovered via manual testing against a real 4,197-sample
+    // library (not reachable through any mocked-`api` unit test): `runWaveformsInBackground`
     // for the startup-resume path (main/ipc.ts, fired synchronously at app.whenReady()) races this
     // component's own mount. A relaunch with only a modest number of ids still pending can finish
     // EVERY 'waveforms' tick — decoding local files has no network latency — before the renderer
@@ -235,7 +236,7 @@ export const SampleList = observer(
     // Keyboard nav walks every CURRENTLY FILTERED/SEARCHED row (the full `library.rows`, not just
     // the on-screen virtualized window — clamping arrow-key travel to ~20 on-screen rows would make
     // Down stop working the moment the selection reaches the bottom of the initial viewport), with
-    // `missing` rows excluded (spec §3.1 item 6: "excluded from preview/drag" — PlayerStore itself
+    // `missing` rows excluded (they're excluded from preview/drag — PlayerStore itself
     // has no missing-awareness, so the exclusion has to happen in the `visibleIds` this component
     // hands it).
     const visibleIds = useMemo(
@@ -243,7 +244,7 @@ export const SampleList = observer(
       [library.rows],
     );
 
-    // Selection-follow (design spec §3.1 / Task 12 brief — the binding algorithm). Wraps any
+    // Selection-follow. Wraps any
     // user-layer write that can remove the SELECTED row from the CURRENT scope: `before` is
     // captured from `visibleIds` (this render's PRE-write non-missing id list) BEFORE the write
     // runs; `after` is read fresh from `library.rows` once it resolves — never `visibleIds` again,
@@ -251,14 +252,14 @@ export const SampleList = observer(
     // making that closure stale. The clamp arithmetic itself is `landingIdAfterRemoval`
     // (keymap.ts), not inlined here — this repo has no component-mounting test infra (no
     // `@testing-library/react`; vitest.config.ts only globs `src/**/*.test.ts`), so a closure over
-    // live stores like this one can only be exercised end-to-end (Task 13's milestone), but the
+    // live stores like this one can only be exercised end-to-end (the Playwright suite), but the
     // pure index math underneath it needed, and now has, a real unit test.
     const withSelectionFollow = async (write: () => Promise<void>): Promise<void> => {
       const hadSelection = player.selectedId !== null;
       const before = visibleIds.indexOf(player.selectedId ?? -1);
       await write();
-      // Fix round 2 (Minor, final review): nothing was selected before this write — spec §5.2's
-      // "the heart toggles without changing selection" still applies with none to begin with, but
+      // Nothing was selected before this write — "the heart
+      // toggles without changing selection" still applies with none to begin with, but
       // `landingIdAfterRemoval`'s -1-clamps-to-0 arithmetic (built for "the selected row vanished,
       // land on whatever shifted into its place") would otherwise select row 0 out of nothing.
       // Skip the whole landing/reselect branch below; selection stays null. Covers both call
@@ -276,7 +277,7 @@ export const SampleList = observer(
       }
     };
 
-    // F/heart-click's selection-follow wrap (Task 10 review finding, binding): only under
+    // F/heart-click's selection-follow wrap: only under
     // Favorites scope can toggling favorite remove the row from the CURRENT view, so every other
     // scope keeps the plain fire-and-refresh behavior unchanged — `scope` is passed in rather than
     // read from `library.filters.scope` here, since the two call sites below want different
@@ -298,7 +299,7 @@ export const SampleList = observer(
       void withSelectionFollow(() => userLayer.removeFromCollection(collectionId, row.id));
     };
 
-    // Snap scroll (QoL round 1): after an arrow key moves the selection, a landing row that isn't
+    // Snap scroll: after an arrow key moves the selection, a landing row that isn't
     // fully inside the viewport becomes the TOP row (align 'start' — the Splice paging feel, in
     // both directions), instead of staying off-screen while the audio walks on without you. Runs
     // only on keyboard moves — mouse scrolling and clicks never fight the user. `moveSelection`
@@ -331,7 +332,7 @@ export const SampleList = observer(
         e.preventDefault();
         player.replay();
       } else {
-        // F/T/C/N/Delete (design spec §5.4) — `listKeyAction` (keymap.ts) is the pure table (it
+        // F/T/C/N/Delete — `listKeyAction` (keymap.ts) is the pure table (it
         // already covers "no selection" and the Delete/Backspace scope gate); this block only
         // resolves the target row and dispatches the write.
         const action = listKeyAction(e, {
@@ -342,7 +343,7 @@ export const SampleList = observer(
         const row = library.rows.find((r) => r.id === player.selectedId);
         if (!row) return;
         e.preventDefault();
-        // Menu staleness kill (Task 10 review carry, binding): a keymap action handled while the
+        // Menu staleness kill: a keymap action handled while the
         // context menu is open closes it first — native context menus close on keypress, and this
         // specifically stops the menu's own snapshot Favorite/Unfavorite label (baked in at open
         // time) from going stale under the row it's still showing.
@@ -374,8 +375,8 @@ export const SampleList = observer(
       }
     };
 
-    // Task 10 brief / design spec §5.2: right-click opens the in-app row menu at the cursor.
-    // `SampleRow` (out of this task's file scope) exposes no per-row DOM identifier for an
+    // Right-click opens the in-app row menu at the cursor.
+    // `SampleRow` exposes no per-row DOM identifier for an
     // event-target lookup, so row identity is resolved from the click's Y position instead:
     // `virtualItems` gives every currently-rendered row's fixed `ROW_HEIGHT`-tall band relative to
     // `Inner`'s top, and `scrollRef`'s own bounding rect + `scrollTop` converts the click's
@@ -383,7 +384,7 @@ export const SampleList = observer(
     // `scrollSnap.ts` already uses for this fixed-size list. `menuItemsFor` is checked here (not
     // only inside RowContextMenu) so an empty result never opens state at all — no menu, and the
     // native context menu (nothing currently wires one — main has no `context-menu` handler) is
-    // left alone. Opening the menu never moves selection or playback: the spec is silent on this
+    // left alone. Opening the menu never moves selection or playback: nothing else defines this
     // for the context menu specifically, so the heart's own "click toggles without changing
     // selection" is the least-surprise precedent to follow.
     const handleContextMenu = (e: MouseEvent<HTMLDivElement>): void => {
@@ -404,15 +405,15 @@ export const SampleList = observer(
     const closeContextMenu = (): void => setContextMenu(null);
 
     // The dispatcher RowContextMenu's `onAction` calls into. `favorite`/`removefrom` fire the
-    // underlying `UserLayerStore` write — wrapped in `withSelectionFollow` (Task 12, design spec
-    // §3.1) exactly when that write can remove the row from the CURRENT scope (`favorite`: only
+    // underlying `UserLayerStore` write — wrapped in `withSelectionFollow`
+    // exactly when that write can remove the row from the CURRENT scope (`favorite`: only
     // under Favorites scope; `removefrom`: unconditionally, since it only ever runs under a
     // collection scope to begin with) — otherwise the same plain "fire the write, let refresh()
-    // re-sync" posture the store documents for itself. `nickname`/`tags`/`addto` (Task 11) set the
+    // re-sync" posture the store documents for itself. `nickname`/`tags`/`addto` set the
     // store's popover/nickname-edit open-state FOR THE MENU'S ROW — `row.id` here is "whatever row
-    // the action targeted" (brief's binding decision on the ambiguity), which today is always the
-    // row the context menu opened on; Task 12 additionally reaches these same store actions from
-    // the selected row via keyboard (`handleKeyDown` above).
+    // the action targeted", which today is always the
+    // row the context menu opened on; the keyboard path additionally reaches these same store
+    // actions from the selected row (`handleKeyDown` above).
     const handleRowMenuAction = (id: RowMenuItemId): void => {
       if (!contextMenu) return;
       const { row, scope } = contextMenu;
@@ -435,13 +436,13 @@ export const SampleList = observer(
           userLayer.openTagsPopover(row.id);
           break;
         case 'addto':
-          // Ledger Ruling R2 folds the spec's "Add to collection ▸" submenu into this one popover.
+          // One popover in place of an "Add to collection ▸" submenu.
           userLayer.openCollectionPopover(row.id);
           break;
       }
     };
 
-    // Task 11 (design spec §5.3): resolves the currently-open tags/collection popover's anchor row
+    // Resolves the currently-open tags/collection popover's anchor row
     // and virtual position fresh on every render — no cached index, so a re-query (e.g. after
     // addTag's own refresh()) that shifts row order never anchors against a stale one. `undefined`
     // for either half — row no longer present, or scrolled outside the rendered+overscan range —
@@ -454,7 +455,7 @@ export const SampleList = observer(
     const popoverVirtualItem =
       popoverRowIndex === -1 ? undefined : virtualItems.find((vi) => vi.index === popoverRowIndex);
 
-    // Fix round 1 (Important 2, reviewer finding): scroll the anchor row into view when its popover
+    // Scroll the anchor row into view when its popover
     // would otherwise render past the fold. Nothing else here moves the scroll position on open, so
     // without this a popover for a row near the viewport's bottom edge was invisible the instant it
     // opened — reachable only by then scrolling manually to go find it. Mirrors the keyboard-nav
@@ -483,7 +484,7 @@ export const SampleList = observer(
       }
     }, [openPopover]);
 
-    // Focus return (Task 12, Task 11 review carry): Esc (or click-away) on a popover or the
+    // Focus return: Esc (or click-away) on a popover or the
     // nickname editor unmounts an `autoFocus`-ed input, and neither surface returns focus anywhere
     // on its own close — DOM focus falls back to nothing in particular, stranding every OTHER
     // single-key binding (F/T/C/N/arrows all require focus on THIS container). Refocuses only on
@@ -493,10 +494,9 @@ export const SampleList = observer(
     // false mid-switch — which is what stops this from yanking focus back here out from under a
     // surface that's still `autoFocus`-ing itself open. (In practice a same-render switch can only
     // be reached via the context menu, since every popover/editor input blanket-`stopPropagation`s
-    // its own keydowns before they could ever reach this component's own keyboard dispatch above —
-    // Task 11.)
+    // its own keydowns before they could ever reach this component's own keyboard dispatch above.)
     //
-    // Fix round 1 (reviewer finding): TagsPopover/CollectionPopover's own click-away listener
+    // TagsPopover/CollectionPopover's own click-away listener
     // (document-level, capture-phase `mousedown`) never calls `preventDefault()`, so a click
     // OUTSIDE the popover — e.g. into TopBar's search input — still lets the browser run its
     // default mousedown focus behavior on the clicked element FIRST, before this effect's

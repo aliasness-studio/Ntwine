@@ -4,11 +4,9 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { DragIcon, ImportProgress, NtwineApi, QueryFilters, UpdateState } from './shared/ipcTypes';
 
-// THE typed IPC bridge (Task 11 — grown from the Task 2 spike's bare `startDrag`; Task 6 grows it
-// again, 12 -> 23 methods, design spec §4; the Splice-DB picker fallback, 23 -> 24; self-update,
-// 24 -> 29). Every method but the exceptions below is a plain `ipcMain.handle`/`ipcRenderer.invoke`
-// round-trip on the `ntwine:<method>` channel ipc.ts (or, for `startDrag`, drag.ts; for the update
-// methods, updater.ts's `registerUpdaterIpc`) registers. The exceptions:
+// THE typed IPC bridge. Every method but the exceptions below is a plain
+// `ipcMain.handle`/`ipcRenderer.invoke` round-trip on the `ntwine:<method>` channel ipc.ts (or,
+// for `startDrag`, drag.ts; for the update methods, updater.ts's `registerUpdaterIpc`) registers. The exceptions:
 //  - `onImportProgress` wraps `ipcRenderer.on` for the 'ntwine:import-progress' broadcast
 //    (ipc.ts's `sendProgress` -> `webContents.send`) rather than invoke/handle, since main
 //    pushes multiple events over the lifetime of one import, not a single request/response.
@@ -17,9 +15,9 @@ import type { DragIcon, ImportProgress, NtwineApi, QueryFilters, UpdateState } f
 //  - `sampleUrl`/`coverUrl` are pure template-string helpers with no IPC round-trip at all — the
 //    renderer already knows the URL shape (`sample://s/<id>`, `cover://p/<id>`); asking main
 //    would just be a wasted hop for a string it can build here.
-// `startDrag` used to be a third exception (a fire-and-forget `ipcRenderer.send`) until Task 6
-// promoted it to `invoke` on the SAME `ntwine:drag-start` channel — drag.ts's own doc comment has
-// the full rationale (the invoke's resolution is now the drag-end signal).
+// `startDrag` is NOT an exception: it is an `invoke` on the `ntwine:drag-start` channel, not a
+// fire-and-forget `ipcRenderer.send` — drag.ts's own doc comment has the full rationale (the
+// invoke's resolution is the drag-end signal).
 const api: NtwineApi = {
   getState: () => ipcRenderer.invoke('ntwine:getState'),
 
@@ -52,7 +50,7 @@ const api: NtwineApi = {
 
   coverUrl: (packId: number) => `cover://p/${packId}`,
 
-  // User layer (Task 6, design spec §4) — 11 new invokes, bridge 12 -> 23.
+  // User layer — 11 invokes.
   setFavorite: (sampleId: number, on: boolean) => ipcRenderer.invoke('ntwine:setFavorite', sampleId, on),
 
   setNickname: (sampleId: number, nickname: string | null) =>
@@ -94,7 +92,7 @@ const api: NtwineApi = {
   getAppVersion: () => ipcRenderer.invoke('ntwine:getAppVersion'),
 };
 
-// E2E flag (e2e spec §3.1): main appends `--ntwine-e2e` to webPreferences.additionalArguments
+// E2E flag: main appends `--ntwine-e2e` to webPreferences.additionalArguments
 // only when armed; a sandboxed preload sees it in process.argv. The production `ntwine` bridge
 // is untouched — this is a second, boolean-only exposure.
 if (process.argv.includes('--ntwine-e2e')) {

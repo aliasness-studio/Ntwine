@@ -2,7 +2,7 @@ import { importAndWait, openSettings, readCount } from './harness/actions';
 import { expect, test } from './harness/fixtures';
 import { launchNtwine } from './harness/launch';
 
-// `Launched.close()` is idempotent (Task 2), so the fixture's own teardown closing `ntwine` a
+// `Launched.close()` is idempotent, so the fixture's own teardown closing `ntwine` a
 // second time after this test's explicit `await ntwine.close()` is a no-op — never two live
 // Electron instances against one `userData` at once. The relaunch is asserted inside its own
 // try/finally so a leaked second process (exactly what would hold SQLite WAL handles open on

@@ -46,7 +46,7 @@ function buildFixtureRows(libraryRoot: string): FixtureRow[] {
 }
 
 // Builds a fresh fixture + catalog per test (mirrors importer.test.ts's own convention) and runs
-// buildCatalog, which wires rebuildSearch into its transaction (the Task 7 seam in importer.ts)
+// buildCatalog, which wires rebuildSearch into its transaction (importer.ts)
 // — so `sample_search` is already populated once by the time a test body runs.
 function setUp() {
   const libraryRoot = tmp();
@@ -91,7 +91,7 @@ describe('searchIdsForToken', () => {
 
   // Multi-token AND composition (was pinned here against the old whole-query `searchIds`) is now
   // queries.ts's job — `searchIdsForToken` only ever sees one already-split token, unioned with
-  // nickname/user-tag hits and AND-composed across tokens by `querySamples` itself (Task 4). This
+  // nickname/user-tag hits and AND-composed across tokens by `querySamples` itself. This
   // file's own former 'kic ana' (same row, different FTS columns) / 'kic amb' (different rows)
   // cases are ported verbatim in spirit to queries.test.ts's
   // "FTS-only tokens still AND together under the new JS-Set composition" test — same shape,

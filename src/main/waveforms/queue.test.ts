@@ -42,7 +42,7 @@ function setUp() {
 
 // Tracks how many fake workers are simultaneously "processing" a message — i.e. have received a
 // postMessage but not yet replied — across every fake worker `runPeaksQueue` forks. This is the
-// "fakes' concurrency counter" the brief asks the test to assert against.
+// fakes' concurrency counter the pool-size assertions check against.
 class ConcurrencyTracker {
   current = 0;
   peak = 0;
@@ -154,7 +154,7 @@ describe('runPeaksQueue', () => {
       expect(progressCalls.map(([done]) => done)).toEqual([1, 2, 3, 4, 5]);
       expect(progressCalls.every(([, total]) => total === ids.length)).toBe(true);
 
-      // ok ids: hasPeaks true. The failing id: peaksFailed true, hasPeaks false (Task 7's
+      // ok ids: hasPeaks true. The failing id: peaksFailed true, hasPeaks false (queries.ts's
       // format-based distinction, exercised end-to-end through the real writePeaks/
       // writePeaksFailed + querySamples).
       const rows = querySamples(catalog, {});
@@ -166,7 +166,7 @@ describe('runPeaksQueue', () => {
         peaksFailed: true,
       });
       // The failed row's shape matches the precedent queries.test.ts already pins for a
-      // format=0 row (Task 7 review round 1): a 400-byte zeroed placeholder, bucket_count 200.
+      // format=0 row: a 400-byte zeroed placeholder, bucket_count 200.
       const failedRaw = catalog.db
         .prepare('SELECT bucket_count, format FROM waveforms WHERE sample_id = ?')
         .get(failingId) as { bucket_count: number; format: number };

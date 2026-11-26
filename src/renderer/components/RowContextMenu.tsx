@@ -1,10 +1,10 @@
-// RowContextMenu (Task 10 brief / design spec §5.2): the in-app row context menu — a React menu,
+// RowContextMenu: the in-app row context menu — a React menu,
 // not a native OS `Menu`, so it's stylable and Playwright-drivable via `role="menu"`/
 // `role="menuitem"`. `position: fixed` at the cursor point, no portal: nothing between here and
 // `<body>` (App.tsx's Grid/Rail/Scroller/Inner chain) sets a `transform`/`filter`/`will-change`
 // that would rebase a fixed-position descendant's containing block off the viewport — confirmed
-// by inspection before choosing this over a portal, per the brief's "no portal unless physically
-// impossible" instruction — so a plain fixed div anchors correctly from anywhere in the tree.
+// by inspection before choosing this over a portal (no portal unless one is physically
+// required) — so a plain fixed div anchors correctly from anywhere in the tree.
 //
 // Presentational only, same "no store reads" posture as SampleRow.tsx: `SampleList` owns the
 // open/closed state (which row, scope, point) and the action dispatcher; this component reports
@@ -18,7 +18,7 @@ import styled from 'styled-components';
 import type { SampleRow, Scope } from '../../shared/ipcTypes';
 import { menuItemsFor, type RowMenuItemId } from '../rowMenu';
 
-// Fix round 2 (Promoted minor, final review): viewport-clamp constants for the fixed-position
+// Viewport-clamp constants for the fixed-position
 // menu — a right-click near the window's bottom/right edge previously rendered items off-screen,
 // since `point.x`/`point.y` place the box's TOP-LEFT corner unconditionally. No DOM measurement
 // (same "fixed estimate over pixel-measurement" call `POPOVER_ESTIMATED_HEIGHT` makes in
@@ -76,9 +76,8 @@ export function RowContextMenu({ row, scope, point, onAction, onClose }: RowCont
   const items = menuItemsFor(row, scope);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Esc / click-away (brief: "closes on Esc, click-away, or choosing an action" — LibraryRail's
-  // own stopgap two-button menu explicitly deferred this full treatment to this component when it
-  // landed, see that file's comment). Document-level listeners, not a full-screen backdrop: a
+  // Esc / click-away (closes on Esc, click-away, or choosing an action — LibraryRail's own
+  // two-button collection menu is the simpler stopgap, see that file's comment). Document-level listeners, not a full-screen backdrop: a
   // context menu shouldn't dim the app the way SettingsSheet's modal does, and a click that lands
   // on, say, a different row should both close this menu AND act on that row in one gesture — a
   // backdrop `onClick` intercepting the click would swallow that second half. Capture phase (the
@@ -101,7 +100,7 @@ export function RowContextMenu({ row, scope, point, onAction, onClose }: RowCont
     };
   }, [items.length, onClose]);
 
-  // No menu at all when there are no items — never an empty box (brief; spec §5.2's missing-row
+  // No menu at all when there are no items — never an empty box (the missing-row
   // no-click rule, already enforced once inside `menuItemsFor` itself).
   if (items.length === 0) return null;
 

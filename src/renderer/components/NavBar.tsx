@@ -1,4 +1,4 @@
-// "You are here" bar (QoL round 2, 2026-08-20). Two jobs, both consequences of making rows
+// "You are here" bar. Two jobs, both consequences of making rows
 // link-navigable: once a click on a pack/key/bpm/tag can change what you're looking at, the app
 // owes you (1) a way back, and (2) a visible answer to "why am I seeing these rows?" — otherwise a
 // filter followed three rows ago silently narrows every later view, which reads as a bug.

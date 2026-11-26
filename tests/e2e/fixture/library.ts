@@ -25,7 +25,7 @@ const PACKS = [
 // sample_type oneshot (8) · loop (4)
 // tags: kick ×4, snare ×2, drums ×6, kick∧snare ×1 (AD_Snare_02), kick∨snare ×5 (case/space variants exercise parseTags: trim+lowercase+dedupe)
 // ms is the DB `duration` value formatDuration renders (ms) — unrelated to the generated audio length;
-// `null` is a real SQL NULL (→ '—'; Step 2b widened the builder for it).
+// `null` is a real SQL NULL (→ '—').
 // The NFD filename (the accented e as U+0065 + combining acute U+0301) is on a PRESENT row so statPass proves the on-disk name round-trips
 // on APFS and NTFS; the missing row is plain ASCII — the two claims must never share a row.
 const SAMPLES: Array<{ file: string; pack: 0 | 1 | 2; type: 'oneshot' | 'loop'; bpm: number; key: string | null; chord: 'major' | 'minor' | null; ms: number | null; tags: string; audioMs: number; kind: 'wav' | 'aiff' | 'missing' }> = [
@@ -51,9 +51,9 @@ const PNG_1X1 = Buffer.from(
 
 type Sample = (typeof SAMPLES)[number];
 
-// searchKick's "FTS model" (Task 6): a token is a maximal run of [a-z0-9] (case-folded); a row
+// searchKick's "FTS model": a token is a maximal run of [a-z0-9] (case-folded); a row
 // matches if some token in its filename, its parsed tags, or its pack name starts with "kick" —
-// the `kick*` SQLite FTS5 prefix-query shape this fixture stands in for ahead of that task.
+// the `kick*` SQLite FTS5 prefix-query shape this fixture stands in for.
 function tokenize(s: string): string[] {
   return s
     .toLowerCase()
@@ -99,7 +99,7 @@ export interface FixtureLibrary {
     tagDrums: number;
     kickAndSnare: number;
     kickOrSnare: number;
-    searchKick: number; // rows with a `kick*` token in filename ∪ tags ∪ pack name (FTS model, Task 6)
+    searchKick: number; // rows with a `kick*` token in filename ∪ tags ∪ pack name (FTS model)
   };
   missingFilename: string;
   aiffFilenames: string[];
@@ -182,7 +182,7 @@ export function buildFixtureLibrary(root: string): FixtureLibrary {
       bpm: sample.bpm,
       // Explicit null (never omitted) for the "none" rows: buildFixtureSpliceDb only maps an
       // OMITTED key to the ''/0 sentinel default — an explicit null is what makes it a real SQL
-      // NULL, matching what a real Splice row looks like (fixtureSpliceDb.ts:135-138, Step 2b).
+      // NULL, matching what a real Splice row looks like (see `buildFixtureSpliceDb`).
       audio_key: sample.key,
       chord_type: sample.chord,
       duration: sample.ms,

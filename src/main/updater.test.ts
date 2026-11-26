@@ -23,7 +23,7 @@ class FakeAutoUpdater extends EventEmitter implements AutoUpdaterLike {
   quitAndInstall = vi.fn();
 }
 
-// Squirrel.Mac's wording for an update whose signature does not match the running app (D7).
+// Squirrel.Mac's wording for an update whose signature does not match the running app.
 const SIGNATURE_MISMATCH =
   'Code signature at URL file:///private/var/folders/x/Ntwine.app/ did not pass validation: ' +
   'code failed to satisfy specified code requirement(s)';
@@ -77,7 +77,7 @@ describe('updater helpers', () => {
     expect(classifyUpdateError(new Error('code signature DID NOT PASS VALIDATION'))).toBe(
       'signature',
     );
-    // An unsigned / ad-hoc local `yarn package` build: not a D7 mismatch, stays silent.
+    // An unsigned / ad-hoc local `yarn package` build: not a signature mismatch, stays silent.
     expect(classifyUpdateError(new Error(UNSIGNED_LOCAL_BUILD))).toBe('other');
     expect(classifyUpdateError(new Error('net::ERR_INTERNET_DISCONNECTED'))).toBe('other');
     expect(classifyUpdateError('not an Error')).toBe('other');

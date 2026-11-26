@@ -29,14 +29,14 @@ describe('decodeAudio', () => {
     expect(channels[0].length).toBe(4410);
     expect(Math.max(...channels[0])).toBeGreaterThan(0.4); // 440 Hz sine at 0.5
   });
-  it('decodes the aiff fixture (THE §9.3 GATE)', async () => {
+  it('decodes the aiff fixture (the AIFF preview gate)', async () => {
     const { sampleRate, channels } = await decodeAudio(aiffPath);
     expect(sampleRate).toBe(44100);
     expect(channels[0].length).toBe(4410);
     expect(Math.max(...channels[0])).toBeGreaterThan(0.4);
   });
-  // Deep real-library check, owner machine only. Platform-neutral on purpose (Windows-port
-  // audit finding): the old '/Users/<user>/Splice/...' literal resolves DRIVE-RELATIVELY on
+  // Deep real-library check, only on a machine with a real Splice library. Platform-neutral on
+  // purpose: the old '/Users/<user>/Splice/...' literal resolves DRIVE-RELATIVELY on
   // win32 (to C:\Users\<user>\Splice\...), so the day Splice lands there this gate would have
   // self-armed — and its `execSync("find ... | head ...")` body would then have hard-failed
   // (Windows `find.exe` is a string-search tool). homedir() names the same place on both

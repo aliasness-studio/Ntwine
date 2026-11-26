@@ -1,4 +1,4 @@
-// Settings overlay (Task 13 brief, Step 4 / spec §7 "small gear, bottom of the rail"): current
+// Settings overlay (the small gear at the bottom of the rail): current
 // library root, a re-pick button (persists + re-stats, no re-import), and a re-run-import button.
 // App.tsx owns the open/closed boolean and renders this conditionally; this component owns
 // everything inside the sheet itself.
@@ -159,20 +159,19 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
     };
   }, []);
 
-  // Review round 1, Finding 2 + 3 (controller-elevated) — see FirstRun.tsx's `importing` for the
-  // full rationale; same predicate, same fix, hand-duplicated here until now.
+  // See FirstRun.tsx's `importing` for the full rationale; same predicate, same fix.
   const reimporting = importStore.running;
 
   const handleRepick = async (): Promise<void> => {
     setRepicking(true);
     try {
-      // spec §8 "library root moved": pickLibraryRoot persists the new root and re-stats
+      // Library root moved: pickLibraryRoot persists the new root and re-stats
       // (main.ts's ipc.ts handler) — it never re-imports.
       const newRoot = await api.pickLibraryRoot();
       if (newRoot !== null) {
         setRoot(newRoot);
         await library.init(); // refresh rows/packs against the just-updated `missing` flags.
-        // Final review wave (Important): library.init() alone never refreshed the LIBRARY rail's
+        // library.init() alone never refreshed the LIBRARY rail's
         // favorites/collection counts, which went stale (present but wrong) the moment a re-pick
         // changed what's missing/found. userLayer.init() is fetchRail + loadUserTags — no
         // duplicate row query, since that's library.init()'s job above.
@@ -195,7 +194,7 @@ export const SettingsSheet = observer(function SettingsSheet({ onClose }: Settin
     if (importStore.phase !== 'error') {
       try {
         await library.init(); // refresh rows/packs/tags against whatever the re-import changed.
-        // Final review wave (Important): same rail-staleness gap as handleRepick above — a
+        // Same rail-staleness gap as handleRepick above — a
         // re-import can add/remove favorited or collected samples, which library.init() alone
         // never reflects in the rail's counts.
         await userLayer.init();

@@ -1,7 +1,7 @@
-// First-run import screen (Task 13 brief, Step 4). Shown by App.tsx when `!state.imported`.
+// First-run import screen. Shown by App.tsx when `!state.imported`.
 // Flips to the library ONLY when `ImportStore.run()`'s returned promise resolves with a
-// NON-error terminal phase — i.e. after catalog+stat+covers (spec §3.1 item 6: "missing flags
-// are accurate" at that point); the waveform phase keeps running in the background afterward.
+// NON-error terminal phase — i.e. after catalog+stat+covers (missing flags
+// are accurate at that point); the waveform phase keeps running in the background afterward.
 // `ImportStore.run()` itself never rejects (its own contract — a failure is caught and surfaced
 // as `phase: 'error'` instead), so the error branch below is reached by checking `phase` after
 // the await, not by a `catch`.
@@ -127,14 +127,14 @@ export interface FirstRunProps {
 export const FirstRun = observer(function FirstRun({ state, onImported }: FirstRunProps) {
   const { importStore } = useStores();
 
-  // The Splice-DB picker fallback (Windows-port audit blocker): detection's win32 glob is a
+  // The Splice-DB picker fallback: detection's win32 glob is a
   // best-guess, and without this button a missed guess left the app with no way in. Local state
   // (seeded from the boot-time getState) because a successful pick changes the answer without a
   // relaunch — main persists meta.splice_db_path and getState would agree on the next boot.
   const [dbFound, setDbFound] = useState(state.spliceDbFound);
   const [pickError, setPickError] = useState<string | null>(null);
 
-  // First-run library-root picker (Option A, 2026-08-20). `state.libraryRoot` is now the
+  // First-run library-root picker. `state.libraryRoot` is now the
   // EFFECTIVE root main would import with — Splice's own reported splice_folder when readable,
   // else the platform's stock location (ipc.ts's currentLibraryRoot) — so this row shows a real
   // path from the first paint instead of a hardcoded "~/Splice (default)" that was wrong on
@@ -162,7 +162,7 @@ export const FirstRun = observer(function FirstRun({ state, onImported }: FirstR
       .catch((err: unknown) => setPickError(ipcErrorMessage(err)));
   };
 
-  // Review round 1, Finding 2 + 3 (controller-elevated): this used to hand-derive "is an import
+  // This used to hand-derive "is an import
   // running" from `phase` (duplicated verbatim in SettingsSheet.tsx) — racy, since `phase` only
   // updates once the first `onImportProgress` event round-trips from main, leaving a window
   // where a fast double-click saw `phase === null` in both call sites and neither guard engaged.

@@ -1,0 +1,41 @@
+name: Bug report
+description: Something in Ntwine is broken or behaves unexpectedly
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Ntwine version
+      description: Shown in Settings, or in the name of the file you downloaded.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: macOS 26.1 / Windows 11 24H2
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: library
+    attributes:
+      label: About your Splice library
+      description: >-
+        Roughly how many samples, where the folder lives, and whether the Splice app is still
+        installed. Please do not attach your `sounds.db`: it may contain account details.

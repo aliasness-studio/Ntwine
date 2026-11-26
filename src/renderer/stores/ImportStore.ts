@@ -1,5 +1,5 @@
-// ImportStore (Task 12): drives the one-shot import pipeline (`api.runImport`) and mirrors its
-// progress as observables — the phase/done/total the UI (Task 13's FirstRun screen) reads live,
+// ImportStore: drives the one-shot import pipeline (`api.runImport`) and mirrors its
+// progress as observables — the phase/done/total the UI (the FirstRun screen) reads live,
 // not a promise it has to poll.
 import { makeAutoObservable } from 'mobx';
 import './configure';
@@ -11,8 +11,7 @@ export class ImportStore {
   total = 0;
   message: string | undefined = undefined;
 
-  // The single source of truth for "is an import in progress" (Review round 1, Finding 2 + 3 —
-  // controller-elevated). Previously FirstRun/SettingsSheet each hand-derived this from `phase`
+  // The single source of truth for "is an import in progress". Previously FirstRun/SettingsSheet each hand-derived this from `phase`
   // (`phase !== null && phase !== 'done' && phase !== 'error'`), duplicated verbatim in both
   // files AND racy: `phase` only updates once the first `onImportProgress` event round-trips
   // from main, so a fast double-click landing before that first event ever arrives saw `phase`
@@ -34,7 +33,7 @@ export class ImportStore {
   // `inFlightRun` already null, and falls back to resolving immediately: there is no real promise
   // left to return at that point, and nothing more for THAT call to legitimately wait for.
   //
-  // Not `private` — same `makeAutoObservable`-overrides limitation as `api` below (Task 12's own
+  // Not `private` — same `makeAutoObservable`-overrides limitation as `api` below (see the
   // note on that field, empirically confirmed again here): a `private`-marked manual field isn't
   // visible to `keyof this` in the overrides map's generic position.
   inFlightRun: Promise<void> | null = null;
@@ -76,7 +75,7 @@ export class ImportStore {
    * doesn't await it, the same failure class ipc.ts's `runWaveformsInBackground` goes out of its
    * way to avoid on the main-process side of this same pipeline).
    *
-   * Re-entrant (Review round 1, Finding 3): `running` flips true synchronously here, before any
+   * Re-entrant: `running` flips true synchronously here, before any
    * `await` — deliberately not derived from `phase`, which only updates asynchronously once main
    * round-trips the first progress event, the exact gap a fast double-click fell through. A
    * second call while `running` is already true returns the SAME promise the first call is still
@@ -101,14 +100,14 @@ export class ImportStore {
       // future/alternate runImport rejected WITHOUT a prior terminal progress event, the
       // subscription still must not leak.
       //
-      // `running = false` HERE too (Review round 2 regression, from round 1's re-entrancy fix):
+      // `running = false` HERE too (a regression the re-entrancy fix once introduced):
       // `onProgress`'s terminal-phase branch is the ONLY other place `running` resets, and it
       // never runs when runImport rejects without ever emitting a progress event — so `running`
       // stayed `true` forever, and `run()`'s own guard then silently no-op'd every future call,
       // bricking the import flow until an app restart. Deliberately in `catch`, not `finally`: a
       // SUCCESSFUL settle must leave `running` true through the background waveform phase —
       // `finally` runs on that path too, and resetting there would reopen the double-click race
-      // round 1 fixed, just relocated to right after `runImport()` resolves.
+      // the re-entrancy guard fixed, just relocated to right after `runImport()` resolves.
       this.running = false;
       this.endSubscription();
     } finally {

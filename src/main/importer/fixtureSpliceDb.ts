@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 
-// DDL copied verbatim from the REAL Splice sounds.db schema (spec §2.2, read firsthand off the
-// production file) — every column, not just the ones readSplice selects. This is what makes
+// DDL copied verbatim from the REAL Splice sounds.db schema (read firsthand off a real Splice
+// install) — every column, not just the ones readSplice selects. This is what makes
 // readSplice's SELECTs against a fixture behave exactly as they will against the real file:
 // extra columns this codebase never reads (samples: attr_hash, dir, sas_id, sample-level genre,
 // popularity, purchased_at, last_modified_at, waveform_url; packs: id, description, permalink)
@@ -43,8 +43,8 @@ export interface FixtureSampleRow {
   attr_hash?: string | null;
   dir?: string | null;
   // `string | null`, not bare `string`: the real sounds.db stores genuine SQL NULL here for the
-  // large majority of "unknown" rows (Task 13 hand-QA, 2026-08-17 — see transform.ts's
-  // `toChordType` comment), not the empty string every OTHER fixture row in this codebase had
+  // large majority of "unknown" rows (verified against a real Splice library — see
+  // transform.ts's `toChordType` comment), not the empty string every OTHER fixture row in this codebase had
   // assumed until that bug surfaced. Omitting the field still defaults to `''` below (unchanged
   // behavior for every existing fixture row); passing `null` explicitly inserts a real NULL cell.
   audio_key?: string | null;
@@ -64,8 +64,8 @@ export interface FixtureSampleRow {
   provider_name?: string | null;
 }
 
-// A flat, heterogeneous list rather than `{ packs, samples }`: callers (this task's own test,
-// and every importer test after it) build one ordered sequence of "insert this row" instructions,
+// A flat, heterogeneous list rather than `{ packs, samples }`: callers (spliceDb.test.ts and
+// the importer tests) build one ordered sequence of "insert this row" instructions,
 // which is what lets a single sample and its pack read side by side wherever they're declared.
 export type FixtureRow = FixturePackRow | FixtureSampleRow;
 
@@ -73,10 +73,10 @@ type FixturePackParams = Required<Omit<FixturePackRow, 'table'>>;
 type FixtureSampleParams = Required<Omit<FixtureSampleRow, 'table'>>;
 
 /**
- * Builds a fixture sounds.db at `dbPath` from `rows`, on the REAL Splice schema (spec §2.2) —
+ * Builds a fixture sounds.db at `dbPath` from `rows`, on the REAL Splice schema —
  * mirrors production closely enough that `readSplice`'s SELECTs exercise exactly the shape
  * they will against a real file. Columns a row's caller doesn't set fall back to the "none"
- * sentinel spec §2.2 documents for that column where one exists (bpm 0, audio_key/chord_type/
+ * sentinel the real file uses for that column where one exists (bpm 0, audio_key/chord_type/
  * tags '') or plain NULL otherwise — never `undefined` (better-sqlite3 rejects that as a bind
  * value). `duration` follows the same explicit-null rule as `audio_key`/`chord_type`: an omitted
  * field falls back to the `0` sentinel, an explicit `null` inserts a real SQL NULL.
@@ -85,7 +85,7 @@ type FixtureSampleParams = Required<Omit<FixtureSampleRow, 'table'>>;
  * this repo's installed versions) that a fresh connection defaults `foreign_keys` ON, unlike
  * the historical SQLite default of OFF. Left ON, the `FOREIGN KEY (pack_uuid)` clause above
  * would reject a sample row whose `pack_uuid` matches no `packs` row — exactly the "pack_uuid
- * unknown" shape a later importer task's fixtures need to construct on purpose. Explicit so
+ * unknown" shape the importer tests' fixtures need to construct on purpose. Explicit so
  * this doesn't quietly depend on whichever default a given platform's SQLite build ships with.
  */
 export function buildFixtureSpliceDb(dbPath: string, rows: FixtureRow[]): void {

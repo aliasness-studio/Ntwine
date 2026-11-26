@@ -24,8 +24,8 @@ function countSpan(option: Locator): Locator {
 }
 
 /**
- * Synthetic drag-in (design spec §7's e2e note; Task 13 ledger: "Task 15 sequences the synthetic
- * drop synchronously before the invoke's microtask clears the slot"). `SampleRow.handleDragStart`
+ * Synthetic drag-in: the synthetic drop is sequenced synchronously before the invoke's microtask
+ * clears the slot. `SampleRow.handleDragStart`
  * arms `dragSource.ts`'s module-level slot SYNCHRONOUSLY, then awaits `api.startDrag(...)` — which
  * the e2e main-process arm (`drag.ts`'s `e2eEmit` branch) resolves immediately rather than
  * blocking on a real OS drag session, clearing the slot in a `finally` once that resolves. Two
@@ -81,7 +81,7 @@ test('create/duplicate/rename/delete round-trip through the rail and the row con
   await expect(page.getByLabel('New collection name')).toHaveCount(0);
 
   // --- C popover on the selected row -> plain Enter adds to the only (so highlighted-by-default)
-  // collection: design spec §5.3 — absent an exact match, Enter targets the first prefix-filtered
+  // collection: absent an exact match, Enter targets the first prefix-filtered
   // suggestion, and "Crate" is both with nothing typed. CollectionPopover's `addExisting` clears
   // the input but does NOT close the popover on success, so Escape closes it explicitly after. ---
   const rowA = rowByFilename(page, 'AD_Kick_01.wav');
@@ -112,7 +112,7 @@ test('create/duplicate/rename/delete round-trip through the rail and the row con
     page.getByText(emptyStateText({ kind: 'collection', collectionId: '' }), { exact: true }),
   ).toBeVisible();
 
-  // --- row context menu's "Add to collection…" reaches the SAME popover (Ledger Ruling R2: no
+  // --- row context menu's "Add to collection…" reaches the SAME popover (no
   // "▸" submenu — rowMenu.ts's `menuItemsFor` drops the glyph deliberately) and adds it back,
   // viewed from All Samples since the row just left Crate's own scoped view ---
   await libraryOption(page, 'All Samples').click();
@@ -131,8 +131,8 @@ test('create/duplicate/rename/delete round-trip through the rail and the row con
   await expect(page.getByLabel('New collection name')).toHaveCount(0);
   await expect(countSpan(libraryOption(page, 'Digs'))).toHaveText('0');
 
-  // --- rename via collection right-click: collision error pinned. CARRIED FIX (Task 8 deferred
-  // minor, applied in this task): the rename branch must expose the SAME role="option"
+  // --- rename via collection right-click: collision error pinned. The rename
+  // branch must expose the SAME role="option"
   // aria-selected="false" shape every other Library option has — before the fix it was a
   // role-less div, so this scoped getByRole('option') lookup only resolves with the fix applied. ---
   await libraryOption(page, 'Digs').click({ button: 'right' });

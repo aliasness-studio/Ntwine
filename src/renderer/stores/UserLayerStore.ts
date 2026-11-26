@@ -1,16 +1,15 @@
-// UserLayerStore (Task 7): the write side of the user layer — favorites, nicknames, user tags,
-// and collections (Task 6's 11-method bridge addition) — plus the two pieces of state the LIBRARY
-// rail (Task 8) reads: `favoritesCount`/`collections`. Every mutation here follows the same
+// UserLayerStore: the write side of the user layer — favorites, nicknames, user tags,
+// and collections (the 11 user-layer bridge methods) — plus the two pieces of state the LIBRARY
+// rail reads: `favoritesCount`/`collections`. Every mutation here follows the same
 // "fire the write, then refresh" posture as LibraryStore: this store never predicts server-side
 // state locally (e.g. it doesn't increment `favoritesCount` itself) — `refresh()` re-fetches the
 // rail from `listLibraryRail()` and re-runs the library's current query so `rows` picks up
 // whatever the write actually changed (a nickname, a tag, a favorite flag, collection
 // membership). `createCollection`/`renameCollection` are the one exception: they catch the
-// invoke rejection (Task 6: a name collision throws `UserNameError` on the main side; Electron
+// invoke rejection (a name collision throws `UserNameError` on the main side; Electron
 // decorates the rejection that crosses `ipcMain.handle` with its own wrapper text, which
-// `ipcErrorMessage` — `../ipcError.ts`, Task 15 fix round 1 — strips back to the clean domain
-// message) and hand back `{ error }` for the popover/rail editor to render inline (design spec
-// §2.3/§5.1/§5.3) — every other action here lets a rejection surface to the console, same posture
+// `ipcErrorMessage` — `../ipcError.ts` — strips back to the clean domain
+// message) and hand back `{ error }` for the popover/rail editor to render inline — every other action here lets a rejection surface to the console, same posture
 // LibraryStore/ImportStore already take on their own IPC calls.
 import { makeAutoObservable, runInAction } from 'mobx';
 import './configure';
@@ -21,12 +20,12 @@ import type { LibraryStore } from './LibraryStore';
 export class UserLayerStore {
   favoritesCount = 0;
   collections: { id: string; name: string; count: number }[] = [];
-  // Autocomplete source for the tag editor (spec §5.3) — loaded on `init()` and again whenever a
-  // tag popover opens (that second call site belongs to the popover's own task; this store only
+  // Autocomplete source for the tag editor — loaded on `init()` and again whenever a
+  // tag popover opens (that second call site is TagsPopover's own; this store only
   // exposes `loadUserTags()` for it to call).
   userTagNames: string[] = [];
 
-  // Task 11 (design spec §5.3): open-state for the tags/collection popovers and the inline
+  // Open-state for the tags/collection popovers and the inline
   // nickname editor — SampleList reads these to decide what (if anything) to render and where to
   // anchor it; SampleRow reads `nicknameEditId === row.id` (pre-resolved by SampleList, same
   // shape as its existing `selected` prop) to swap its filename cell for an input. `null` is
@@ -73,7 +72,7 @@ export class UserLayerStore {
   }
 
   /**
-   * Task 13 / spec §7: the drag-in write path for dropping a row onto the Favorites rail target.
+   * The drag-in write path for dropping a row onto the Favorites rail target.
    * Unlike `toggleFavorite` above, a drop only ever has the dragged sample's id (`DragSource`
    * carries no `SampleRow`, so there's no current `favorite` flag to negate) — this always sets
    * `on` explicitly, mirroring `api.setFavorite`'s own name/shape 1:1: the same "store method
@@ -108,7 +107,7 @@ export class UserLayerStore {
   // reported as `{ error }` — indistinguishable from a collision, it would invite a caller to
   // retry the same name and hit a REAL collision on top of the write that already succeeded.
   // `refresh()` runs outside the `try`, same posture as every other action's post-write refresh:
-  // a failure there surfaces uncaught. (Fix round 1 — review finding; regression test:
+  // a failure there surfaces uncaught. (Regression test:
   // "a refresh failure AFTER a successful create propagates as a rejection, not { error }".)
   async createCollection(name: string): Promise<{ id: string } | { error: string }> {
     let result: { id: string };
@@ -157,15 +156,15 @@ export class UserLayerStore {
     await this.refresh();
   }
 
-  // Task 11 (design spec §5.3): open-state transitions for the tags/collection popovers and the
+  // Open-state transitions for the tags/collection popovers and the
   // inline nickname editor. Pure synchronous UI state — no `api` call, unlike every write action
   // above — so these five are plain fields-only actions. Opening either popover kind or starting
   // a nickname edit clears the OTHER surface's open-state, so at most one editing affordance is
   // ever live at once: without that, a popover left open on one row while a context-menu action
   // starts a nickname edit on another (or the same) row would show two uncoordinated edit
-  // surfaces at once, and Esc — which "unwinds one layer" per spec §5.4 — would only ever reach
+  // surfaces at once, and Esc — which "unwinds one layer" — would only ever reach
   // whichever one's own listener happens to catch it first. `TagsPopover`'s own `loadUserTags()`
-  // call on mount is what spec §5.3's "loaded via loadUserTags() on popover open" describes (see
+  // call on mount is what loads them on popover open (see
   // `userTagNames`'s own field comment above) — deliberately not reproduced here, so this stays a
   // plain, synchronously-testable state transition like the other four.
   openTagsPopover(sampleId: number): void {

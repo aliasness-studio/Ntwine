@@ -85,7 +85,7 @@ const config: ForgeConfig = {
   // onlyModules list rebuilds no modules, so no VS is required to package on Windows at all.
   rebuildConfig: { onlyModules: [] },
   hooks: {
-    // Spec C7: Electron's template Info.plist ships boilerplate microphone and camera usage
+    // Electron's template Info.plist ships boilerplate microphone and camera usage
     // descriptions; Ntwine uses neither device. This hook runs on the copied bundle before the
     // packager reads Info.plist from disk and rewrites it, so the removal survives into the app.
     packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform) => {

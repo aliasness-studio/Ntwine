@@ -16,7 +16,7 @@ export function resolveSpliceDbCandidates(
   appDataDir: string,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
-  // appDataDir = app.getPath('appData') — cross-platform per spec §5.1.
+  // appDataDir = app.getPath('appData') — cross-platform.
   // Glob PATTERNS are POSIX-only: a Windows path.join would inject backslashes, which
   // glob treats as ESCAPES. So the pattern stays literal and the root goes in cwd.
   //
@@ -29,7 +29,7 @@ export function resolveSpliceDbCandidates(
   const roots: Record<string, { root: string; pattern: string }> = {
     darwin: {
       root: appDataDir,
-      pattern: 'com.splice.Splice/users/default/*/sounds.db', // verified on disk (spec §2.2)
+      pattern: 'com.splice.Splice/users/default/*/sounds.db', // verified against a real Splice install
     },
     win32: {
       root: join(appDataDir, '..', 'Local'),
@@ -68,7 +68,7 @@ export function readSpliceFolderSetting(spliceDbPath: string): string | null {
   if (typeof parsed !== 'object' || parsed === null) return null;
   const folder = (parsed as { splice_folder?: unknown }).splice_folder;
   if (typeof folder !== 'string' || folder.trim() === '') return null;
-  // A DIRECTORY specifically, not merely something that exists (review, PR #13): a library root
+  // A DIRECTORY specifically, not merely something that exists: a library root
   // that happens to be a file would be adopted here and only fail much later, at import, where
   // every single sample reads as "outside library root" — a baffling error a mile from its cause.
   // Falling through to the platform default instead keeps the failure local and recoverable.

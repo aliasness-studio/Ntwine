@@ -1,5 +1,5 @@
 /**
- * Move-to-Applications offer (release pipeline D6). An app launched from ~/Downloads is App
+ * Move-to-Applications offer. An app launched from ~/Downloads is App
  * Translocated by macOS (run from a randomized read-only mount), and Squirrel.Mac cannot replace
  * a translocated bundle — so the app offers, once, to move itself to /Applications.
  * Pure on purpose (the e2e.ts pattern): no runtime Electron import, so it runs under Vitest;

@@ -65,28 +65,26 @@ export function resolveDragIcon(icon: DragIcon | null | undefined, fallback: Nat
 
 /**
  * Wires `ntwine:drag-start` (renderer `startDrag(sampleId, icon)`, preload.ts) to
- * `webContents.startDrag`. `resolvePath` is the injection seam: Task 2's spike closed over one
- * hardcoded file; Task 11 re-points it at `resolveSampleAbsPath` (protocol.ts) closed over the
- * live catalog + current library root — the SAME resolution core (row must exist, `missing = 0`,
+ * `webContents.startDrag`. `resolvePath` is the injection seam: main.ts points it at
+ * `resolveSampleAbsPath` (protocol.ts) closed over the live catalog + current library root — the SAME resolution core (row must exist, `missing = 0`,
  * containment) the `sample://` protocol and `decodePreviewPcm` use, not a fourth independently-
  * maintained copy of that question. A null result (unknown id, missing-flagged row, or a
- * would-escape-the-root row) is a silent no-op — no drag starts, no error surfaces (spec §8:
- * "Drag of missing file -> Drag refused, row flashes its badge"; the flash itself is a renderer
+ * would-escape-the-root row) is a silent no-op — no drag starts, no error surfaces (a
+ * missing file's drag is refused and its row flashes its badge; the flash itself is a renderer
  * concern, not this function's).
  *
- * `ipcMain.handle`, not `.on` (Task 6, design spec §4: "startDrag is promoted from
- * `ipcRenderer.send` to `invoke`"): `event.sender.startDrag` blocks the main process until the OS
- * drag session ends, so this handler's own resolution — the async function returning — already
- * IS the drag-end signal the drag-into-collection slot (spec §7) needs, with no separate push
- * event required.
+ * `ipcMain.handle`, not `.on` (startDrag is an `invoke`, not an `ipcRenderer.send`):
+ * `event.sender.startDrag` blocks the main process until the OS drag session ends, so this
+ * handler's own resolution — the async function returning — already IS the drag-end signal the
+ * drag-into-collection slot needs, with no separate push event required.
  *
  * `icon` (2026-08-31) is the renderer's drag card. It is resolved only AFTER the path resolves,
  * so a refused drag never spends time base64-decoding a card nothing will use.
  *
- * `e2eEmit` (Task 1, e2e spec §3.1): when armed, observes the exact startDrag decision instead of
+ * `e2eEmit`: when armed, observes the exact startDrag decision instead of
  * calling `webContents.startDrag` and returns immediately — an OS drag session blocks the main
  * process until mouse-up, which no headless run can deliver, so under e2e the invoke's
- * resolution carries no drag-end meaning (spec §7's E2E note). The payload's `icon` field is the
+ * resolution carries no drag-end meaning. The payload's `icon` field is the
  * only way a headless spec can observe WHICH icon a drag would have carried: no native drag runs,
  * so the image itself never reaches an OS the test could inspect.
  */
@@ -101,7 +99,7 @@ export function registerDragHandler(
     // filesystem itself, so a file deleted since the last statPass (importer.ts) can still
     // resolve here. decodePreviewPcm re-stats before touching the file (ipc.ts); startDrag has no
     // re-stat of its own, so this existsSync is it. A vanished file is a silent no-op, same as
-    // any other resolvePath null (spec §8: "Drag of missing file -> Drag refused").
+    // any other resolvePath null (a missing file's drag is refused).
     const file = resolved && existsSync(resolved) ? resolved : null;
     if (e2eEmit) {
       const dragIcon = file ? resolveDragIcon(icon, fallbackIcon) : fallbackIcon;

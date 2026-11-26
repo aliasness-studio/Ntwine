@@ -34,7 +34,7 @@ function makeFakeApi(
     startDrag: vi.fn(async () => {}),
     sampleUrl: vi.fn((id: number) => `sample://s/${id}`),
     coverUrl: vi.fn((id: number) => `cover://p/${id}`),
-    // Task 6 (design spec §4): 11 new bridge methods, inert here — ImportStore never calls any
+    // User layer: 11 bridge methods, inert here — ImportStore never calls any
     // of these (only runImport/onImportProgress, both already overridable above).
     setFavorite: vi.fn(async () => {}),
     setNickname: vi.fn(async () => {}),
@@ -47,7 +47,7 @@ function makeFakeApi(
     deleteCollection: vi.fn(async () => {}),
     addToCollection: vi.fn(async () => {}),
     removeFromCollection: vi.fn(async () => {}),
-    // Self-update (release pipeline PR 2): 5 bridge methods, inert here.
+    // Self-update: 5 bridge methods, inert here.
     getUpdateState: vi.fn(async () => ({ kind: 'idle' as const })),
     onUpdateState: vi.fn(() => () => {}),
     installUpdate: vi.fn(async () => {}),
@@ -183,12 +183,12 @@ describe('ImportStore', () => {
     expect(store.phase).toBeNull();
     expect(channel.unsubscribe).toHaveBeenCalledTimes(1);
 
-    // Review round 2 regression (from round 1's re-entrancy fix): `onProgress`'s terminal-phase
+    // Regression guard for the re-entrancy fix: `onProgress`'s terminal-phase
     // branch is the ONLY other place `running` resets to false — and it never runs here, since
     // runImport rejected without ever emitting a progress event at all. Before this was fixed,
     // `running` stayed `true` forever, and `run()`'s own re-entrancy guard then silently no-op'd
     // every future call (`Promise.resolve()`, `runImport` never re-invoked) — bricking the import
-    // flow until an app restart, strictly worse than the pre-round-1 predicate this replaced
+    // flow until an app restart, strictly worse than the phase-derived predicate this replaced
     // (which correctly read "not importing" in this exact case).
     expect(store.running).toBe(false);
 
@@ -196,14 +196,14 @@ describe('ImportStore', () => {
     expect(runImport).toHaveBeenCalledTimes(2);
   });
 
-  // Review round 1, Finding 3 (controller-elevated, binding): a fast double-click before the
+  // A fast double-click before the
   // first onImportProgress event round-trips from main used to invoke runImport twice
   // concurrently — `phase` is still null at that point, so a phase-derived "is running" check
   // (the FirstRun/SettingsSheet predicate this replaces) hasn't engaged yet. `running` is a
   // dedicated flag precisely so it doesn't have that gap: it flips true synchronously inside
   // `run()`, before ANY await — including before `onImportProgress` is even called — so a SECOND
   // synchronous call sees it true immediately, with no window where neither call has set it yet.
-  describe('run() re-entrancy (Review round 1, Finding 3)', () => {
+  describe('run() re-entrancy', () => {
     it('two synchronous back-to-back calls: api.runImport invoked exactly once, exactly one subscription, running is true immediately', async () => {
       const channel = makeProgressChannel();
       const runImport = vi.fn(async () => {

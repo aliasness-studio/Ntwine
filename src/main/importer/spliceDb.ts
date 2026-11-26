@@ -2,17 +2,16 @@ import Database from 'better-sqlite3';
 import { mkdirSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-// Shape read off the real `samples` table (spec §2.2) — only the columns the importer needs,
+// Shape read off the real `samples` table — only the columns the importer needs,
 // not every column the table has (fixtureSpliceDb.ts's SCHEMA carries the rest for fidelity).
-// `audio_key`/`chord_type` are `string | null`, not bare `string` — confirmed against the REAL
-// sounds.db (Task 13 hand-QA, 2026-08-17): `SELECT typeof(chord_type), COUNT(*) FROM samples
+// `audio_key`/`chord_type` are `string | null`, not bare `string` — confirmed against a REAL
+// sounds.db: `SELECT typeof(chord_type), COUNT(*) FROM samples
 // GROUP BY 1` shows genuine SQL NULL (not '') for 3,737 of 4,197 rows on chord_type, and 2,977
-// on audio_key. Spec §2.2's "'' x3737" characterization described the same rows loosely; the
-// wire value that actually comes back from better-sqlite3 for a NULL cell is JS `null`, not `''`
+// on audio_key. The wire value that actually comes back from better-sqlite3 for a NULL cell is JS `null`, not `''`
 // — a `string`-typed field would silently lie about a shape the real driver really returns.
 export interface SpliceSample {
-  // NULL until Splice finishes downloading the file (proven against a live mid-sync Windows DB,
-  // 2026-08-19: 46 of 4,197 rows) — a bare `string` here would lie about a shape the driver
+  // NULL until Splice finishes downloading the file (proven against a live mid-sync Windows DB:
+  // 46 of 4,197 rows) — a bare `string` here would lie about a shape the driver
   // really returns, exactly like audio_key/chord_type below. buildCatalog skips NULL rows; a
   // later re-import (idempotent) picks them up once downloaded.
   local_path: string | null;
@@ -32,7 +31,7 @@ export interface SpliceSample {
  * (normalizeSample, toRelPath) works on a real string path by type, not by hope. */
 export type DownloadedSpliceSample = SpliceSample & { local_path: string };
 
-// Shape read off the real `packs` table (spec §2.2) — same "named columns only" reasoning.
+// Shape read off the real `packs` table — same "named columns only" reasoning.
 export interface SplicePack {
   uuid: string;
   name: string;
@@ -45,7 +44,7 @@ export interface SplicePack {
  * Snapshots `src` (a Splice sounds.db, or a previously-taken snapshot of one) into `destDir`,
  * preserving its filename, and returns the destination path. NOT a file copy: Splice runs
  * SQLite in WAL mode, and while the Splice app is open a large slice of recent writes lives
- * only in the `-wal` sidecar (measured live 2026-08-19: a 4.7 MB WAL next to a 6.4 MB main
+ * only in the `-wal` sidecar (measured on a live install: a 4.7 MB WAL next to a 6.4 MB main
  * file — a `copyFileSync` snapshot was missing 46 rows' local_path updates and broke the
  * import). `VACUUM INTO` runs through SQLite itself on a read-only connection, so the output
  * is a single consistent database with the WAL fully applied, safe to take while Splice is
@@ -74,8 +73,8 @@ const SAMPLES_PROJECTION = `SELECT local_path, file_hash, filename, pack_uuid, s
 const PACKS_PROJECTION = `SELECT uuid, name, genre, provider_name, cover_url FROM packs ORDER BY id`;
 
 /** Sanity-check a hand-picked file before persisting it as the Splice DB (the picker fallback
- * for when detection's glob misses — Windows-port audit blocker). Compiles `readSplice`'s own
- * projections with `LIMIT 0` (Copilot review, PR #11): checking table NAMES alone would accept
+ * for when detection's glob misses). Compiles `readSplice`'s own
+ * projections with `LIMIT 0`: checking table NAMES alone would accept
  * a right-named/wrong-shaped database, persist it, and only fail at import — the exact
  * late-failure this validation exists to prevent. A missing table OR column throws at prepare,
  * so success here means `readSplice` can actually run. Returns null when usable, or a

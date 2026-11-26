@@ -17,7 +17,7 @@ function makeFakePlayPort() {
 
 describe('PlayerStore', () => {
   describe('select', () => {
-    it('defaults to autoplay — a bare select(id) plays (spec §3.1: "click a row -> it plays immediately")', () => {
+    it('defaults to autoplay — a bare select(id) plays ("click a row -> it plays immediately")', () => {
       const port = makeFakePlayPort();
       const store = new PlayerStore(port);
 

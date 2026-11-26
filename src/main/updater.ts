@@ -34,7 +34,7 @@ export function shouldRunUpdater(a: {
   );
 }
 
-/** Squirrel.Mac rejects an update whose code signature does not match the running app's (D7):
+/** Squirrel.Mac rejects an update whose code signature does not match the running app's:
  * "Code signature at URL … did not pass validation". Retrying cannot fix that, so it is the one
  * error the user is told about. Keyed on "did not pass validation", not "code signature": an
  * unsigned/ad-hoc local `yarn package` build fails with "Could not get code signature for running
