@@ -8,6 +8,7 @@ import {
   classifyUpdateError,
   createUpdater,
   feedArchFor,
+  fixedStateUpdater,
   feedUrlFor,
   registerUpdaterIpc,
   shouldRunUpdater,
@@ -445,6 +446,15 @@ describe('registerUpdaterIpc', () => {
     const { invoke } = register(null);
     expect(await invoke('ntwine:getUpdateState')).toEqual({ kind: 'idle' });
     await expect(Promise.resolve(invoke('ntwine:installUpdate'))).resolves.toBeUndefined();
+  });
+
+  it('a fixedStateUpdater answers its pinned state, and start/install do nothing', async () => {
+    const updater = fixedStateUpdater({ kind: 'downloading' });
+    updater.start();
+    const { invoke } = register(updater);
+    expect(await invoke('ntwine:getUpdateState')).toEqual({ kind: 'downloading' });
+    await expect(Promise.resolve(invoke('ntwine:installUpdate'))).resolves.toBeUndefined();
+    expect(updater.state()).toEqual({ kind: 'downloading' });
   });
 
   it('with an updater, getUpdateState reads its current state and installUpdate delegates', async () => {

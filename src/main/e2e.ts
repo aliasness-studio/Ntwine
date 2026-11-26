@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import type { UpdateState } from '../shared/ipcTypes';
 
 /**
  * The app's E2E-mode contract. Pure on purpose: main.ts is un-importable under
@@ -15,6 +16,10 @@ export interface E2EConfig {
    * window, steals focus, or makes noise on the dev box. Same exact-"1" discipline as
    * NTWINE_E2E itself; the harness sets it by default (NTWINE_E2E_HEADED=1 opts back out). */
   hidden: boolean;
+  /** NTWINE_E2E_UPDATE_STATE=downloading — what `ntwine:getUpdateState` answers in this run, since
+   * an e2e run never starts the real updater. The only accepted value is `downloading`: it is the
+   * one state with no other way to reach the screen. Absent → null (the usual permanent `idle`). */
+  updateState: Extract<UpdateState, { kind: 'downloading' }> | null;
 }
 
 export class E2EConfigError extends Error {}
@@ -25,6 +30,16 @@ function absoluteOrNull(env: NodeJS.ProcessEnv, key: string): string | null {
   if (value === undefined || value === '') return null;
   if (!isAbsolute(value)) throw new E2EConfigError(`${key} must be an absolute path (got "${value}")`);
   return value;
+}
+
+/** Absent → null; exactly "downloading" → that state; anything else → E2EConfigError. */
+function updateStateOrNull(env: NodeJS.ProcessEnv): E2EConfig['updateState'] {
+  const value = env.NTWINE_E2E_UPDATE_STATE;
+  if (value === undefined || value === '') return null;
+  if (value !== 'downloading') {
+    throw new E2EConfigError(`NTWINE_E2E_UPDATE_STATE accepts only "downloading" (got "${value}")`);
+  }
+  return { kind: 'downloading' };
 }
 
 export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null {
@@ -41,6 +56,7 @@ export function readE2EConfig(env: NodeJS.ProcessEnv): E2EConfig | null {
     libraryRoot: absoluteOrNull(env, 'NTWINE_LIBRARY_ROOT'),
     bootMarker: absoluteOrNull(env, 'NTWINE_E2E_BOOT_MARKER'),
     hidden: env.NTWINE_E2E_HIDDEN === '1',
+    updateState: updateStateOrNull(env),
   };
 }
 

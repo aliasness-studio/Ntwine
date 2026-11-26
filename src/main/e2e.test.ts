@@ -27,6 +27,7 @@ describe('readE2EConfig', () => {
       NTWINE_APP_DATA: path.join(ABS, 'ad'),
       NTWINE_LIBRARY_ROOT: path.join(ABS, 'lib'),
       NTWINE_E2E_BOOT_MARKER: path.join(ABS, 'marker'),
+      NTWINE_E2E_UPDATE_STATE: 'downloading',
     });
     expect(cfg).toStrictEqual({
       userData: path.join(ABS, 'ud'),
@@ -34,11 +35,12 @@ describe('readE2EConfig', () => {
       libraryRoot: path.join(ABS, 'lib'),
       bootMarker: path.join(ABS, 'marker'),
       hidden: false,
+      updateState: { kind: 'downloading' },
     });
   });
   it('leaves optional overrides null when absent', () => {
     expect(readE2EConfig({ NTWINE_E2E: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') })).toStrictEqual(
-      { userData: path.join(ABS, 'ud'), appData: null, libraryRoot: null, bootMarker: null, hidden: false },
+      { userData: path.join(ABS, 'ud'), appData: null, libraryRoot: null, bootMarker: null, hidden: false, updateState: null },
     );
   });
   it('arms hidden mode only on the exact value "1" (same discipline as NTWINE_E2E itself)', () => {
@@ -48,6 +50,19 @@ describe('readE2EConfig', () => {
     expect(readE2EConfig({ ...base, NTWINE_E2E_HIDDEN: '' })?.hidden).toBe(false);
     // Not honoured outside E2E mode — the whole config is null, hidden included.
     expect(readE2EConfig({ NTWINE_E2E_HIDDEN: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') })).toBeNull();
+  });
+  it('pins the update state only to exactly "downloading", and refuses any other supplied value', () => {
+    const base = { NTWINE_E2E: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') };
+    expect(readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: 'downloading' })?.updateState).toStrictEqual({
+      kind: 'downloading',
+    });
+    expect(readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: '' })?.updateState).toBeNull();
+    for (const value of ['idle', 'ready', 'failed', 'Downloading', ' downloading', '1']) {
+      expect(() => readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: value })).toThrow(E2EConfigError);
+      expect(() => readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: value })).toThrow(/NTWINE_E2E_UPDATE_STATE/);
+    }
+    // Not honoured outside E2E mode.
+    expect(readE2EConfig({ NTWINE_E2E_UPDATE_STATE: 'downloading', NTWINE_USER_DATA: path.join(ABS, 'ud') })).toBeNull();
   });
   it('refuses a SUPPLIED optional override that is not absolute (a typo must not run against cwd-relative data)', () => {
     for (const key of ['NTWINE_APP_DATA', 'NTWINE_LIBRARY_ROOT', 'NTWINE_E2E_BOOT_MARKER'] as const) {
@@ -72,6 +87,7 @@ describe('makeE2EEmitter', () => {
       libraryRoot: null,
       bootMarker: null,
       hidden: false,
+      updateState: null,
     });
     emit!('ntwine:e2e:drag', { sampleId: 3, file: null });
     expect(app.emit).toHaveBeenCalledWith('ntwine:e2e:drag', { sampleId: 3, file: null });

@@ -169,11 +169,18 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   };
 }
 
+/** An `Updater` that never touches `autoUpdater`: it always reports `state`, and `start`/`install`
+ * do nothing. Only for an e2e run that pins the update state (e2e.ts's `updateState`). */
+export function fixedStateUpdater(state: UpdateState): Updater {
+  return { start() {}, state: () => state, install() {} };
+}
+
 export interface UpdaterIpcDeps {
   /** `ipcMain.handle.bind(ipcMain)` in main.ts; injected so this stays Electron-free and testable. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handle: (channel: string, fn: (...a: any[]) => unknown) => void;
-  /** `null` whenever `shouldRunUpdater` is false (dev, e2e, Linux): the bridge still answers. */
+  /** `null` whenever `shouldRunUpdater` is false (dev, e2e, Linux): the bridge still answers. An
+   * e2e run that pins its update state passes a `fixedStateUpdater` instead. */
   updater: Updater | null;
   openExternal: (url: string) => Promise<void>;
   version: string;

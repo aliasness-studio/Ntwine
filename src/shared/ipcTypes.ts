@@ -154,7 +154,8 @@ export interface NtwineApi {
 
   // Self-update. Main owns
   // the updater (src/main/updater.ts); in dev, e2e and Linux runs it never starts, and these
-  // still answer — `getUpdateState` is a permanent `idle`, `installUpdate` a no-op.
+  // still answer — `getUpdateState` is a permanent `idle` (or, in an e2e run, the state pinned by
+  // NTWINE_E2E_UPDATE_STATE), `installUpdate` a no-op.
   getUpdateState(): Promise<UpdateState>;
   onUpdateState(cb: (s: UpdateState) => void): () => void; // 'ntwine:update-state' broadcast, once per transition
   installUpdate(): Promise<void>; // quits and installs only when `ready`; otherwise a no-op
