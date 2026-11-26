@@ -163,13 +163,16 @@ export interface NtwineApi {
 }
 
 // Self-update: what the renderer is told about Electron's `autoUpdater`,
-// as decided by the pure state machine in src/main/updater.ts. Deliberately coarse — checking,
-// downloading and ordinary network failures are all `idle` (silent, retried on the next tick);
-// the user only ever hears "an update is ready, restart to install" or, for the one failure a
-// retry can never fix (a code-signature mismatch), "download it yourself" with a link to
-// `RELEASES_URL`.
+// as decided by the pure state machine in src/main/updater.ts. Deliberately coarse — checking
+// and ordinary network failures are `idle` (silent, retried on the next tick). `downloading`
+// covers the gap between Electron's `update-available` and `update-downloaded`, which on a large
+// Mac bundle can run for minutes; Squirrel reports no progress, so it carries none. A download
+// that fails for an ordinary reason falls back to `idle`. Beyond that the user only hears "an
+// update is ready, restart to install" or, for the one failure a retry can never fix (a
+// code-signature mismatch), "download it yourself" with a link to `RELEASES_URL`.
 export type UpdateState =
   | { kind: 'idle' }
+  | { kind: 'downloading' } // found and downloading; no progress is available
   | { kind: 'ready'; version: string } // downloaded; restart installs
   | { kind: 'failed'; reason: 'signature'; downloadUrl: string }; // code-signature mismatch only
 // The single GitHub repo slug: the update feed (src/main/updater.ts) and RELEASES_URL both derive

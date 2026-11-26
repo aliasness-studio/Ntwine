@@ -1,9 +1,10 @@
 // Update badge, in the rail footer between the transport dock and
 // the settings gear. Reads UpdateStore and nothing else: main decides every transition, this only
-// offers the one action each non-idle state allows — restart-to-install when an update is `ready`,
+// offers the one action each badge state allows — restart-to-install when an update is `ready`,
 // or open the download page when a signature mismatch means it must be installed by hand — plus a
-// dismiss. Renders `null` while hidden, so the footer's `space-between` layout keeps its original
-// two occupants (and their test ids) until there is actually something to say.
+// dismiss. `downloading` is the banner's (UpdateBanner.tsx), never the badge's. Renders `null`
+// while hidden, so the footer's `space-between` layout keeps its original two occupants (and
+// their test ids) until there is actually something to say.
 import { observer } from 'mobx-react-lite';
 import styled from 'styled-components';
 import { useStores } from './StoreContext';
@@ -87,8 +88,8 @@ function DismissIcon() {
 
 export const UpdateBadge = observer(function UpdateBadge() {
   const { update } = useStores();
-  if (!update.visible) return null;
-  const { state } = update;
+  const state = update.badge;
+  if (state === null) return null;
 
   return (
     <Group role="group" aria-label="Update" data-testid="update-badge">

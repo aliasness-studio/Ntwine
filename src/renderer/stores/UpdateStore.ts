@@ -1,11 +1,15 @@
 // UpdateStore: mirrors main's self-update state machine
-// (src/main/updater.ts) into the renderer as observables — what the update banner reads, plus the
-// two actions it can take (restart-to-install when `ready`, open the releases page when a
-// signature mismatch left the update `failed`). Main owns every decision; this store only
-// reflects it and remembers whether the user dismissed the current banner.
+// (src/main/updater.ts) into the renderer as observables. Two surfaces read it: the rail-footer
+// badge (`badge`), with the two actions it can take (restart-to-install when `ready`, open the
+// releases page when a signature mismatch left the update `failed`), and the download banner
+// (`bannerVisible`). Main owns every decision; this store only reflects it and remembers whether
+// the user dismissed the current badge.
 import { makeAutoObservable, runInAction } from 'mobx';
 import './configure';
 import type { NtwineApi, UpdateState } from '../../shared/ipcTypes';
+
+/** The states the badge has something to say about. */
+export type BadgeState = Extract<UpdateState, { kind: 'ready' | 'failed' }>;
 
 export class UpdateStore {
   state: UpdateState = { kind: 'idle' };
@@ -24,9 +28,17 @@ export class UpdateStore {
     makeAutoObservable(this, { api: false });
   }
 
-  /** The banner shows for any non-idle state the user hasn't dismissed. */
-  get visible(): boolean {
-    return !this.dismissed && this.state.kind !== 'idle';
+  /** The badge's state while it shows: `ready` or `failed`, unless the user dismissed it. */
+  get badge(): BadgeState | null {
+    if (this.dismissed) return null;
+    const { state } = this;
+    return state.kind === 'ready' || state.kind === 'failed' ? state : null;
+  }
+
+  /** The download banner shows for exactly as long as an update downloads. It has no dismiss:
+   * it is a progress notice, not a call to action, and `dismissed` never hides it. */
+  get bannerVisible(): boolean {
+    return this.state.kind === 'downloading';
   }
 
   /**
@@ -72,7 +84,7 @@ export class UpdateStore {
   }
 
   // A transition to a DIFFERENT non-idle state (a newer `ready` version, or `failed`) re-shows a
-  // dismissed banner — it's news the user hasn't seen. A value-equal repeat does not (main
+  // dismissed badge — it's news the user hasn't seen. A value-equal repeat does not (main
   // already de-dups per transition; this just makes the store not depend on that), and `idle`
   // never does (there's nothing to show). Note `idle` -> the previously dismissed state again
   // counts as different from `idle`, so it re-shows.
@@ -86,6 +98,8 @@ function sameState(a: UpdateState, b: UpdateState): boolean {
   switch (a.kind) {
     case 'idle':
       return b.kind === 'idle';
+    case 'downloading':
+      return b.kind === 'downloading';
     case 'ready':
       return b.kind === 'ready' && a.version === b.version;
     case 'failed':

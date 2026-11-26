@@ -64,6 +64,7 @@ function makeUpdateChannel() {
 
 const READY_1: UpdateState = { kind: 'ready', version: '1.3.0' };
 const READY_2: UpdateState = { kind: 'ready', version: '1.4.0' };
+const DOWNLOADING: UpdateState = { kind: 'downloading' };
 const FAILED: UpdateState = {
   kind: 'failed',
   reason: 'signature',
@@ -71,12 +72,13 @@ const FAILED: UpdateState = {
 };
 
 describe('UpdateStore', () => {
-  it('starts idle, undismissed, with no version, and not visible', () => {
+  it('starts idle, undismissed, with no version, and shows nothing', () => {
     const store = new UpdateStore(makeFakeApi());
     expect(store.state).toEqual({ kind: 'idle' });
     expect(store.dismissed).toBe(false);
     expect(store.version).toBeNull();
-    expect(store.visible).toBe(false);
+    expect(store.badge).toBeNull();
+    expect(store.bannerVisible).toBe(false);
   });
 
   it('init() loads the app version and the current update state', async () => {
@@ -89,7 +91,7 @@ describe('UpdateStore', () => {
     expect(api.getUpdateState).toHaveBeenCalledTimes(1);
     expect(store.version).toBe('1.2.3');
     expect(store.state).toEqual(READY_1);
-    expect(store.visible).toBe(true);
+    expect(store.badge).not.toBeNull();
   });
 
   it('init() subscribes BEFORE fetching — a broadcast landing while getUpdateState is in flight wins over the stale fetched value', async () => {
@@ -120,22 +122,22 @@ describe('UpdateStore', () => {
     const channel = makeUpdateChannel();
     const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
     await store.init();
-    expect(store.visible).toBe(false);
+    expect(store.badge).toBeNull();
 
     channel.emit(FAILED);
 
     expect(store.state).toEqual(FAILED);
-    expect(store.visible).toBe(true);
+    expect(store.badge).not.toBeNull();
   });
 
-  it('dismiss() hides a visible banner without changing state', async () => {
+  it('dismiss() hides a visible badge without changing state', async () => {
     const store = new UpdateStore(makeFakeApi({ getUpdateState: async () => READY_1 }));
     await store.init();
 
     store.dismiss();
 
     expect(store.dismissed).toBe(true);
-    expect(store.visible).toBe(false);
+    expect(store.badge).toBeNull();
     expect(store.state).toEqual(READY_1);
   });
 
@@ -149,12 +151,12 @@ describe('UpdateStore', () => {
     store.dismiss();
     channel.emit(READY_2);
     expect(store.dismissed).toBe(false);
-    expect(store.visible).toBe(true);
+    expect(store.badge).not.toBeNull();
 
     store.dismiss();
     channel.emit(FAILED);
     expect(store.dismissed).toBe(false);
-    expect(store.visible).toBe(true);
+    expect(store.badge).not.toBeNull();
   });
 
   it('the same state re-sent does NOT un-dismiss', async () => {
@@ -168,7 +170,7 @@ describe('UpdateStore', () => {
     channel.emit({ kind: 'ready', version: '1.3.0' }); // equal by value, fresh object
 
     expect(store.dismissed).toBe(true);
-    expect(store.visible).toBe(false);
+    expect(store.badge).toBeNull();
   });
 
   it('an idle broadcast does not un-dismiss (nothing to show), and a later non-idle one does', async () => {
@@ -181,11 +183,66 @@ describe('UpdateStore', () => {
     store.dismiss();
     channel.emit({ kind: 'idle' });
     expect(store.dismissed).toBe(true);
-    expect(store.visible).toBe(false);
+    expect(store.badge).toBeNull();
 
     channel.emit(READY_1);
     expect(store.dismissed).toBe(false);
-    expect(store.visible).toBe(true);
+    expect(store.badge).not.toBeNull();
+  });
+
+  it('downloading shows the banner and never the badge', async () => {
+    const store = new UpdateStore(makeFakeApi({ getUpdateState: async () => DOWNLOADING }));
+    await store.init();
+
+    expect(store.state).toEqual(DOWNLOADING);
+    expect(store.bannerVisible).toBe(true);
+    expect(store.badge).toBeNull();
+  });
+
+  it('ready and failed show the badge with their state, and never the banner', async () => {
+    const channel = makeUpdateChannel();
+    const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
+    await store.init();
+
+    channel.emit(READY_1);
+    expect(store.badge).toEqual(READY_1);
+    expect(store.bannerVisible).toBe(false);
+
+    channel.emit(FAILED);
+    expect(store.badge).toEqual(FAILED);
+    expect(store.bannerVisible).toBe(false);
+  });
+
+  it('the banner follows the download: gone on ready (badge takes over) and on a fall back to idle', async () => {
+    const channel = makeUpdateChannel();
+    const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
+    await store.init();
+
+    channel.emit(DOWNLOADING);
+    expect(store.bannerVisible).toBe(true);
+    channel.emit({ kind: 'idle' });
+    expect(store.bannerVisible).toBe(false);
+    expect(store.badge).toBeNull();
+
+    channel.emit(DOWNLOADING);
+    channel.emit(READY_1);
+    expect(store.bannerVisible).toBe(false);
+    expect(store.badge).toEqual(READY_1);
+  });
+
+  it('the banner is not dismissible, and a dismissed badge does not suppress a later banner', async () => {
+    const channel = makeUpdateChannel();
+    const store = new UpdateStore(
+      makeFakeApi({ onUpdateState: channel.onUpdateState, getUpdateState: async () => READY_1 }),
+    );
+    await store.init();
+
+    store.dismiss();
+    channel.emit(DOWNLOADING);
+    expect(store.bannerVisible).toBe(true);
+
+    store.dismiss();
+    expect(store.bannerVisible).toBe(true);
   });
 
   it('install() calls api.installUpdate only when ready', async () => {
