@@ -22,7 +22,7 @@ yarn lint
 
 Run `yarn e2e` first on a fresh clone. It rebuilds the native SQLite module for Electron, and
 `yarn test` fails without that. The same four checks run on macOS and Windows for every pull
-request.
+request that changes more than documentation.
 
 Changes to behavior need a test. Unit tests sit next to the code as `*.test.ts`; end-to-end tests
 are in `tests/e2e/` and run against a synthetic library, so no Splice account is needed.

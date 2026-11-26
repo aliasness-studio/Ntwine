@@ -123,7 +123,7 @@ library on disk. It's excluded from `yarn e2e`/`yarn e2e:only`'s default project
 by name.
 
 CI (`.github/workflows/ci.yml`) runs all four gates on macOS and Windows for every pull request
-and every push to `main`.
+and every push to `main`. Documentation-only changes are skipped.
 
 ### Releasing
 
@@ -134,6 +134,8 @@ Pushing a `v*` tag builds, signs, notarizes and publishes a release. The runbook
 
 Electron Forge + Vite, React 19, MobX 6, styled-components, better-sqlite3 (FTS5),
 TanStack Virtual, WebAudio. TypeScript strict; ESLint 9 + Prettier.
+
+### Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 

@@ -51,8 +51,9 @@ Actions tab):
 gh run watch
 ```
 
-Expect anything from 20 minutes to over an hour, almost all of it Apple's notarization (an
-estimate from one local run, which notarized in ~37 minutes; CI is not yet measured). The jobs:
+Expect about ten minutes: the first two CI runs each finished in about six. Apple's notarization
+is the variable part (one local run took ~37 minutes), so a `mac` job that sits in notarization
+for up to an hour is slow, not hung. The jobs:
 
 - **`guard`** (ubuntu, seconds): `node scripts/checkTagVersion.mjs <tag>`, then a check that the
   tagged commit is on `main`. Fails if the tag's version is not `package.json`'s or the commit is

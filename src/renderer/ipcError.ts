@@ -21,7 +21,7 @@
 //
 // NOTE for a future IPC redesign: this module exists only because `invoke`/`handle` throws across
 // the process boundary. If the user-layer IPC surface is ever redesigned to return an explicit
-// `{ error }` result instead of rejecting (a v1.5 candidate), this stripping becomes
+// `{ error }` result instead of rejecting, this stripping becomes
 // unnecessary and the module can go away entirely.
 const INVOKE_WRAPPER_PREFIX = /^Error invoking remote method '[^']+':\s*/;
 const USER_NAME_ERROR_PREFIX = /^UserNameError:\s*/;

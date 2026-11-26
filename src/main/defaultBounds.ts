@@ -1,6 +1,6 @@
 // Default window sizing: open at 90% of the primary display's work area instead of
 // a hardcoded 800x600, so the app reads as "most of the screen" on any monitor — the same code
-// path serves a 16" MBP and the Windows box. 90% (tuned up from an initial 75%)
+// path serves a 16" laptop and a desktop monitor. 90% (tuned up from an initial 75%)
 // keeps a sliver of desktop visible so it still reads as a window, not a takeover. Pure math (no
 // electron import) so it unit-tests without an app instance; main.ts feeds it
 // `screen.getPrimaryDisplay().workAreaSize`.

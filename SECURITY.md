@@ -4,7 +4,8 @@
 
 Please report security problems privately through
 [GitHub's private vulnerability reporting](https://github.com/aliasness-studio/Ntwine/security/advisories/new),
-not in a public issue.
+not in a public issue. If that link does not work for you, email
+<aliasness.studio@proton.me> instead.
 
 Include the Ntwine version, your operating system, and steps to reproduce. You should get a first
 reply within a week.

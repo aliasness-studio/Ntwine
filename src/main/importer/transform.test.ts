@@ -64,7 +64,7 @@ describe('normalizeSample', () => {
 // (`CHECK (chord_type IN ('major','minor'))`, src/main/catalog/db.ts) that sample_type does.
 // This pins the chord_type throw symmetric to the sample_type one,
 // so it doesn't surface three transaction-steps downstream as an opaque SQLite CHECK failure.
-describe('normalizeSample — additional', () => {
+describe('normalizeSample — edge cases', () => {
   const base = {
     local_path: '/root/sounds/packs/P/kick.wav',
     file_hash: 'h',
@@ -84,7 +84,7 @@ describe('normalizeSample — additional', () => {
   });
 });
 
-describe('parseTags — additional', () => {
+describe('parseTags — edge cases', () => {
   it('returns an empty array for an empty tags string', () => {
     expect(parseTags('')).toEqual([]);
   });
@@ -92,7 +92,7 @@ describe('parseTags — additional', () => {
 
 // relPathToAbs is the one shared definition behind importer.ts's statPass and queue.ts's
 // absPathsFor (one-question-two-gates).
-describe('relPathToAbs — additional', () => {
+describe('relPathToAbs — edge cases', () => {
   it('rejoins a multi-segment POSIX rel_path under libraryRoot', () => {
     // relPathToAbs returns a HOST-NATIVE absolute path by contract (its doc comment), so the
     // expectation is built with the host separator — POSIX-hardcoding this broke on Windows.
