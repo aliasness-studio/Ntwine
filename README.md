@@ -11,6 +11,8 @@ Free and MIT-licensed, for macOS and Windows. Still beta (0.x), so expect rough 
 
 Website: [aliasness.studio/ntwine](https://aliasness.studio/ntwine)
 
+![The Ntwine library view: packs and filters on the left, a searchable sample list with waveforms, key, BPM, length and tags](docs/images/library.png)
+
 ## Download
 
 Grab the latest build from
