@@ -21,9 +21,23 @@
     "e2e:only": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/@playwright/test/cli.js test --project default",
     "e2e:real": "cross-env NTWINE_E2E_REAL=1 ELECTRON_RUN_AS_NODE=1 electron ./node_modules/@playwright/test/cli.js test --project real"
   },
-  "keywords": [],
+  "keywords": [
+    "splice",
+    "samples",
+    "sample-browser",
+    "music-production",
+    "electron"
+  ],
+  "homepage": "https://github.com/aliasness-studio/Ntwine#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aliasness-studio/Ntwine.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aliasness-studio/Ntwine/issues"
+  },
   "author": {
-    "name": "AliasNess",
+    "name": "AliasNess Studio",
     "email": "aliasness.studio@proton.me"
   },
   "license": "MIT",
