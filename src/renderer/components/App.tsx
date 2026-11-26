@@ -18,6 +18,7 @@ import { SampleList, type SampleListHandle } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
 import { TransportControls } from './TransportControls';
 import { UpdateBadge } from './UpdateBadge';
+import { UpdateBanner } from './UpdateBanner';
 import { useStores } from './StoreContext';
 import { TopBar, type TopBarHandle } from './TopBar';
 
@@ -42,11 +43,14 @@ const Centered = styled.div`
 // The `crumbs` row is `auto`: NavBar renders null whenever there's no history and no active
 // filter, which collapses that row to zero height — the default view keeps every pixel it had
 // before this bar existed, and the list only gives up space while something is narrowing it.
+// The `banner` row above the top bar works the same way for UpdateBanner, which renders only
+// while an update downloads.
 const Grid = styled.div`
   display: grid;
   grid-template-columns: 240px 1fr;
-  grid-template-rows: 48px auto 1fr;
+  grid-template-rows: auto 48px auto 1fr;
   grid-template-areas:
+    'rail banner'
     'rail topbar'
     'rail crumbs'
     'rail list';
@@ -317,6 +321,7 @@ export function App() {
           </GearButton>
         </RailFooter>
       </Rail>
+      <UpdateBanner />
       <TopBar ref={topBarRef} onEscEmpty={() => sampleListRef.current?.focusList()} />
       <NavBar />
       <SampleList ref={sampleListRef} />
