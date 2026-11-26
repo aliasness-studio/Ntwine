@@ -9,6 +9,8 @@ import it fetches pack cover art from the image links in Splice's database.
 
 Free and MIT-licensed, for macOS and Windows. Still beta (0.x), so expect rough edges.
 
+Website: [aliasness.studio/ntwine](https://aliasness.studio/ntwine)
+
 ## Download
 
 Grab the latest build from
