@@ -7,8 +7,7 @@ a local build from the environment.
 
 **First time?** Do §3 (secrets, once), then §2 (a release-candidate dry run), then §1. A tag only
 releases if the commit it points at contains the workflow and is on `main`, so tag `main` after
-the workflow has been merged. The first real `v0.1.0` waits for the going-public PR and the
-visibility flip; until then, push only `-rc.N` tags.
+the workflow has been merged.
 
 1. [Cut a release](#1-cut-a-release)
 2. [Dry run with a release candidate](#2-dry-run-with-a-release-candidate)
@@ -35,8 +34,7 @@ git commit -am "chore(release): 0.2.0" && git push -u origin HEAD && gh pr creat
 Merge the PR once CI is green.
 
 **Step 2 — tag the merged commit on `main`.** The middle command is the same guard the workflow
-runs first; it prints `prerelease=false` or says why the tag is refused. Until the repository is
-public, tag only `-rc.N` versions here (§2); the first real `v0.1.0` comes after the flip.
+runs first; it prints `prerelease=false` or says why the tag is refused.
 
 ```bash
 git switch main && git pull
