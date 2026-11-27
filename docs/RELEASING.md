@@ -370,8 +370,26 @@ curl -s -o /dev/null -w '%{http_code}\n' https://update.electronjs.org/aliasness
 ```
 
 **Updates on a Mac need the app in `/Applications`.** On first launch from anywhere else the app
-offers to move itself there; declining is remembered. To see the prompt again, quit Ntwine, then
-clear the remembered answer (`sqlite3` ships with macOS):
+offers to move itself there. If a copy is already in `/Applications`, it reads that copy's version
+first and never downgrades it:
+
+| Copy in `/Applications` | Prompt                                                 | Buttons                               |
+| ----------------------- | ------------------------------------------------------ | ------------------------------------- |
+| none                    | Move Ntwine to your Applications folder?               | Move to Applications / Don't Move     |
+| older                   | Replace Ntwine 0.1.0 in Applications with 0.1.2?       | Replace / Don't Replace               |
+| version unreadable      | Replace the copy of Ntwine in Applications with 0.1.2? | Replace / Don't Replace (the default) |
+| same or newer           | Ntwine 0.1.2 is already in your Applications folder.   | Open That Copy / Keep Using This One  |
+
+Don't Move and Don't Replace are remembered (Esc is the same button). Keep Using This One is not:
+that copy asks again on its next launch, and says it will not update itself. Open That Copy quits
+the downloaded copy and opens the one in `/Applications` once it has exited.
+
+After a move, the downloaded copy stays in Downloads: macOS runs a downloaded app from a read-only
+translocated mount, so Electron cannot delete the original. Delete it by hand. Dragging Ntwine
+into Applications in Finder instead avoids the leftover.
+
+To see the prompt again, quit Ntwine, then clear the remembered answer (`sqlite3` ships with
+macOS):
 
 ```bash
 osascript -e 'quit app "Ntwine"'
@@ -380,6 +398,13 @@ osascript -e 'quit app "Ntwine"'
 ```bash
 sqlite3 ~/Library/Application\ Support/Ntwine/ntwine-data/catalog.db "DELETE FROM meta WHERE key='move_to_applications_declined';"
 ```
+
+**Only one copy runs at a time.** Opening Ntwine while it is already running, from the same copy
+or another one, brings the running window forward (restoring it if minimized, reopening it if it
+was closed) and the new launch quits. Check this by hand after a release that touches startup:
+with the installed copy open, open the downloaded zip's copy too — no prompt appears and only the
+installed copy stays running. Also check that **Restart to update** and **Move to Applications**
+still come back up on their own: both relaunch only after the old process has exited.
 
 **Windows is unsigned.** SmartScreen warns about an unknown publisher: **More info** → **Run
 anyway**.
