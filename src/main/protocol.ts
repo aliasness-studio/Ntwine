@@ -65,29 +65,49 @@ interface SampleAbsPathRow {
   missing: number;
 }
 
+export interface SampleFile {
+  absPath: string;
+  missing: boolean;
+}
+
+/**
+ * sampleId -> `{ absPath, missing }`, or null if there's no such row or (hostile/corrupt DB
+ * content — see protocol.test.ts) the resolved path would land outside `libraryRoot`. THE one
+ * copy of the row lookup + containment check. A missing-flagged row still resolves, to where its
+ * file should be: sampleFile.ts's "copy full path" hands that out, and each caller decides what a
+ * missing row may do.
+ */
+export function resolveSampleFile(
+  catalog: Catalog,
+  libraryRoot: string,
+  sampleId: number,
+): SampleFile | null {
+  const row = catalog.db
+    .prepare<[number], SampleAbsPathRow>(
+      'SELECT rel_path AS relPath, missing FROM samples WHERE id = ?',
+    )
+    .get(sampleId);
+  if (!row) return null;
+
+  const abs = relPathToAbs(libraryRoot, row.relPath);
+  return isContained(libraryRoot, abs) ? { absPath: abs, missing: row.missing === 1 } : null;
+}
+
 /**
  * sampleId -> absolute file path, or null if there's no such row, the row is flagged
- * `missing`, or (hostile/corrupt DB content — see protocol.test.ts) the resolved path would
- * land outside `libraryRoot`. THE shared resolution core (the "one question, two gates"
- * rule): the sample:// branch of `resolveProtocolRequest` below, drag.ts's `resolvePath`
- * (wired here by main.ts), and ipc.ts's `decodePreviewPcm` all answer "where is this
- * sample's file, if it's safe to hand out at all" through this one function rather than three
- * independently-maintained copies of the same containment logic.
+ * `missing`, or the resolved path would land outside `libraryRoot` (`resolveSampleFile` above,
+ * minus missing rows). The "one question, two gates" rule: the sample:// branch of
+ * `resolveProtocolRequest` below, drag.ts's `resolvePath` (wired here by main.ts), and ipc.ts's
+ * `decodePreviewPcm` all answer "where is this sample's file, if it's safe to hand out at all"
+ * through this one function rather than independently-maintained copies of the same logic.
  */
 export function resolveSampleAbsPath(
   catalog: Catalog,
   libraryRoot: string,
   sampleId: number,
 ): string | null {
-  const row = catalog.db
-    .prepare<[number], SampleAbsPathRow>(
-      'SELECT rel_path AS relPath, missing FROM samples WHERE id = ?',
-    )
-    .get(sampleId);
-  if (!row || row.missing === 1) return null;
-
-  const abs = relPathToAbs(libraryRoot, row.relPath);
-  return isContained(libraryRoot, abs) ? abs : null;
+  const file = resolveSampleFile(catalog, libraryRoot, sampleId);
+  return file && !file.missing ? file.absPath : null;
 }
 
 interface CoverFileRow {
