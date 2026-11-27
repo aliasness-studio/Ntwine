@@ -6,12 +6,14 @@ import type { DragIcon, ImportProgress, NtwineApi, QueryFilters, UpdateState } f
 
 // THE typed IPC bridge. Every method but the exceptions below is a plain
 // `ipcMain.handle`/`ipcRenderer.invoke` round-trip on the `ntwine:<method>` channel ipc.ts (or,
-// for `startDrag`, drag.ts; for the update methods, updater.ts's `registerUpdaterIpc`) registers. The exceptions:
+// for `startDrag`, drag.ts; for `revealSample`/`copySamplePath`, sampleFile.ts; for the update
+// methods, updater.ts's `registerUpdaterIpc`) registers. The exceptions:
 //  - `onImportProgress` wraps `ipcRenderer.on` for the 'ntwine:import-progress' broadcast
 //    (ipc.ts's `sendProgress` -> `webContents.send`) rather than invoke/handle, since main
 //    pushes multiple events over the lifetime of one import, not a single request/response.
 //    `onUpdateState` is the same shape for the 'ntwine:update-state' broadcast (updater.ts's
 //    `onState`, once per state transition).
+//  - `platform` is a plain value — `process.platform`, which a sandboxed preload still has.
 //  - `sampleUrl`/`coverUrl` are pure template-string helpers with no IPC round-trip at all — the
 //    renderer already knows the URL shape (`sample://s/<id>`, `cover://p/<id>`); asking main
 //    would just be a wasted hop for a string it can build here.
@@ -49,6 +51,12 @@ const api: NtwineApi = {
   sampleUrl: (sampleId: number) => `sample://s/${sampleId}`,
 
   coverUrl: (packId: number) => `cover://p/${packId}`,
+
+  platform: process.platform,
+
+  revealSample: (sampleId: number) => ipcRenderer.invoke('ntwine:revealSample', sampleId),
+
+  copySamplePath: (sampleId: number) => ipcRenderer.invoke('ntwine:copySamplePath', sampleId),
 
   // User layer — 11 invokes.
   setFavorite: (sampleId: number, on: boolean) => ipcRenderer.invoke('ntwine:setFavorite', sampleId, on),

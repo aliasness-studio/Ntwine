@@ -133,6 +133,16 @@ export interface NtwineApi {
   startDrag(sampleId: number, icon?: DragIcon | null): Promise<void>;
   sampleUrl(sampleId: number): string; // `sample://s/${id}` — pure string helper
   coverUrl(packId: number): string; // `cover://p/${id}`
+  // `process.platform` as the preload sees it — a plain value, not an invoke. The renderer has no
+  // other platform knowledge; the row menu names its reveal item after the OS file manager.
+  platform: string;
+
+  // Row-menu file actions (src/main/sampleFile.ts). Id-based: main resolves the path from the
+  // catalog, the renderer never sends one. Both resolve as a silent no-op when refused — reveal
+  // for an unknown, missing or vanished file; copy only for an unknown id (a missing row copies
+  // the path its file should be at).
+  revealSample(sampleId: number): Promise<void>;
+  copySamplePath(sampleId: number): Promise<void>;
 
   // User layer. Every write below resolves `sampleId -> file_hash` inside
   // main (ipc.ts); the renderer never sees a hash. `createCollection`/`renameCollection` reject

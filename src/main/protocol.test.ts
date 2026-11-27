@@ -7,7 +7,7 @@ import { buildFixtureSpliceDb, type FixtureRow } from './importer/fixtureSpliceD
 import { readSplice } from './importer/spliceDb';
 import { buildCatalog } from './importer/importer';
 import { relPathToAbs } from './importer/transform';
-import { resolveProtocolRequest } from './protocol';
+import { resolveProtocolRequest, resolveSampleAbsPath, resolveSampleFile } from './protocol';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ntwine-protocol-'));
 const freshCatalog = () => openCatalog(join(tmp(), 'catalog.db'));
@@ -167,5 +167,52 @@ describe('resolveProtocolRequest', () => {
     expect(
       resolveProtocolRequest(catalog, libraryRoot, coversDir, 'https://evil.example/x'),
     ).toBeNull();
+  });
+});
+
+describe('resolveSampleFile', () => {
+  it('resolves a present sample to its absolute path, flagged not missing', () => {
+    const { catalog, libraryRoot, presentId } = setUp();
+    expect(resolveSampleFile(catalog, libraryRoot, presentId)).toEqual({
+      absPath: relPathToAbs(libraryRoot, 'sounds/packs/Pack A/present.wav'),
+      missing: false,
+    });
+  });
+
+  // Unlike resolveSampleAbsPath, a missing-flagged row still resolves: "copy full path" hands out
+  // where the file should be, and the caller decides what a missing row may do.
+  it('resolves a missing-flagged sample to where its file should be, flagged missing', () => {
+    const { catalog, libraryRoot, goneId } = setUp();
+    expect(resolveSampleFile(catalog, libraryRoot, goneId)).toEqual({
+      absPath: relPathToAbs(libraryRoot, 'sounds/packs/Pack A/gone.wav'),
+      missing: true,
+    });
+  });
+
+  it('refuses an id with no matching samples row', () => {
+    const { catalog, libraryRoot } = setUp();
+    expect(resolveSampleFile(catalog, libraryRoot, 999999)).toBeNull();
+  });
+
+  it('refuses a rel_path escaping the library root, missing-flagged or not', () => {
+    const { catalog, libraryRoot } = setUp();
+    const insert = catalog.db.prepare(
+      `INSERT INTO samples (file_hash, rel_path, filename, sample_type, missing)
+       VALUES (?, ?, ?, 'oneshot', ?)`,
+    );
+    insert.run('h-out-present', '../../outside.wav', 'outside.wav', 0);
+    insert.run('h-out-missing', '../../gone-outside.wav', 'gone-outside.wav', 1);
+    expect(resolveSampleFile(catalog, libraryRoot, idByHash(catalog, 'h-out-present'))).toBeNull();
+    expect(resolveSampleFile(catalog, libraryRoot, idByHash(catalog, 'h-out-missing'))).toBeNull();
+  });
+});
+
+describe('resolveSampleAbsPath', () => {
+  it('answers the present path and refuses a missing-flagged row', () => {
+    const { catalog, libraryRoot, presentId, goneId } = setUp();
+    expect(resolveSampleAbsPath(catalog, libraryRoot, presentId)).toBe(
+      relPathToAbs(libraryRoot, 'sounds/packs/Pack A/present.wav'),
+    );
+    expect(resolveSampleAbsPath(catalog, libraryRoot, goneId)).toBeNull();
   });
 });

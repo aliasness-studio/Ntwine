@@ -384,7 +384,8 @@ export const SampleList = observer(
     // `scrollSnap.ts` already uses for this fixed-size list. `menuItemsFor` is checked here (not
     // only inside RowContextMenu) so an empty result never opens state at all — no menu, and the
     // native context menu (nothing currently wires one — main has no `context-menu` handler) is
-    // left alone. Opening the menu never moves selection or playback: nothing else defines this
+    // left alone. Every row, missing ones included, currently gets items; the gate is defensive.
+    // Opening the menu never moves selection or playback: nothing else defines this
     // for the context menu specifically, so the heart's own "click toggles without changing
     // selection" is the least-surprise precedent to follow.
     const handleContextMenu = (e: MouseEvent<HTMLDivElement>): void => {
@@ -397,7 +398,7 @@ export const SampleList = observer(
       const row = target ? library.rows[target.index] : undefined;
       if (!row) return;
       const scope = library.filters.scope;
-      if (menuItemsFor(row, scope).length === 0) return;
+      if (menuItemsFor(row, scope, api.platform).length === 0) return;
       e.preventDefault();
       setContextMenu({ row, scope, point: { x: e.clientX, y: e.clientY } });
     };
@@ -413,7 +414,9 @@ export const SampleList = observer(
     // store's popover/nickname-edit open-state FOR THE MENU'S ROW — `row.id` here is "whatever row
     // the action targeted", which today is always the
     // row the context menu opened on; the keyboard path additionally reaches these same store
-    // actions from the selected row (`handleKeyDown` above).
+    // actions from the selected row (`handleKeyDown` above). `reveal`/`copypath` go straight to
+    // the bridge by id; neither touches selection or playback, and a rejection is logged rather
+    // than left unhandled (the same `.catch(console.error)` UpdateBanner uses).
     const handleRowMenuAction = (id: RowMenuItemId): void => {
       if (!contextMenu) return;
       const { row, scope } = contextMenu;
@@ -438,6 +441,14 @@ export const SampleList = observer(
         case 'addto':
           // One popover in place of an "Add to collection ▸" submenu.
           userLayer.openCollectionPopover(row.id);
+          break;
+        case 'reveal':
+          api.revealSample(row.id).catch((err) => console.error('SampleList: reveal failed', err));
+          break;
+        case 'copypath':
+          api
+            .copySamplePath(row.id)
+            .catch((err) => console.error('SampleList: copy path failed', err));
           break;
       }
     };
@@ -590,6 +601,7 @@ export const SampleList = observer(
             row={contextMenu.row}
             scope={contextMenu.scope}
             point={contextMenu.point}
+            platform={api.platform}
             onAction={handleRowMenuAction}
             onClose={closeContextMenu}
           />
