@@ -49,6 +49,7 @@ drawing waveforms in the background.
 - Waveform thumbnails, which fill in as the background pass catches up.
 - Click a sample, or move with the arrow keys, to preview it.
 - Drag a sample straight into your DAW, Finder or File Explorer.
+- Right-click a sample to show it in Finder or File Explorer, or to copy its full path.
 
 **Updates.** Updates download in the background. While one downloads, a slim banner above the
 search bar says so, and you can keep working. When one is ready, the banner offers **Restart to
