@@ -51,9 +51,9 @@ drawing waveforms in the background.
 - Drag a sample straight into your DAW, Finder or File Explorer.
 
 **Updates.** Updates download in the background. While one downloads, a slim banner above the
-search bar says so, and you can keep working. When one is ready, an update icon appears at the
-bottom of the left rail; click it to restart into the new version. Otherwise the update
-applies the next time you quit and reopen Ntwine.
+search bar says so, and you can keep working. When one is ready, the banner offers **Restart to
+update**; otherwise the update applies the next time you quit and reopen Ntwine. If you close
+the banner, an update icon stays at the right end of the search bar until you act on it.
 
 ## Privacy and your files
 
