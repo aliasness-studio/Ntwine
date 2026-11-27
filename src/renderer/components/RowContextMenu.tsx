@@ -8,11 +8,11 @@
 //
 // Presentational only, same "no store reads" posture as SampleRow.tsx: `SampleList` owns the
 // open/closed state (which row, scope, point) and the action dispatcher; this component reports
-// back via `onAction`/`onClose` and never touches a store directly. Re-derives
-// `menuItemsFor(row, scope)` itself rather than trusting a pre-filtered caller — same "don't
+// back via `onAction`/`onClose` and never touches a store directly — `platform` arrives as a prop
+// for the same reason. Re-derives `menuItemsFor(row, scope, platform)` itself rather than trusting a pre-filtered caller — same "don't
 // trust the caller got it right" posture SampleRow.tsx's own doc comment states for
-// `row.missing`/`row.peaksFailed` — so this renders nothing even if a future caller forgets the
-// empty-menu gate.
+// `row.missing`/`row.peaksFailed` — so this renders nothing for an empty item list even if a
+// future caller forgets the empty-menu gate.
 import { useEffect, useRef } from 'react';
 import styled from 'styled-components';
 import type { SampleRow, Scope } from '../../shared/ipcTypes';
@@ -59,8 +59,14 @@ const MenuItemButton = styled.button`
   text-align: left;
   cursor: pointer;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: ${(p) => p.theme.color.bgRowHover};
+  }
+
+  /* Same dimmed, non-interactive look as NavBar's disabled buttons. */
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
 `;
 
@@ -68,12 +74,20 @@ export interface RowContextMenuProps {
   row: SampleRow;
   scope: Scope | undefined;
   point: { x: number; y: number };
+  platform: string;
   onAction: (id: RowMenuItemId) => void;
   onClose: () => void;
 }
 
-export function RowContextMenu({ row, scope, point, onAction, onClose }: RowContextMenuProps) {
-  const items = menuItemsFor(row, scope);
+export function RowContextMenu({
+  row,
+  scope,
+  point,
+  platform,
+  onAction,
+  onClose,
+}: RowContextMenuProps) {
+  const items = menuItemsFor(row, scope, platform);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Esc / click-away (closes on Esc, click-away, or choosing an action — LibraryRail's own
@@ -100,8 +114,8 @@ export function RowContextMenu({ row, scope, point, onAction, onClose }: RowCont
     };
   }, [items.length, onClose]);
 
-  // No menu at all when there are no items — never an empty box (the missing-row
-  // no-click rule, already enforced once inside `menuItemsFor` itself).
+  // No menu at all when there are no items — never an empty box. `menuItemsFor` no longer
+  // returns `[]` for any row; this stays as the cheap defensive gate.
   if (items.length === 0) return null;
 
   // See the constants' own comment above for why width is a flat estimate and height is computed
@@ -117,7 +131,11 @@ export function RowContextMenu({ row, scope, point, onAction, onClose }: RowCont
           key={item.id}
           type="button"
           role="menuitem"
+          // A real `disabled` button: no click, no focus, announced as unavailable. The early
+          // return keeps a disabled item from closing the menu even if a click got through.
+          disabled={item.disabled}
           onClick={() => {
+            if (item.disabled) return;
             onAction(item.id);
             onClose();
           }}
