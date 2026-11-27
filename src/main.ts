@@ -1,7 +1,9 @@
 import { app, autoUpdater, BrowserWindow, clipboard, dialog, ipcMain, screen, shell } from 'electron';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import started from 'electron-squirrel-startup';
 import { openCatalog } from './main/catalog/db';
 import { resolveWindowIcon } from './main/appIcon';
@@ -9,7 +11,15 @@ import { computeDefaultBounds } from './main/defaultBounds';
 import { registerDragHandler } from './main/drag';
 import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
-import { MOVE_DECLINED_META, offerMove, shouldOfferMove } from './main/moveToApplications';
+import {
+  applicationsCopyPath,
+  MOVE_DECLINED_META,
+  offerMove,
+  openAfterExit,
+  promptText,
+  shouldOfferMove,
+  type InstalledCopy,
+} from './main/moveToApplications';
 import { dataDirFrom } from './main/paths';
 import {
   registerProtocols,
@@ -18,6 +28,7 @@ import {
   resolveSampleFile,
 } from './main/protocol';
 import { registerSampleFileHandlers } from './main/sampleFile';
+import { claimStartup, revealPrimary } from './main/singleInstance';
 import {
   createUpdater,
   feedArchFor,
@@ -34,17 +45,11 @@ if (started) {
   app.quit();
 }
 
-// protocol.registerSchemesAsPrivileged has its own hard constraint (Electron: "can only be used
-// before the ready event... and can be called only once") — module scope is the only point in
-// this file guaranteed to run before app.whenReady(), so it happens here. registerProtocols
-// (the REST of the protocol wiring — protocol.handle, which needs a live app) runs down in
-// whenReady() below, alongside everything else.
-registerProtocolSchemes();
-
 // E2E mode. Read BEFORE whenReady: app.setPath must precede any getPath, and a
 // config error must never reach Electron's "JavaScript error in main process" dialog (a modal
 // that would hang a headless run) — log and exit instead.
 let e2e: E2EConfig | null = null;
+let e2eConfigFailed = false;
 try {
   e2e = readE2EConfig(process.env);
   if (e2e) {
@@ -58,8 +63,31 @@ try {
   }
 } catch (err) {
   console.error(String(err));
+  e2eConfigFailed = true;
   app.exit(2);
 }
+
+// Single instance (singleInstance.ts has the full rationale). Requested only here: after the
+// Squirrel check, whose install/update/uninstall launches do electron-squirrel-startup's shortcut
+// work and quit without ever taking the lock, and after the E2E app.setPath('userData') above,
+// because the lock lives in the user-data directory. A second launch has already told the first
+// to come forward by the time requestSingleInstanceLock returns false; it quits before
+// registering protocols and before whenReady opens the catalog, registers IPC or starts the
+// updater.
+const role = claimStartup({
+  squirrelEvent: started,
+  configFailed: e2eConfigFailed,
+  requestLock: () => app.requestSingleInstanceLock(),
+});
+if (role === 'secondary') app.quit();
+
+// protocol.registerSchemesAsPrivileged has its own hard constraint (Electron: "can only be used
+// before the ready event... and can be called only once") — module scope is the only point in
+// this file guaranteed to run before app.whenReady(), so it happens here. registerProtocols
+// (the REST of the protocol wiring — protocol.handle, which needs a live app) runs down in
+// whenReady() below, alongside everything else.
+if (role === 'primary') registerProtocolSchemes();
+
 // Hidden-mode throughput (module scope on purpose: commandLine switches must land before app
 // ready). Chromium treats a never-shown window as occluded and BACKGROUNDS its renderer —
 // compositor frames drop to ~1/s, and Playwright's actionability check (which waits for a
@@ -210,10 +238,58 @@ const createWindow = (): BrowserWindow => {
   return win;
 };
 
+const execFileAsync = promisify(execFile);
+
+/** The version of the copy a move would replace. PlistBuddy ships with every macOS and reads both
+ * XML and binary property lists; a missing or unreadable Info.plist (or a blank value) is a copy of
+ * unknown version, which is never overwritten without asking. The plist's existence is checked
+ * first because PlistBuddy treats a missing file as one to create. */
+async function inspectApplicationsCopy(bundle: string): Promise<InstalledCopy> {
+  if (!existsSync(bundle)) return { kind: 'none' };
+  const plist = path.join(bundle, 'Contents', 'Info.plist');
+  if (!existsSync(plist)) return { kind: 'present', version: null };
+  try {
+    const { stdout } = await execFileAsync(
+      '/usr/libexec/PlistBuddy',
+      ['-c', 'Print :CFBundleShortVersionString', plist],
+      { timeout: 5_000 },
+    );
+    return { kind: 'present', version: stdout.trim() || null };
+  } catch (err) {
+    console.error('[move-to-applications] reading', plist, err);
+    return { kind: 'present', version: null };
+  }
+}
+
+// A later launch of any copy that shares this user data (singleInstance.ts) has just quit and
+// asked this one to come forward. Registered only by the lock holder. A quiet E2E run reports the
+// hand-over without raising its window: showing or focusing it would steal the developer's focus.
+if (role === 'primary') {
+  app.on('second-instance', () => {
+    e2eEmit?.('ntwine:e2e:second-instance', {});
+    if (e2e?.hidden) return;
+    revealPrimary({
+      window: mainWindow,
+      startupDone,
+      createWindow: () => (mainWindow = createWindow()),
+      focusApp: () => {
+        // macOS only (`steal` is ignored elsewhere): raises the app, including an app-modal
+        // startup dialog, which a window-level focus cannot reach.
+        if (app.isReady()) app.focus({ steal: true });
+      },
+    });
+  });
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+  // Only the lock holder starts up: a secondary instance is quitting, a Squirrel event launch is
+  // quit by electron-squirrel-startup once its shortcut work is done, and an aborted E2E boot is
+  // exiting.
+  if (role !== 'primary') return;
+
   // All catalog state lives in a subdirectory of userData: catalog.db (incl. waveform
   // peaks), the Splice DB snapshot, and downloaded cover art. better-sqlite3's Database
   // constructor does NOT create missing parent directories (unlike snapshotSpliceDb/
@@ -239,8 +315,11 @@ app.whenReady().then(async () => {
   // Translocated and Squirrel.Mac cannot update it. Asked before any window exists. The
   // macOS-only app.isInApplicationsFolder / moveToApplicationsFolder never run on win32: the
   // first is darwin-gated inline, the second runs only once shouldOfferMove (darwin-only) passed.
+  // A copy already in Applications is inspected first, and only an older one (or one of unknown
+  // version, after asking) is ever replaced — moveToApplications.ts has the cases.
   // Any rejection here (a dialog, the catalog meta write) is logged and startup falls through to
-  // createWindow() — never a headless process with no window. Only 'moved' returns early.
+  // createWindow() — never a headless process with no window. Only 'moved' and a launched
+  // 'open-installed' return early.
   try {
     if (
       shouldOfferMove({
@@ -251,32 +330,52 @@ app.whenReady().then(async () => {
         e2e: e2e !== null,
       })
     ) {
+      const installedPath = applicationsCopyPath(process.execPath);
       const outcome = await offerMove({
-        ask: async () => {
-          // Esc presses cancelId ("Don't Move"), so dismissing the prompt is a remembered decline
-          // too — intended: an unwanted question is never asked again (docs/RELEASING.md notes the reset).
-          const { response } = await dialog.showMessageBox({
-            type: 'question',
-            buttons: ['Move to Applications', "Don't Move"],
-            defaultId: 0,
-            cancelId: 1,
-            message: 'Move Ntwine to your Applications folder?',
-            detail: 'Ntwine updates itself only when it runs from Applications.',
-          });
-          return response === 0 ? 'move' : 'later';
+        running: app.getVersion(),
+        inspect: () => inspectApplicationsCopy(installedPath),
+        ask: async (prompt) => {
+          // Esc presses cancelId (always the decline), so dismissing the move or replace prompt is
+          // a remembered decline too — intended: an unwanted question is never asked again
+          // (docs/RELEASING.md notes the reset).
+          const { response } = await dialog.showMessageBox({ type: 'question', ...promptText(prompt) });
+          return response === 0 ? 'accept' : 'decline';
         },
-        move: () => app.moveToApplicationsFolder({ conflictHandler: () => true }),
+        move: (conflictHandler) => app.moveToApplicationsFolder({ conflictHandler }),
         remember: () => catalog.setMeta(MOVE_DECLINED_META, '1'),
         log: console.error,
       });
       // Electron relaunches from /Applications and quits this instance itself — no window, IPC
       // or updater for a process that is about to exit.
       if (outcome === 'moved') return;
+      if (outcome === 'open-installed') {
+        // Opened only once this process has exited (openAfterExit): the copy in Applications
+        // shares this one's user data and would otherwise find the single-instance lock held.
+        // A spawn that throws falls through to starting this copy instead.
+        try {
+          const { file, args } = openAfterExit(process.pid, installedPath);
+          const child = spawn(file, args, { detached: true, stdio: 'ignore' });
+          child.on('error', (err) => console.error('[move-to-applications] open', err));
+          child.unref();
+          app.quit();
+          return;
+        } catch (err) {
+          console.error('[move-to-applications] open', err);
+        }
+      }
       if (outcome === 'failed') {
         await dialog.showMessageBox({
           type: 'warning',
           message: "Ntwine couldn't move itself.",
           detail: 'Drag Ntwine to your Applications folder and open it from there.',
+          buttons: ['OK'],
+        });
+      }
+      if (outcome === 'installed-running') {
+        await dialog.showMessageBox({
+          type: 'warning',
+          message: 'Ntwine is already open from your Applications folder.',
+          detail: 'Quit it, then open this copy again to replace it.',
           buttons: ['OK'],
         });
       }

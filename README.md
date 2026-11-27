@@ -19,8 +19,9 @@ Grab the latest build from
 [Releases](https://github.com/aliasness-studio/Ntwine/releases/latest):
 
 - **macOS** — `Ntwine-darwin-universal-<version>.zip` (Apple silicon and Intel; signed and
-  notarized). Unzip, open Ntwine, and accept the "Move to Applications" prompt — updates only
-  work from Applications. If you declined the prompt, drag Ntwine into Applications yourself.
+  notarized). Unzip, open Ntwine, and accept its offer to move itself (or to replace an older
+  copy) into Applications — updates only work from there. If you declined the prompt, drag
+  Ntwine into Applications yourself.
 - **Windows** — download the `Setup.exe` (`Ntwine-<version>-win32-x64-Setup.exe`); the other
   files on the release page are for the updater. The Windows build is unsigned, so SmartScreen
   warns about an "unknown publisher": click **More info → Run anyway**.

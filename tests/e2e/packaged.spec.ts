@@ -1,33 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { packagedExecutable } from './harness/packaged';
-
-function run(exe: string, env: Record<string, string>): Promise<{ code: number | null; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(exe, [], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (d) => (stderr += String(d)));
-    const t = setTimeout(() => child.kill('SIGKILL'), 30_000);
-    child.on('exit', (code) => { clearTimeout(t); resolve({ code, stderr }); });
-  });
-}
-// Quiet by default, same contract as harness/launch.ts: the boot probe otherwise flashes a real
-// window. NTWINE_E2E_HEADED=1 in the runner's shell opts back out (debugging).
-const baseEnv = (): Record<string, string> => {
-  const e = { ...(process.env as Record<string, string>) };
-  delete e.ELECTRON_RUN_AS_NODE;
-  if (process.env.NTWINE_E2E_HEADED !== '1') e.NTWINE_E2E_HIDDEN = '1';
-  return e;
-};
+import { packagedBaseEnv, packagedExecutable, runPackaged } from './harness/packaged';
 
 test('the packaged app boots, loads the renderer, and quits on the boot marker', async () => {
   const root = mkdtempSync(join(tmpdir(), 'ntwine-e2e-pkg-'));
   const marker = join(root, 'booted.txt');
   try {
-    const { code } = await run(packagedExecutable(), { ...baseEnv(), NTWINE_E2E: '1', NTWINE_USER_DATA: join(root, 'ud'), NTWINE_E2E_BOOT_MARKER: marker });
+    const { code } = await runPackaged(packagedExecutable(), { ...packagedBaseEnv(), NTWINE_E2E: '1', NTWINE_USER_DATA: join(root, 'ud'), NTWINE_E2E_BOOT_MARKER: marker });
     expect(code).toBe(0);
     expect(existsSync(marker)).toBe(true);
     expect(realpathSync(readFileSync(marker, 'utf8'))).toBe(realpathSync(join(root, 'ud')));
@@ -43,9 +24,9 @@ test('the packaged app refuses E2E mode without NTWINE_USER_DATA — and touches
   // asserted there.
   const fakeHome = mkdtempSync(join(tmpdir(), 'ntwine-e2e-home-'));
   try {
-    const env: Record<string, string> = { ...baseEnv(), NTWINE_E2E: '1' };
+    const env: Record<string, string> = { ...packagedBaseEnv(), NTWINE_E2E: '1' };
     if (process.platform === 'darwin') env.HOME = fakeHome;
-    const { code, stderr } = await run(packagedExecutable(), env);
+    const { code, stderr } = await runPackaged(packagedExecutable(), env);
     expect(code).toBe(2);
     expect(stderr).toMatch(/NTWINE_USER_DATA/);
     if (process.platform === 'darwin') {
