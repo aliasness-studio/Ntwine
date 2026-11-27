@@ -1,9 +1,11 @@
-// Search box + result count + volume. `library.setSearch`
-// already owns the 50ms debounce — this component just forwards every keystroke.
+// Search box + result count + volume, and at the right end the update reminder (UpdateReminder.tsx)
+// once the update banner has been dismissed. `library.setSearch` already owns the 50ms debounce —
+// this component just forwards every keystroke.
 import { observer } from 'mobx-react-lite';
 import { forwardRef, useImperativeHandle, useRef, type KeyboardEvent } from 'react';
 import styled from 'styled-components';
 import { useStores } from './StoreContext';
+import { UpdateReminder } from './UpdateReminder';
 
 const Bar = styled.div`
   grid-area: topbar;
@@ -111,6 +113,7 @@ export const TopBar = observer(
             onChange={(e) => player.setVolume(Number(e.target.value))}
           />
         </VolumeRow>
+        <UpdateReminder />
       </Bar>
     );
   }),

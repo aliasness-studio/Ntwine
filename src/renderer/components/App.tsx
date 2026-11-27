@@ -17,7 +17,6 @@ import { PackRail } from './PackRail';
 import { SampleList, type SampleListHandle } from './SampleList';
 import { SettingsSheet } from './SettingsSheet';
 import { TransportControls } from './TransportControls';
-import { UpdateBadge } from './UpdateBadge';
 import { UpdateBanner } from './UpdateBanner';
 import { useStores } from './StoreContext';
 import { TopBar, type TopBarHandle } from './TopBar';
@@ -44,7 +43,7 @@ const Centered = styled.div`
 // filter, which collapses that row to zero height — the default view keeps every pixel it had
 // before this bar existed, and the list only gives up space while something is narrowing it.
 // The `banner` row above the top bar works the same way for UpdateBanner, which renders only
-// while an update downloads.
+// while an undismissed update notice is pending.
 const Grid = styled.div`
   display: grid;
   grid-template-columns: 240px 1fr;
@@ -310,7 +309,6 @@ export function App() {
         </FilterDock>
         <RailFooter>
           <TransportControls />
-          <UpdateBadge />
           <GearButton
             type="button"
             title="Settings"

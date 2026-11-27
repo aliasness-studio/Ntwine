@@ -77,8 +77,8 @@ describe('UpdateStore', () => {
     expect(store.state).toEqual({ kind: 'idle' });
     expect(store.dismissed).toBe(false);
     expect(store.version).toBeNull();
-    expect(store.badge).toBeNull();
-    expect(store.bannerVisible).toBe(false);
+    expect(store.banner).toBeNull();
+    expect(store.reminder).toBeNull();
   });
 
   it('init() loads the app version and the current update state', async () => {
@@ -91,7 +91,7 @@ describe('UpdateStore', () => {
     expect(api.getUpdateState).toHaveBeenCalledTimes(1);
     expect(store.version).toBe('1.2.3');
     expect(store.state).toEqual(READY_1);
-    expect(store.badge).not.toBeNull();
+    expect(store.banner).toEqual(READY_1);
   });
 
   it('init() subscribes BEFORE fetching — a broadcast landing while getUpdateState is in flight wins over the stale fetched value', async () => {
@@ -122,41 +122,87 @@ describe('UpdateStore', () => {
     const channel = makeUpdateChannel();
     const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
     await store.init();
-    expect(store.badge).toBeNull();
+    expect(store.banner).toBeNull();
 
     channel.emit(FAILED);
 
     expect(store.state).toEqual(FAILED);
-    expect(store.badge).not.toBeNull();
+    expect(store.banner).toEqual(FAILED);
   });
 
-  it('dismiss() hides a visible badge without changing state', async () => {
-    const store = new UpdateStore(makeFakeApi({ getUpdateState: async () => READY_1 }));
+  it('the banner carries every non-idle state, and idle shows nothing', async () => {
+    const channel = makeUpdateChannel();
+    const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
     await store.init();
+
+    for (const s of [DOWNLOADING, READY_1, FAILED]) {
+      channel.emit(s);
+      expect(store.banner).toEqual(s);
+      expect(store.reminder).toBeNull();
+    }
+
+    channel.emit({ kind: 'idle' });
+    expect(store.banner).toBeNull();
+    expect(store.reminder).toBeNull();
+  });
+
+  it('dismiss() moves each non-idle state from the banner to the reminder without changing state', async () => {
+    for (const s of [DOWNLOADING, READY_1, FAILED]) {
+      const store = new UpdateStore(makeFakeApi({ getUpdateState: async () => s }));
+      await store.init();
+
+      store.dismiss();
+
+      expect(store.dismissed).toBe(true);
+      expect(store.banner).toBeNull();
+      expect(store.reminder).toEqual(s);
+      expect(store.state).toEqual(s);
+    }
+  });
+
+  it('reopen() brings a dismissed banner back and hides the reminder', async () => {
+    const store = new UpdateStore(makeFakeApi({ getUpdateState: async () => DOWNLOADING }));
+    await store.init();
+    store.dismiss();
+
+    store.reopen();
+
+    expect(store.dismissed).toBe(false);
+    expect(store.banner).toEqual(DOWNLOADING);
+    expect(store.reminder).toBeNull();
+  });
+
+  it('a dismissal while idle shows no reminder', () => {
+    const store = new UpdateStore(makeFakeApi());
 
     store.dismiss();
 
-    expect(store.dismissed).toBe(true);
-    expect(store.badge).toBeNull();
-    expect(store.state).toEqual(READY_1);
+    expect(store.banner).toBeNull();
+    expect(store.reminder).toBeNull();
   });
 
-  it('a later, different non-idle state un-dismisses (new ready version, or failed)', async () => {
+  it('a later, different non-idle state un-dismisses (download finished, new ready version, or failed)', async () => {
     const channel = makeUpdateChannel();
     const store = new UpdateStore(
-      makeFakeApi({ onUpdateState: channel.onUpdateState, getUpdateState: async () => READY_1 }),
+      makeFakeApi({ onUpdateState: channel.onUpdateState, getUpdateState: async () => DOWNLOADING }),
     );
     await store.init();
 
     store.dismiss();
+    channel.emit(READY_1);
+    expect(store.dismissed).toBe(false);
+    expect(store.banner).toEqual(READY_1);
+    expect(store.reminder).toBeNull();
+
+    store.dismiss();
     channel.emit(READY_2);
     expect(store.dismissed).toBe(false);
-    expect(store.badge).not.toBeNull();
+    expect(store.banner).toEqual(READY_2);
 
     store.dismiss();
     channel.emit(FAILED);
     expect(store.dismissed).toBe(false);
-    expect(store.badge).not.toBeNull();
+    expect(store.banner).toEqual(FAILED);
   });
 
   it('the same state re-sent does NOT un-dismiss', async () => {
@@ -170,7 +216,8 @@ describe('UpdateStore', () => {
     channel.emit({ kind: 'ready', version: '1.3.0' }); // equal by value, fresh object
 
     expect(store.dismissed).toBe(true);
-    expect(store.badge).toBeNull();
+    expect(store.banner).toBeNull();
+    expect(store.reminder).toEqual(READY_1);
   });
 
   it('an idle broadcast does not un-dismiss (nothing to show), and a later non-idle one does', async () => {
@@ -183,66 +230,12 @@ describe('UpdateStore', () => {
     store.dismiss();
     channel.emit({ kind: 'idle' });
     expect(store.dismissed).toBe(true);
-    expect(store.badge).toBeNull();
+    expect(store.banner).toBeNull();
+    expect(store.reminder).toBeNull();
 
     channel.emit(READY_1);
     expect(store.dismissed).toBe(false);
-    expect(store.badge).not.toBeNull();
-  });
-
-  it('downloading shows the banner and never the badge', async () => {
-    const store = new UpdateStore(makeFakeApi({ getUpdateState: async () => DOWNLOADING }));
-    await store.init();
-
-    expect(store.state).toEqual(DOWNLOADING);
-    expect(store.bannerVisible).toBe(true);
-    expect(store.badge).toBeNull();
-  });
-
-  it('ready and failed show the badge with their state, and never the banner', async () => {
-    const channel = makeUpdateChannel();
-    const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
-    await store.init();
-
-    channel.emit(READY_1);
-    expect(store.badge).toEqual(READY_1);
-    expect(store.bannerVisible).toBe(false);
-
-    channel.emit(FAILED);
-    expect(store.badge).toEqual(FAILED);
-    expect(store.bannerVisible).toBe(false);
-  });
-
-  it('the banner follows the download: gone on ready (badge takes over) and on a fall back to idle', async () => {
-    const channel = makeUpdateChannel();
-    const store = new UpdateStore(makeFakeApi({ onUpdateState: channel.onUpdateState }));
-    await store.init();
-
-    channel.emit(DOWNLOADING);
-    expect(store.bannerVisible).toBe(true);
-    channel.emit({ kind: 'idle' });
-    expect(store.bannerVisible).toBe(false);
-    expect(store.badge).toBeNull();
-
-    channel.emit(DOWNLOADING);
-    channel.emit(READY_1);
-    expect(store.bannerVisible).toBe(false);
-    expect(store.badge).toEqual(READY_1);
-  });
-
-  it('the banner is not dismissible, and a dismissed badge does not suppress a later banner', async () => {
-    const channel = makeUpdateChannel();
-    const store = new UpdateStore(
-      makeFakeApi({ onUpdateState: channel.onUpdateState, getUpdateState: async () => READY_1 }),
-    );
-    await store.init();
-
-    store.dismiss();
-    channel.emit(DOWNLOADING);
-    expect(store.bannerVisible).toBe(true);
-
-    store.dismiss();
-    expect(store.bannerVisible).toBe(true);
+    expect(store.banner).toEqual(READY_1);
   });
 
   it('install() calls api.installUpdate only when ready', async () => {
