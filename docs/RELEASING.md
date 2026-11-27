@@ -77,6 +77,10 @@ gh release view v0.1.0
 Expect the title above, not marked pre-release, and four assets: the
 `Ntwine-darwin-universal-0.1.0.zip`, the `Setup.exe`, `RELEASES` and the `.nupkg`.
 
+Installed copies do not see the release straight away. The update feed (update.electronjs.org)
+caches its answer, so allow ten minutes or more after publishing before an app's next check
+offers the new version. An app checks 30 seconds after launch and every four hours after that.
+
 ### When a run fails
 
 - **`guard` failed:** the tag names the wrong version, or points at a commit not on `main`.
