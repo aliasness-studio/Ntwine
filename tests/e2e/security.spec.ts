@@ -6,10 +6,12 @@ import { expect, test } from './harness/fixtures';
 // not a `send`), the Splice-DB picker fallback `pickSpliceDb`, and the five self-update methods
 // `getAppVersion`, `getUpdateState`,
 // `installUpdate`, `onUpdateState`, `openReleasesPage` (present even though e2e never runs the
-// updater — the bridge surface does not depend on shouldRunUpdater).
+// updater — the bridge surface does not depend on shouldRunUpdater), the row-menu file actions
+// `revealSample`/`copySamplePath`, and `platform` (a plain value, not a method).
 const NTWINE_API_METHODS = [
   'addToCollection',
   'addUserTag',
+  'copySamplePath',
   'coverUrl',
   'createCollection',
   'decodePreviewPcm',
@@ -28,10 +30,12 @@ const NTWINE_API_METHODS = [
   'openReleasesPage',
   'pickLibraryRoot',
   'pickSpliceDb',
+  'platform',
   'querySamples',
   'removeFromCollection',
   'removeUserTag',
   'renameCollection',
+  'revealSample',
   'runImport',
   'sampleUrl',
   'setFavorite',
@@ -39,7 +43,7 @@ const NTWINE_API_METHODS = [
   'startDrag',
 ];
 
-test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 29 methods', async ({
+test('the security fences hold: window.open and top-level navigation are denied, no Node leaks into the renderer, and the bridge is exactly its 32 members', async ({
   ntwine,
 }) => {
   const { app, page, seam } = ntwine;

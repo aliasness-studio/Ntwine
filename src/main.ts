@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, clipboard, dialog, ipcMain, screen, shell } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,13 @@ import { makeE2EEmitter, readE2EConfig, type E2EConfig } from './main/e2e';
 import { currentLibraryRoot, libraryRootDeps, registerIpc } from './main/ipc';
 import { MOVE_DECLINED_META, offerMove, shouldOfferMove } from './main/moveToApplications';
 import { dataDirFrom } from './main/paths';
-import { registerProtocols, registerProtocolSchemes, resolveSampleAbsPath } from './main/protocol';
+import {
+  registerProtocols,
+  registerProtocolSchemes,
+  resolveSampleAbsPath,
+  resolveSampleFile,
+} from './main/protocol';
+import { registerSampleFileHandlers } from './main/sampleFile';
 import {
   createUpdater,
   feedArchFor,
@@ -293,6 +299,14 @@ app.whenReady().then(async () => {
     (sampleId) => resolveSampleAbsPath(catalog, getLibraryRoot(), sampleId),
     e2eEmit,
   );
+
+  // The row menu's reveal / copy-path actions (sampleFile.ts has the rationale).
+  registerSampleFileHandlers({
+    resolve: (sampleId) => resolveSampleFile(catalog, getLibraryRoot(), sampleId),
+    showItemInFolder: (file) => shell.showItemInFolder(file),
+    writeClipboardText: (text) => clipboard.writeText(text),
+    e2eEmit,
+  });
 
   registerIpc({
     catalog,

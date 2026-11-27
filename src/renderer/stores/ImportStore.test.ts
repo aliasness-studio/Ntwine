@@ -34,6 +34,9 @@ function makeFakeApi(
     startDrag: vi.fn(async () => {}),
     sampleUrl: vi.fn((id: number) => `sample://s/${id}`),
     coverUrl: vi.fn((id: number) => `cover://p/${id}`),
+    platform: 'darwin',
+    revealSample: vi.fn(async () => {}),
+    copySamplePath: vi.fn(async () => {}),
     // User layer: 11 bridge methods, inert here — ImportStore never calls any
     // of these (only runImport/onImportProgress, both already overridable above).
     setFavorite: vi.fn(async () => {}),

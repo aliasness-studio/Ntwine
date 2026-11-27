@@ -40,6 +40,9 @@ function makeFakeApi(
     startDrag: vi.fn(async () => {}),
     sampleUrl: vi.fn((id: number) => `sample://s/${id}`),
     coverUrl: vi.fn((id: number) => `cover://p/${id}`),
+    platform: 'darwin',
+    revealSample: vi.fn(async () => {}),
+    copySamplePath: vi.fn(async () => {}),
     // User layer: 11 bridge methods, inert here — LibraryStore itself never
     // calls any of these (UserLayerStore owns the writes; LibraryStore only
     // re-runs querySamples/listTags afterward).
