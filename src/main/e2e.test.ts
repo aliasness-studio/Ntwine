@@ -51,13 +51,32 @@ describe('readE2EConfig', () => {
     // Not honoured outside E2E mode — the whole config is null, hidden included.
     expect(readE2EConfig({ NTWINE_E2E_HIDDEN: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') })).toBeNull();
   });
-  it('pins the update state only to exactly "downloading", and refuses any other supplied value', () => {
+  it('pins the update state to "downloading" or "ready:<release name>", and refuses any other supplied value', () => {
     const base = { NTWINE_E2E: '1', NTWINE_USER_DATA: path.join(ABS, 'ud') };
     expect(readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: 'downloading' })?.updateState).toStrictEqual({
       kind: 'downloading',
     });
+    // The release name goes through verbatim, spaces, colons and all.
+    expect(
+      readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: 'ready:Ntwine v0.2.0 (beta)' })?.updateState,
+    ).toStrictEqual({ kind: 'ready', version: 'Ntwine v0.2.0 (beta)' });
+    expect(readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: 'ready:a:b' })?.updateState).toStrictEqual({
+      kind: 'ready',
+      version: 'a:b',
+    });
     expect(readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: '' })?.updateState).toBeNull();
-    for (const value of ['idle', 'ready', 'failed', 'Downloading', ' downloading', '1']) {
+    for (const value of [
+      'idle',
+      'ready',
+      'ready:',
+      'ready:  ',
+      'Ready:x',
+      ' ready:x',
+      'failed',
+      'Downloading',
+      ' downloading',
+      '1',
+    ]) {
       expect(() => readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: value })).toThrow(E2EConfigError);
       expect(() => readE2EConfig({ ...base, NTWINE_E2E_UPDATE_STATE: value })).toThrow(/NTWINE_E2E_UPDATE_STATE/);
     }
