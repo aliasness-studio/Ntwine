@@ -76,7 +76,7 @@ const api: NtwineApi = {
   removeFromCollection: (collectionId: string, sampleId: number) =>
     ipcRenderer.invoke('ntwine:removeFromCollection', collectionId, sampleId),
 
-  // Self-update (release pipeline PR 2) — 5 new methods, bridge 24 -> 29.
+  // Self-update — 5 methods.
   getUpdateState: () => ipcRenderer.invoke('ntwine:getUpdateState'),
 
   onUpdateState: (cb) => {

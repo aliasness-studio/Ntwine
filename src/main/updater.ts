@@ -105,13 +105,21 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     interval = null;
   }
 
-  /** Polling only ever happens from `idle`: `ready` and `failed` are terminal for checks. This is
-   * the backstop for any path where a transition lands before or between timer arming. */
+  /** `ready` and `failed` end polling for good; `downloading` does not, since a download that
+   * fails falls back to `idle` and the next tick must try again. */
+  function isTerminal(s: UpdateState): boolean {
+    return s.kind === 'ready' || s.kind === 'failed';
+  }
+
+  /** Polling only ever happens from `idle`. A tick in a terminal state cancels the timers (the
+   * backstop for any path where a transition lands before or between timer arming); a tick while
+   * `downloading` is skipped, because a second check would start a second download. */
   function check(): void {
-    if (current.kind !== 'idle') {
+    if (isTerminal(current)) {
       stop();
       return;
     }
+    if (current.kind === 'downloading') return;
     autoUpdater.checkForUpdates();
   }
 
@@ -119,6 +127,10 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     start() {
       if (started) return;
       started = true;
+      // Emitted once an update is found; Squirrel starts downloading it straight away.
+      autoUpdater.on('update-available', () => {
+        if (current.kind === 'idle') setState({ kind: 'downloading' });
+      });
       autoUpdater.on(
         'update-downloaded',
         (_event: unknown, _notes: unknown, releaseName: string) => {
@@ -132,16 +144,18 @@ export function createUpdater(deps: UpdaterDeps): Updater {
           setState({ kind: 'failed', reason: 'signature', downloadUrl: RELEASES_URL });
           return;
         }
-        // Offline, feed down, rate-limited…: silent, and the next tick simply tries again.
+        // Offline, feed down, rate-limited, download cut off…: silent, and the next tick simply
+        // tries again. A failed download is no longer downloading, so it drops back to idle.
+        if (current.kind === 'downloading') setState({ kind: 'idle' });
         log(`[updater] update check failed: ${err instanceof Error ? err.message : String(err)}`);
       });
       autoUpdater.setFeedURL({ url: feedUrl });
       // setFeedURL can itself emit a signature error synchronously; stop() then had nothing to
-      // cancel, so never arm timers from a non-idle state.
-      if (current.kind !== 'idle') return;
+      // cancel, so never arm timers from a terminal state.
+      if (isTerminal(current)) return;
       firstCheck = setTimeoutFn(() => {
         firstCheck = null;
-        if (current.kind !== 'idle') return;
+        if (isTerminal(current)) return;
         // Interval armed BEFORE the first check so a synchronously-emitted signature error can
         // still cancel it.
         interval = setIntervalFn(check, UPDATE_INTERVAL_MS);
@@ -155,11 +169,18 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   };
 }
 
+/** An `Updater` that never touches `autoUpdater`: it always reports `state`, and `start`/`install`
+ * do nothing. Only for an e2e run that pins the update state (e2e.ts's `updateState`). */
+export function fixedStateUpdater(state: UpdateState): Updater {
+  return { start() {}, state: () => state, install() {} };
+}
+
 export interface UpdaterIpcDeps {
   /** `ipcMain.handle.bind(ipcMain)` in main.ts; injected so this stays Electron-free and testable. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handle: (channel: string, fn: (...a: any[]) => unknown) => void;
-  /** `null` whenever `shouldRunUpdater` is false (dev, e2e, Linux): the bridge still answers. */
+  /** `null` whenever `shouldRunUpdater` is false (dev, e2e, Linux): the bridge still answers. An
+   * e2e run that pins its update state passes a `fixedStateUpdater` instead. */
   updater: Updater | null;
   openExternal: (url: string) => Promise<void>;
   version: string;

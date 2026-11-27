@@ -8,6 +8,7 @@ import {
   classifyUpdateError,
   createUpdater,
   feedArchFor,
+  fixedStateUpdater,
   feedUrlFor,
   registerUpdaterIpc,
   shouldRunUpdater,
@@ -139,6 +140,119 @@ describe('createUpdater', () => {
     expect(updater.state()).toStrictEqual({ kind: 'ready', version: '0.2.0' });
     expect(onState).toHaveBeenCalledTimes(1);
     expect(onState).toHaveBeenCalledWith({ kind: 'ready', version: '0.2.0' });
+  });
+
+  it('update-available → downloading, reported once', () => {
+    const { autoUpdater, onState, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+
+    autoUpdater.emit('update-available');
+    autoUpdater.emit('update-available');
+
+    expect(updater.state()).toStrictEqual({ kind: 'downloading' });
+    expect(onState).toHaveBeenCalledTimes(1);
+    expect(onState).toHaveBeenCalledWith({ kind: 'downloading' });
+  });
+
+  it('update-not-available changes nothing and reports nothing', () => {
+    const { autoUpdater, onState, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+
+    autoUpdater.emit('update-not-available');
+
+    expect(updater.state()).toStrictEqual({ kind: 'idle' });
+    expect(onState).not.toHaveBeenCalled();
+  });
+
+  it('downloading → ready on update-downloaded, each transition reported once, then polling stops', () => {
+    const { autoUpdater, onState, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+
+    autoUpdater.emit('update-available');
+    autoUpdater.emit(
+      'update-downloaded',
+      {},
+      'notes',
+      '0.2.0',
+      new Date(),
+      'https://example.invalid',
+    );
+
+    expect(updater.state()).toStrictEqual({ kind: 'ready', version: '0.2.0' });
+    expect(onState.mock.calls).toStrictEqual([
+      [{ kind: 'downloading' }],
+      [{ kind: 'ready', version: '0.2.0' }],
+    ]);
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS * 3);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('a tick while downloading neither checks nor cancels polling', () => {
+    const { autoUpdater, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    autoUpdater.emit('update-available');
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS * 2);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(updater.state()).toStrictEqual({ kind: 'downloading' });
+
+    // The interval is still armed: once the download fails back to idle, the next tick checks.
+    autoUpdater.emit('error', new Error('net::ERR_CONNECTION_RESET'));
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it('a network error while downloading → idle, logged, and the next tick checks again', () => {
+    const { autoUpdater, onState, log, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+    autoUpdater.emit('update-available');
+
+    autoUpdater.emit('error', new Error('net::ERR_CONNECTION_RESET'));
+
+    expect(updater.state()).toStrictEqual({ kind: 'idle' });
+    expect(onState.mock.calls).toStrictEqual([[{ kind: 'downloading' }], [{ kind: 'idle' }]]);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toMatch(/ERR_CONNECTION_RESET/);
+
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it('a code-signature error while downloading → failed, and no further checks', () => {
+    const { autoUpdater, onState, updater } = setup();
+    updater.start();
+    vi.advanceTimersByTime(UPDATE_INITIAL_DELAY_MS);
+    autoUpdater.emit('update-available');
+
+    autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
+
+    const failed = { kind: 'failed', reason: 'signature', downloadUrl: RELEASES_URL };
+    expect(updater.state()).toStrictEqual(failed);
+    expect(onState).toHaveBeenLastCalledWith(failed);
+    vi.advanceTimersByTime(UPDATE_INTERVAL_MS * 3);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('update-available never leaves a terminal state (ready or failed)', () => {
+    const ready = setup();
+    ready.updater.start();
+    ready.autoUpdater.emit('update-downloaded', {}, 'notes', '0.2.0', new Date(), 'x');
+    ready.autoUpdater.emit('update-available');
+    expect(ready.updater.state()).toStrictEqual({ kind: 'ready', version: '0.2.0' });
+    expect(ready.onState).toHaveBeenCalledTimes(1);
+
+    const failed = setup();
+    failed.updater.start();
+    failed.autoUpdater.emit('error', new Error(SIGNATURE_MISMATCH));
+    failed.autoUpdater.emit('update-available');
+    expect(failed.updater.state().kind).toBe('failed');
+    expect(failed.onState).toHaveBeenCalledTimes(1);
   });
 
   it('a network error keeps state idle, reports nothing, and the next tick still checks', () => {
@@ -332,6 +446,18 @@ describe('registerUpdaterIpc', () => {
     const { invoke } = register(null);
     expect(await invoke('ntwine:getUpdateState')).toEqual({ kind: 'idle' });
     await expect(Promise.resolve(invoke('ntwine:installUpdate'))).resolves.toBeUndefined();
+  });
+
+  it('a fixedStateUpdater answers its pinned state, and start/install do nothing', async () => {
+    const pinned: UpdateState[] = [{ kind: 'downloading' }, { kind: 'ready', version: '0.4.0' }];
+    for (const state of pinned) {
+      const updater = fixedStateUpdater(state);
+      updater.start();
+      const { invoke } = register(updater);
+      expect(await invoke('ntwine:getUpdateState')).toEqual(state);
+      await expect(Promise.resolve(invoke('ntwine:installUpdate'))).resolves.toBeUndefined();
+      expect(updater.state()).toEqual(state);
+    }
   });
 
   it('with an updater, getUpdateState reads its current state and installUpdate delegates', async () => {

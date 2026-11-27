@@ -76,6 +76,8 @@ export async function launchNtwine(opts: LaunchOptions): Promise<Launched> {
   // never the shell it happens to be launched from.
   if (opts.appData === undefined) delete env.NTWINE_APP_DATA;
   if (opts.libraryRoot === undefined) delete env.NTWINE_LIBRARY_ROOT;
+  // Same for the pinned update state: only a launch that passes it in `extraEnv` gets one.
+  if (opts.extraEnv?.NTWINE_E2E_UPDATE_STATE === undefined) delete env.NTWINE_E2E_UPDATE_STATE;
   const app = await _electron.launch({ args: [MAIN_JS], env, cwd: REPO_ROOT });
   let page: Page;
   try {
